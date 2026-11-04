@@ -34,7 +34,7 @@
 | 手順 | 内容 | 状態 |
 |---|---|---|
 | 1 | 旧 5 リポジトリの比較と統合方針(本文書) | 済(2026-11-04) |
-| 2 | A(WaveLogger.Automation)・C(Common)・E(NR-X 接続補助)・F(LoggerFiles)・Excel の移植 | **済(2026-11-04)**。ただし Excel を起動する操作(`ExcelWorkSession` / `NoiseResultWorkbook` の汎用部分)は範囲が決まっていないので未移植。出どころと変更点は `docs/移行記録.md` |
+| 2 | A(WaveLogger.Automation)・C(Common)・E(NR-X 接続補助)・F(LoggerFiles)・Excel の移植 | **済(2026-11-04)**。ただし Excel を起動する操作(`ExcelWorkSession` / `NoiseResultWorkbook` の汎用部分)は未移植(範囲は判断 8 で決定。AllCheck・NoiseTest を移すときに行う)。出どころと変更点は `docs/移行記録.md` |
 | 3 | B(Arduino)の移植 | **済(2026-11-04)**。AllCheck 版の `ArduinoConnection` と、SwitchController 版の `Configure` 方式 + AllCheck の `SHUTDOWN_ERROR` の `ArduinoDiagnosticLog`。BoltCheck の NF 判定をどうするか(判断 3)はアプリ側の話なので、BoltCheck を移すときに決める。実機確認は未実施 |
 | 4 | D(VISA 機器)の移植 | **済(2026-11-04)**。判断 4 の案 A(下記 D 節の採用案)で `Wrappers/Instruments` へ。通信部分を 1 つにし、WF1973 は 3 クラスを別名で残した。送るコマンドと順番は元のまま(模擬の通信で確認)。実機確認は未実施 |
 | 5 | アプリの移植と `.slnf` の整備 | **XdtConversion は済(2026-11-04)**(`Apps/XdtConversion`、`XdtConversion.slnf`)。旧 Verification の A6 停止は検査の前提の誤りで、参照値と比べる形に直した(`docs/移行記録.md`)。AS110AllCheck・AS110BoltCheck・AS100201SwitchController・AS110NoiseTest は未着手(VISA の箱は手順 4 でできた) |
@@ -164,4 +164,11 @@ XDT(WAVE LOGGER の波形ファイル)のバイナリを触るコードが 4 か
 5. ~~ファームウェアをモノレポに含めるか~~ → **決定: 含める**(2026-11-04)。`Apps/<アプリ>/firmware/` に、各アプリの移植と同時に移す(上の「H. ファームウェア」)。
 6. ~~NR-X の Wi-Fi プロファイル(SSID)の置き場~~ → **決定: アプリごとに、作る(移植する)ときに AI が聞く**(2026-11-04)。NR-X を使うかはアプリを作る人の想定次第で、使わない人もいる。使う機器に NR-X が入り、Wi-Fi で使うときだけ、置き場を選択肢で聞く(`AGENTS.md`「仕様決め」)。wrapper には持たせない(手順 2 のまま)。AllCheck・BoltCheck・SwitchController を移すときも同じく聞く。
 7. 履歴は**コピーのみ**(現案)でよいか。(手順 2 はコピーのみで進め、出どころを `docs/移行記録.md` に書いた)
-8. **Excel を起動する操作のうち、どこまでを wrapper にするか**(手順 2 で判明)。AllCheck の `ExcelWorkSession` と NoiseTest の `NoiseResultWorkbook` は、Excel の起動・ブックを開く・保存・PDF 化・閉じる・COM 解放の共通部分と、AS110 固有の処理(図形内の S/N 書き換え、E21・L21 の判定、PP 値シートの行の決め方)が 1 つのクラスに入っている。XdtConversion の `ExcelPresenter`(Excel を起動してブックを表示するだけ)も同じ判断の対象で、それまでは `Apps/XdtConversion` 側に置く(2026-11-04)。
+8. ~~Excel を起動する操作のうち、どこまでを wrapper にするか~~ → **決定: 案 A(共通の操作を部品として `Wrappers/Excel` に切り出す)**(2026-11-04)。
+   - 背景: AllCheck の `ExcelWorkSession` と NoiseTest の `NoiseResultWorkbook` は、共通の操作と AS110 固有の処理(図形内の S/N 書き換えのパターン、E21・L21 の判定、「圧縮5」シート、PP 値シートの行の決め方・mA の列)が 1 つのクラスに入っている。XdtConversion の `ExcelPresenter` も対象。
+   - wrapper に置く部品: Excel の起動(無ければエラー)、ブックを開く(読み取り専用なら止める)、閉じる・終了・COM 解放、画面に出して利用者に渡す、保存(上書き・別名)、PDF 化、セルの読み書き、開いているブックの列への値の書き込み(数式があれば止める)、再計算を待つ(打ち切り時間つき)、図形内の文字を書式を保ったまま一部だけ置き換える。
+   - アプリ側に残すもの: どのシート・セル・図形に何を書くか、置き換える文字のパターン、判定、行・列の決め方。
+   - 3 アプリで違う動き(保存のしかた、確認ダイアログを出すか、終了時に Excel を閉じるか)は選べる設定にして、各アプリの今の動きを変えない。
+   - 転送(雛形に測定値を書く)は既に `TemplateWriter` で wrapper にある。値の配列を受け取る形なので、xdt / ydt の違いは LoggerFiles 側で吸収する。
+   - 比較した案: B(起動・開く・閉じる・解放・表示だけ。保存・PDF・S/N 書き換えはアプリごとにコピーが残る)、C(wrapper にせずアプリ側へそのまま移す。起動・解放が 3 か所に残る)。
+   - 実装は AllCheck・NoiseTest を移すときに行う。それまで `ExcelPresenter` は `Apps/XdtConversion` 側に置いたまま。確認に計測器は要らないが、Excel を実際に動かして元と同じ結果になるかを見る。

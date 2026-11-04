@@ -120,7 +120,7 @@ WAVE LOGGER を起動せずに、出力ファイルを直接読み書きする�
 大枠は「ロガーの値を Excel 雛形へ転記する」。アプリごとの違い(どの CH をどのシート・セルに書くか、間引き数、判定セルの読み方)はアプリ側の設定で渡す。
 
 - xlsx への直接書き込み(`TemplateWriter`、元 AllCheck / XdtConversion、移植済み): 値の列を指定シート・セルから書く。開始セル以降の旧値は消す。数式のある列・同名の保存先は止める。開いたときに再計算する設定にする。**Excel のインストール不要**
-- (未移植)Excel を起動しての操作(元 AllCheck `ExcelWorkSession`、NoiseTest `NoiseResultWorkbook`): 開く・数式の再計算・セルの読み取り・保存・PDF 保存・閉じる。汎用部分だけを wrapper にし、判定ロジックはアプリ側。どこまでを wrapper にするかは判断待ち。XdtConversion の `ExcelPresenter`(Excel を起動してブックを表示するだけ)は、判断が出るまで `Apps/XdtConversion` 側に置いてある
+- (未移植)Excel を起動しての操作(元 AllCheck `ExcelWorkSession`、NoiseTest `NoiseResultWorkbook`): 起動・開く・閉じる・画面に出して渡す・保存・PDF 保存・セルの読み書き・列への書き込み・再計算待ち・図形内の文字の部分置換を部品として wrapper に置く予定(`docs/wrapper比較.md` 判断 8)。判定・セル位置・置き換える文字のパターンはアプリ側。AllCheck・NoiseTest を移すときに実装する。それまで XdtConversion の `ExcelPresenter`(Excel を起動してブックを表示するだけ)は `Apps/XdtConversion` 側に置いてある
 
 **制約**
 - Excel を起動する操作は実行 PC に Excel が必要(実行時に探す方式なので、ビルドには不要)
