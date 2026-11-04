@@ -29,6 +29,9 @@ Logs/
 !Wrappers/Tests/**/Fixtures/*.ydt
 ~$*
 
+# 試験データから作った波形画像(AS110NoiseTest)
+**/docs/実測比較_*_波形.png
+
 # Python の一時ファイル
 __pycache__/
 

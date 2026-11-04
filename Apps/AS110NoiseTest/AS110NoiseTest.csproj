@@ -1,0 +1,42 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net9.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <!-- exe 名は元のまま(AS110NoiseTest.exe) -->
+    <AssemblyName>AS110NoiseTest</AssemblyName>
+    <RootNamespace>PSCAutomation.Apps.AS110NoiseTest</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- 確認ツールと資料はこのフォルダーの下にあるが、アプリには含めない -->
+    <Compile Remove="Tools\**;docs\**" />
+    <EmbeddedResource Remove="Tools\**;docs\**" />
+    <None Remove="Tools\**;docs\**" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- 実機確認ツールから電流制御クラスを直接使う。 -->
+    <InternalsVisibleTo Include="CurrentControlCheck" />
+    <!-- 判定規則の検証ツールから判定クラスを直接使う。 -->
+    <InternalsVisibleTo Include="NoiseJudgeCheck" />
+    <!-- Excel 出力の確認ツールから書き込みクラスを直接使う。 -->
+    <InternalsVisibleTo Include="ExcelWriteCheck" />
+    <!-- 測定シーケンスの確認ツール(機器なし / LOGGER だけ実機 / 全部実機)からシーケンスを直接使う。 -->
+    <InternalsVisibleTo Include="MeasurementCheck" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- KEYENCE WAVE LOGGER(NR-500)の操作 -->
+    <ProjectReference Include="..\..\Wrappers\WaveLogger.Automation\WaveLogger.Automation.csproj" />
+    <!-- xdt の読み出し・表示レンジ・測定日時 -->
+    <ProjectReference Include="..\..\Wrappers\LoggerFiles\LoggerFiles.csproj" />
+    <!-- WF1973(DC オフセット)・ADCMT 7351E(NI-VISA が要る) -->
+    <ProjectReference Include="..\..\Wrappers\Instruments\Instruments.csproj" />
+    <!-- 結果ブックへの書き込み(Excel を起動して操作) -->
+    <ProjectReference Include="..\..\Wrappers\Excel\Excel.csproj" />
+  </ItemGroup>
+</Project>

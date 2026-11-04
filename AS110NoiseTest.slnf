@@ -1,0 +1,16 @@
+{
+  "solution": {
+    "path": "PSCAutomation.sln",
+    "projects": [
+      "Apps\\AS110NoiseTest\\AS110NoiseTest.csproj",
+      "Apps\\AS110NoiseTest\\Tools\\CurrentControlCheck\\CurrentControlCheck.csproj",
+      "Apps\\AS110NoiseTest\\Tools\\NoiseJudgeCheck\\NoiseJudgeCheck.csproj",
+      "Apps\\AS110NoiseTest\\Tools\\ExcelWriteCheck\\ExcelWriteCheck.csproj",
+      "Apps\\AS110NoiseTest\\Tools\\MeasurementCheck\\MeasurementCheck.csproj",
+      "Wrappers\\WaveLogger.Automation\\WaveLogger.Automation.csproj",
+      "Wrappers\\LoggerFiles\\LoggerFiles.csproj",
+      "Wrappers\\Instruments\\Instruments.csproj",
+      "Wrappers\\Excel\\Excel.csproj"
+    ]
+  }
+}

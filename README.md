@@ -22,9 +22,9 @@ PSCAutomation/
 
 ## 状態(2026-11-04)
 
-- 共通 wrapper のうち WaveLogger.Automation・LoggerFiles・Common(NR-X 接続補助を含む)・Excel(xlsx 直接書き込み)・Arduino を `Wrappers/` へ移した(`docs/wrapper比較.md` の手順 2・3)。VISA 機器・Excel を起動する操作と、アプリ本体はまだ。出どころと変更点は `docs/移行記録.md`、箱の一覧とテストの実行方法は `Wrappers/README.md`。
-- アプリは XdtConversion を `Apps/XdtConversion` へ移した(`XdtConversion.slnf` で開く。使い方は [Apps/XdtConversion/README.md](Apps/XdtConversion/README.md))。他の 4 アプリはまだ。
-- 全体 `PSCAutomation.sln` のビルド、`Wrappers/Tests` の 5 つのテスト、XdtConversion の検証は成功(2026-11-04)。実機・画面操作・Excel 表示での確認はまだ。
+- 共通 wrapper(WaveLogger.Automation・LoggerFiles・Common(NR-X 接続補助を含む)・Excel(xlsx 直接書き込みと Excel を起動する操作)・Arduino・Instruments(VISA 機器))はすべて `Wrappers/` へ移した(`docs/wrapper比較.md` の手順 2〜4)。出どころと変更点は `docs/移行記録.md`、箱の一覧とテストの実行方法は `Wrappers/README.md`。
+- アプリは XdtConversion(`Apps/XdtConversion`、`XdtConversion.slnf`。[README](Apps/XdtConversion/README.md))と AS110NoiseTest(`Apps/AS110NoiseTest`、`AS110NoiseTest.slnf`。[README](Apps/AS110NoiseTest/README.md))を移した。AS110AllCheck・AS110BoltCheck・AS100201SwitchController はまだ。
+- 全体 `PSCAutomation.sln` のビルド、`Wrappers/Tests` の 6 つのテスト、XdtConversion の検証、AS110NoiseTest の機器なしの確認ツールは成功(2026-11-04)。機器を使う動作は、移植後はまだ実機で確認していない。
 - 移植元 5 リポジトリ(すべて `tad-kawamura` の Private)の比較を終え、統合方針を `docs/wrapper比較.md` に書いた。人の判断待ちの項目は同文書の末尾。
 - リポジトリ名は `PSCAutomation`、Wrappers は依存ごとに 6 つの csproj に分けると決めた(`docs/wrapper比較.md`)。作業フォルダ名は `MergeProject` から `PSCAutomation` に変更済み、GitHub リポジトリ(`tad-kawamura/PSCAutomation`、Private)も作成済み。
 - .NET は全アプリ `net9.0-windows`(SDK 9.0.318 で確認)。

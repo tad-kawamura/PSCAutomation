@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net9.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../AS110NoiseTest.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- 雛形(測定用 xdt と結果 Excel)を exe の隣の 雛形\ にコピーする。発行した exe を別 PC に持っていっても
+         Program.FindTemplateFolder が見つけられるように(開発中はアプリのフォルダーの 雛形 が見つかるので無くてもよい)。
+         単一ファイルで発行しても exe に入れない(雛形を差し替えるたびに発行し直さずに済むように)。 -->
+    <None Include="../../雛形/AS110ノイズ測定用.xdt" Link="雛形/AS110ノイズ測定用.xdt" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" ExcludeFromSingleFile="true" />
+    <None Include="../../雛形/AS110ノイズ測定_雛形.xlsx" Link="雛形/AS110ノイズ測定_雛形.xlsx" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" ExcludeFromSingleFile="true" />
+    <!-- 実機確認の手順をまとめたバッチも一緒に持っていく。 -->
+    <None Include="実機確認.cmd" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" ExcludeFromSingleFile="true" />
+  </ItemGroup>
+  <!-- アプリ本体(exe)を参照すると、その起動用の json 2 つが発行フォルダーに出る。MeasurementCheck.exe には要らないので発行しない。 -->
+  <Target Name="ExcludeReferencedAppRuntimeFiles" AfterTargets="ComputeResolvedFilesToPublishList">
+    <ItemGroup>
+      <ResolvedFileToPublish Remove="@(ResolvedFileToPublish)"
+                             Condition="'%(Filename)%(Extension)' == 'AS110NoiseTest.deps.json' or '%(Filename)%(Extension)' == 'AS110NoiseTest.runtimeconfig.json'" />
+    </ItemGroup>
+  </Target>
+</Project>
