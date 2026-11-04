@@ -1,0 +1,13 @@
+{
+  "solution": {
+    "path": "PSCAutomation.sln",
+    "projects": [
+      "Apps\\AS100201SwitchController\\AS100201SwitchController.csproj",
+      "Apps\\AS100201SwitchController\\Tests\\Compatibility\\AS100201.RegressionTests.csproj",
+      "Wrappers\\WaveLogger.Automation\\WaveLogger.Automation.csproj",
+      "Wrappers\\Common\\Common.csproj",
+      "Wrappers\\Arduino\\Arduino.csproj",
+      "Wrappers\\Instruments\\Instruments.csproj"
+    ]
+  }
+}

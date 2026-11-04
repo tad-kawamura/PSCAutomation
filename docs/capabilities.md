@@ -2,7 +2,7 @@
 
 > **2026-11-04 更新**。WAVE LOGGER・ロガーの出力ファイル・共通(NR-X 接続補助を含む)・Excel(xlsx 直接書き込みと、Excel を起動する操作)・Arduino・VISA 機器(発振器・DMM)は `Wrappers/` へ移植済みで、この一覧は実装に合わせてある。各項目の「元」は旧リポジトリの場所。出どころと移植時の変更は `docs/移行記録.md`。
 >
-> ここに書いた動作のうち、機器を使うものの実機確認は 2026-11-04 に移植後のコードで行った範囲だけ: AS110NoiseTest の通しで使った旧 WAVE LOGGER + NR-500(USB)・7351E・WF1973(DC)・Excel への書き込み、`Wrappers/Tests/Instruments.HardwareCheck` で WF1973 のバースト・連続。**それ以外(WAVE LOGGER X、NR-X、Wi-Fi 切替、Arduino、SDG1032X など)は実機で確認していない**(ビルドと、模擬クラスを使うテストだけ)。各項目の「制約」に確認した範囲を書く。Excel を起動する操作は、Excel のある PC で `Wrappers/Tests/Excel.Tests` が実際に Excel を動かして確かめている(アプリからは AS110NoiseTest の結果ブックへの書き込みを実機確認で通した。XdtConversion の `ExcelViewer` は未確認)。
+> ここに書いた動作のうち、機器を使うものの実機確認は 2026-11-04 に移植後のコードで行った範囲だけ: AS110NoiseTest の通しで使った旧 WAVE LOGGER + NR-500(USB)・7351E・WF1973(DC)・Excel への書き込み、`Wrappers/Tests/Instruments.HardwareCheck` で WF1973 のバースト・連続、AS100201SwitchController の通しで使った Arduino(UNO R4 Minima、接続・受信・切断検知・再接続)・WF1973(連続、形の指定つき)・旧 WAVE LOGGER + NR-500(`ReferenceOnly`、Start / Stop)。**それ以外(WAVE LOGGER X、NR-X、Wi-Fi 切替、SDG1032X など)は実機で確認していない**(ビルドと、模擬クラスを使うテストだけ)。各項目の「制約」に確認した範囲を書く。Excel を起動する操作は、Excel のある PC で `Wrappers/Tests/Excel.Tests` が実際に Excel を動かして確かめている(アプリからは AS110NoiseTest の結果ブックへの書き込みを実機確認で通した。XdtConversion の `ExcelViewer` は未確認)。
 
 新しい依頼を受けたら、まずここを読んで「今の wrapper で何ができるか」を把握し、できる範囲から選択肢を出す。ここに無い機器・操作は、wrapper の新規作成(全アプリに影響)として人に確認する。
 
@@ -29,7 +29,7 @@
 - 保存: xdt、CSV
 - 参照波形の読み込み、横軸拡大、LOGGER 画面の復元・前面表示
 - 終了処理: × 検知、停止・Quit・COM 解放、対象プロセスだけを終了(別プロセスは守る)
-- 終了の扱いを選べる(`Lifecycle`): 既定は上の終了処理(`ManagedShutdown`)。`ReferenceOnly` は LOGGER を止めず COM 参照だけ解放する(AS100201SwitchController の使い方)
+- 終了の扱いを選べる(`Lifecycle`): 既定は上の終了処理(`ManagedShutdown`)。`ReferenceOnly` は LOGGER を止めず COM 参照だけ解放する(AS100201SwitchController の使い方。移植後に NR-500・旧 WAVE LOGGER で実機確認)
 - 機器なしの模擬に差し替えるための薄い interface の例: AS110NoiseTest `Measurement/ILoggerDevice.cs`
 
 **制約**
@@ -54,6 +54,7 @@
 
 - バースト(`FunctionGeneratorConnection.Connect` → `Wf1973BurstSession` / `Sdg1032XSession`、元 AllCheck): USB の WF1973 か SDG1032X を自動で見分ける。三角波(対称 50%)、周波数・オフセット・振幅・周期数・開始位相を設定し、外部トリガで指定周期数だけ出す(WF1973 は `*TRG`、SDG1032X は `C1:BTWV MTRIG`)。設定完了を `*OPC?` で確認(SDG1032X は設定値を読み戻して照合)。同じ設定なら再送しない。DC 出力(`SetDcOutput`、±5V まで)、出力停止(`StopOutput`)
 - 連続(`Wf1973ContinuousSession`、元 SwitchController): 振幅・位相・周波数を設定して位相同期で再開始。出力中は OFF にしない。押下連打の途中で中断できる
+  - 波形の形を指定して接続(`Connect(GeneratorWaveform)`、2026-11-04 追加): 接続時に出力 OFF のまま形(今は三角波・対称 50% だけ)を送り、`*OPC?` で確かめる。別のアプリが DC などにした WF1973 でも正しく出る。`Connect()` は元のまま形を送らない
 - DC(`Wf1973DcSource`、元 NoiseTest): 接続時に DC 波形・0V にして確認。出力を切らずにオフセット電圧だけ変える(`SetOffsetVolts`、±10V、0.1mV 単位、本体エラーを確認)。出力 ON(`SetOutput(true)`)の後 50ms 待つ。AS110 では **1V = 6mA** の電流指令に使う
 - どれも `Dispose` 時に出力 OFF を試みる(タイムアウト 500ms、失敗しても解放は続ける)。連続(`Wf1973ContinuousSession`)だけは元のとおり出力 OFF を送らない
 
@@ -62,9 +63,9 @@
 - 負荷設定は本体の設定を使う
 - SDG1032X は AS110 のバースト用途だけ確認済み
 - 同じ WF1973 を 2 つのクラスで同時に開かない(状態の管理がクラスごと)
-- 連続(`Wf1973ContinuousSession`)は波形の形を送らない(本体に残っている形のまま出る。DC の後に使うと DC のまま)。位相を変えて出し直すと、まず設定の差だけずれ、約 80ms 後に設定の位相からやり直す(段差が 2 回)
+- 連続(`Wf1973ContinuousSession`)を `Connect()` でつなぐと波形の形を送らない(本体に残っている形のまま出る。DC の後に使うと DC のまま。AS100201SwitchController の移植時に実機で起きた)。形を決めたいときは `Connect(GeneratorWaveform)` を使う。位相を変えて出し直すと、まず設定の差だけずれ、約 80ms 後に設定の位相からやり直す(段差が 2 回)
 - `SetDcOutput` は呼んでから約 0.16 秒後に出る(バーストの `*TRG` はすぐ出る)
-- 移植後の実機確認(2026-11-04、WF1973 の 3 クラスとも): `Wrappers/Instruments/docs/WF1973実機確認.md`。SDG1032X、連続の負の電圧(±5.1V)、旧アプリの画面からの操作は未確認
+- 移植後の実機確認(2026-11-04、WF1973 の 3 クラスとも): `Wrappers/Instruments/docs/WF1973実機確認.md`。連続は AS100201SwitchController の画面・スイッチからも確認(10.2Vpp の三角波で位相が切り替わることを目視。値の記録・照合はしていない)。SDG1032X、AllCheck・BoltCheck の画面からのバーストは未確認
 
 ### ADCMT 7351E(DMM)(`Adcmt7351ESession`、`Wrappers/Instruments`)
 
@@ -99,7 +100,7 @@
 - `ConnectAsync` は応答が得られるまで PC の COM ポートを順に開いて確認文字列を送る。Arduino 以外の機器がつながった COM ポートにも送る点に注意(元のまま)
 - 異常ログは静的クラスでプロセスに 1 つ。`Configure` は起動時に 1 回呼ぶ
 - 通信断だけでは発振器や LOGGER を止めない(方針はアプリ側)
-- 実機(Arduino・COM ポート)での動作は**未確認**。テストはポートを開かない範囲(ログの種別・保存、ポートなしでの振る舞い)だけ
+- 実機(Arduino UNO R4 Minima、COM4)では 2026-11-04 に AS100201SwitchController の範囲を確認: 総当たりの接続(1.7 秒の起動待ち込み)、行の受信、USB を抜いたときの切断検知(`PORT_CLOSED`)と異常ログの保存、挿し直した後の再接続(`Apps/AS100201SwitchController/README.md`)。M5Stack・AS110 の NF 監視、1024 文字超の破棄、`LocalApplicationData` への切り替えは未確認。テスト(`Arduino.Tests`)はポートを開かない範囲だけ
 
 ### ロガーの出力ファイル(`Wrappers/LoggerFiles`、`PSCAutomation.Wrappers.LoggerFiles`)
 
@@ -159,6 +160,6 @@ WAVE LOGGER を起動せずに、出力ファイルを直接読み書きする�
 |---|---|---|
 | AS110AllCheck | AS110 の全数検査(動き検査・校正・リーク・Excel 転記) | NR-X / NR-500、WF1973 or SDG1032X、Arduino(M5Stack)、Excel |
 | AS110BoltCheck | AS110 の動き検査 | NR-X、WF1973 or SDG1032X、Arduino(NF インターロック) |
-| AS100201SwitchController | AS100-201 のスイッチ制御 | NR-X、WF1973(連続)、Arduino(スイッチ・READY LED) |
+| AS100201SwitchController | AS100-201 のスイッチ制御。**移植済み**(`Apps/AS100201SwitchController`、`AS100201SwitchController.slnf`) | NR-500 / NR-X(USB だけ)、WF1973(連続・三角波)、Arduino(スイッチ・READY LED) |
 | AS110NoiseTest | AS110 のノイズ測定(電流を変えながら制御圧力の p-p を判定) | NR-500、WF1973(DC)、ADCMT 7351E、Excel |
 | XdtConversion | xdt を Excel 雛形へ転記する単機能アプリ。**移植済み**(`Apps/XdtConversion`、`XdtConversion.slnf`) | ファイルのみ、Excel |

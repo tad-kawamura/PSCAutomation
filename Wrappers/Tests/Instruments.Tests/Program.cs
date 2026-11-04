@@ -238,6 +238,17 @@ void Same(IEnumerable<string> actual, string[] expected, string name)
     Check(!wf.IsConnected && fake.Disposals == 1, "Dispose で通信を 1 回解放する");
     Fails<ObjectDisposedException>(() => wf.QueryIdentity(), "Dispose 後の問い合わせ");
     Console.WriteLine("PASS Wf1973ContinuousSession: 初期化・位相同期の再開始・中断・送信失敗・解放が元と同じ");
+
+    // 波形の形を指定する初期化(2026-11-04 追加)。出力 OFF のまま三角波にしてから元の初期化をし、*OPC? で確かめる
+    var shaped = new FakeInstrument("NF,WF1973,FAKE") { Responder = c => c == "*OPC?" ? "1" : "" };
+    Wf1973ContinuousSession.InitializeContinuousOutput(shaped, GeneratorWaveform.Triangle);
+    Same(shaped.Commands, new[] {
+        ":OUTPut:STATe OFF", ":SOURce:FUNCtion:SHAPe RAMP", ":SOURce:FUNCtion:RAMP:SYMMetry 50PCT",
+        ":SOURce:VOLTage:OFFSet 0", ":SOURce:BURSt:STATe OFF", "*OPC?" }, "形を指定した接続時初期化");
+    var notDone = new FakeInstrument("NF,WF1973,FAKE") { Responder = c => c == "*OPC?" ? "0" : "" };
+    Fails<InvalidOperationException>(() => Wf1973ContinuousSession.InitializeContinuousOutput(notDone, GeneratorWaveform.Triangle), "設定完了の応答が 1 でない");
+    Fails<ArgumentOutOfRangeException>(() => Wf1973ContinuousSession.InitializeContinuousOutput(new FakeInstrument("NF,WF1973,FAKE"), (GeneratorWaveform)99), "未対応の波形");
+    Console.WriteLine("PASS Wf1973ContinuousSession: 形を指定した初期化(三角波・*OPC? の確認・未対応の波形)");
 }
 
 // ---------- D3 DC 出力(Wf1973DcSource) ----------

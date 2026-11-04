@@ -36,6 +36,40 @@ public sealed class Wf1973ContinuousSession : IDisposable
         instrument.Write(":SOURce:BURSt:STATe OFF");
     }
 
+    // 波形の形も指定して接続する(2026-11-04 追加。AS100201SwitchController の移植時の実機確認で、
+    // 別のアプリが DC にした WF1973 では Connect() のままだと DC が出続けたため)。
+    // Connect() は本体に残っている形のまま出す(元の動き)。こちらは接続時に形を送って本体の設定に依存しない。
+    public static Wf1973ContinuousSession Connect(GeneratorWaveform waveform)
+    {
+        ValidateWaveform(waveform);
+        return new(VisaInstrumentSession.Connect(
+            identity => identity.Contains("WF1973", StringComparison.OrdinalIgnoreCase),
+            instrument => InitializeContinuousOutput(instrument, waveform),
+            "WF1973 を確認できません。電源、USB、NI-VISA を確認してください。"));
+    }
+
+    // 出力 OFF のまま波形の形を設定し、元の初期化(オフセット 0・バースト OFF)をして、設定完了を *OPC? で確かめる。
+    // 三角波は Wf1973BurstSession.PrepareBurst と同じコマンド(RAMP・対称 50%)。
+    public static void InitializeContinuousOutput(IInstrumentSession instrument, GeneratorWaveform waveform)
+    {
+        ArgumentNullException.ThrowIfNull(instrument);
+        ValidateWaveform(waveform);
+        instrument.Write(":OUTPut:STATe OFF");
+        instrument.Write(":SOURce:FUNCtion:SHAPe RAMP");
+        instrument.Write(":SOURce:FUNCtion:RAMP:SYMMetry 50PCT");
+        instrument.Write(":SOURce:VOLTage:OFFSet 0");
+        instrument.Write(":SOURce:BURSt:STATe OFF");
+        string response = instrument.Query("*OPC?");
+        if (response != "1")
+            throw new InvalidOperationException($"WF1973 の設定完了を確認できません（応答：{response}）。");
+    }
+
+    private static void ValidateWaveform(GeneratorWaveform waveform)
+    {
+        if (waveform != GeneratorWaveform.Triangle)
+            throw new ArgumentOutOfRangeException(nameof(waveform), "未対応の波形です。");
+    }
+
     public string QueryIdentity() =>
         (_instrument ?? throw new ObjectDisposedException(nameof(Wf1973ContinuousSession))).Query("*IDN?");
 

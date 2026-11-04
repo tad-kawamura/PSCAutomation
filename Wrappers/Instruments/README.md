@@ -24,7 +24,7 @@ WF1973 は使い方ごとに 3 つのクラスがある(判断 4、2026-11-04。
 | やりたいこと | クラス | 接続 | 元 |
 |---|---|---|---|
 | 三角波を、トリガー 1 回ごとに指定の周期数だけ出す(外部トリガー)。WF1973 と SDG1032X のどちらでも動かしたい | `IFunctionGeneratorSession`(中身は `Wf1973BurstSession` か `Sdg1032XSession`) | `FunctionGeneratorConnection.Connect()`(USB の WF1973 / SDG1032X を自動判別) | AS110AllCheck・AS110BoltCheck の `Wf1973Session` / `Sdg1032XSession` |
-| 振幅・周波数・位相を決めて連続で出し、位相をそろえて出し直す | `Wf1973ContinuousSession` | `Wf1973ContinuousSession.Connect()` | AS100201SwitchController の `Wf1973Session` |
+| 振幅・周波数・位相を決めて連続で出し、位相をそろえて出し直す | `Wf1973ContinuousSession` | `Wf1973ContinuousSession.Connect(GeneratorWaveform.Triangle)`(接続時に形も送る。`Connect()` は本体に残っている形のまま) | AS100201SwitchController の `Wf1973Session` |
 | DC のオフセット電圧を出し、出力を切らずに電圧だけ変える(電流指令など) | `Wf1973DcSource` | `Wf1973DcSource.Connect()`(USB の VID/PID で探す) | AS110NoiseTest の `Wf1973DcSource` |
 
 7351E は `Adcmt7351ESession.Connect()` → `ApplySettings(new Adcmt7351ESettings())` → `ReadMilliamps()`。
