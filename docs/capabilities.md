@@ -2,7 +2,7 @@
 
 > **2026-11-04 更新**。WAVE LOGGER・ロガーの出力ファイル・共通(NR-X 接続補助を含む)・Excel(xlsx 直接書き込みと、Excel を起動する操作)・Arduino・VISA 機器(発振器・DMM)は `Wrappers/` へ移植済みで、この一覧は実装に合わせてある。各項目の「元」は旧リポジトリの場所。出どころと移植時の変更は `docs/移行記録.md`。
 >
-> ここに書いた動作のうち、機器を使うものは**実機で確認していない**(ビルドと、模擬クラスを使うテストだけ)。Excel を起動する操作は、Excel のある PC で `Wrappers/Tests/Excel.Tests` が実際に Excel を動かして確かめている(アプリからの呼び出しは未確認)。
+> ここに書いた動作のうち、機器を使うものの実機確認は 2026-11-04 に移植後のコードで行った範囲だけ: AS110NoiseTest の通しで使った旧 WAVE LOGGER + NR-500(USB)・7351E・WF1973(DC)・Excel への書き込み、`Wrappers/Tests/Instruments.HardwareCheck` で WF1973 のバースト・連続。**それ以外(WAVE LOGGER X、NR-X、Wi-Fi 切替、Arduino、SDG1032X など)は実機で確認していない**(ビルドと、模擬クラスを使うテストだけ)。各項目の「制約」に確認した範囲を書く。Excel を起動する操作は、Excel のある PC で `Wrappers/Tests/Excel.Tests` が実際に Excel を動かして確かめている(アプリからは AS110NoiseTest の結果ブックへの書き込みを実機確認で通した。XdtConversion の `ExcelViewer` は未確認)。
 
 新しい依頼を受けたら、まずここを読んで「今の wrapper で何ができるか」を把握し、できる範囲から選択肢を出す。ここに無い機器・操作は、wrapper の新規作成(全アプリに影響)として人に確認する。
 

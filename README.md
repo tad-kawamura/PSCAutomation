@@ -24,7 +24,7 @@ PSCAutomation/
 
 - 共通 wrapper(WaveLogger.Automation・LoggerFiles・Common(NR-X 接続補助を含む)・Excel(xlsx 直接書き込みと Excel を起動する操作)・Arduino・Instruments(VISA 機器))はすべて `Wrappers/` へ移した(`docs/wrapper比較.md` の手順 2〜4)。出どころと変更点は `docs/移行記録.md`、箱の一覧とテストの実行方法は `Wrappers/README.md`。
 - アプリは XdtConversion(`Apps/XdtConversion`、`XdtConversion.slnf`。[README](Apps/XdtConversion/README.md))と AS110NoiseTest(`Apps/AS110NoiseTest`、`AS110NoiseTest.slnf`。[README](Apps/AS110NoiseTest/README.md))を移した。AS110AllCheck・AS110BoltCheck・AS100201SwitchController はまだ。
-- 全体 `PSCAutomation.sln` のビルド、`Wrappers/Tests` の 6 つのテスト、XdtConversion の検証、AS110NoiseTest の機器なしの確認ツールは成功(2026-11-04)。機器を使う動作は、移植後はまだ実機で確認していない。
+- 全体 `PSCAutomation.sln` のビルド、`Wrappers/Tests` の 6 つのテスト、XdtConversion の検証、AS110NoiseTest の機器なしの確認ツールは成功(2026-11-04)。機器を使う動作は、2026-11-04 に移植後のコードで AS110NoiseTest の通し(WF1973・7351E・NR-500・旧 WAVE LOGGER・Excel)と WF1973 の 3 クラス(DC・バースト・連続)を実機で確認した([AS110NoiseTest の README](Apps/AS110NoiseTest/README.md)、`Wrappers/Instruments/docs/WF1973実機確認.md`)。WAVE LOGGER X・NR-X・Wi-Fi 切替・Arduino・SDG1032X は未確認。
 - 移植元 5 リポジトリ(すべて `tad-kawamura` の Private)の比較を終え、統合方針を `docs/wrapper比較.md` に書いた。人の判断待ちの項目は同文書の末尾。
 - リポジトリ名は `PSCAutomation`、Wrappers は依存ごとに 6 つの csproj に分けると決めた(`docs/wrapper比較.md`)。作業フォルダ名は `MergeProject` から `PSCAutomation` に変更済み、GitHub リポジトリ(`tad-kawamura/PSCAutomation`、Private)も作成済み。
 - .NET は全アプリ `net9.0-windows`(SDK 9.0.318 で確認)。

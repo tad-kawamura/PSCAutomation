@@ -36,8 +36,8 @@
 | 1 | 旧 5 リポジトリの比較と統合方針(本文書) | 済(2026-11-04) |
 | 2 | A(WaveLogger.Automation)・C(Common)・E(NR-X 接続補助)・F(LoggerFiles)・Excel の移植 | **済(2026-11-04)**。Excel を起動する操作(`ExcelWorkSession` / `NoiseResultWorkbook` / `ExcelPresenter` の汎用部分)は判断 8 のあとに移植(2026-11-04)。出どころと変更点は `docs/移行記録.md` |
 | 3 | B(Arduino)の移植 | **済(2026-11-04)**。AllCheck 版の `ArduinoConnection` と、SwitchController 版の `Configure` 方式 + AllCheck の `SHUTDOWN_ERROR` の `ArduinoDiagnosticLog`。BoltCheck の NF 判定をどうするか(判断 3)はアプリ側の話なので、BoltCheck を移すときに決める。実機確認は未実施 |
-| 4 | D(VISA 機器)の移植 | **済(2026-11-04)**。判断 4 の案 A(下記 D 節の採用案)で `Wrappers/Instruments` へ。通信部分を 1 つにし、WF1973 は 3 クラスを別名で残した。送るコマンドと順番は元のまま(模擬の通信で確認)。実機確認は未実施 |
-| 5 | アプリの移植と `.slnf` の整備 | **XdtConversion は済(2026-11-04)**(`Apps/XdtConversion`、`XdtConversion.slnf`)。旧 Verification の A6 停止は検査の前提の誤りで、参照値と比べる形に直した(`docs/移行記録.md`)。**AS110NoiseTest は済(2026-11-04)**(`Apps/AS110NoiseTest`、`AS110NoiseTest.slnf`)。機器・Excel の操作を wrapper に置き換え、移植前のツールと出力が一致することを確認(実機は未確認)。AS110AllCheck・AS110BoltCheck・AS100201SwitchController は未着手 |
+| 4 | D(VISA 機器)の移植 | **済(2026-11-04)**。判断 4 の案 A(下記 D 節の採用案)で `Wrappers/Instruments` へ。通信部分を 1 つにし、WF1973 は 3 クラスを別名で残した。送るコマンドと順番は元のまま(模擬の通信で確認)。実機確認は 2026-11-04 に WF1973 の 3 クラス(DC・バースト・連続)と 7351E(AS110NoiseTest の範囲)で済(`Wrappers/Instruments/docs/WF1973実機確認.md`)。SDG1032X は未確認 |
+| 5 | アプリの移植と `.slnf` の整備 | **XdtConversion は済(2026-11-04)**(`Apps/XdtConversion`、`XdtConversion.slnf`)。旧 Verification の A6 停止は検査の前提の誤りで、参照値と比べる形に直した(`docs/移行記録.md`)。**AS110NoiseTest は済(2026-11-04)**(`Apps/AS110NoiseTest`、`AS110NoiseTest.slnf`)。機器・Excel の操作を wrapper に置き換え、移植前のツールと出力が一致することを確認。2026-11-04 に実機でも通しが完走(`Apps/AS110NoiseTest/README.md`)。AS110AllCheck・AS110BoltCheck・AS100201SwitchController は未着手 |
 
 手順 2 で決めたこと・本文書の案から変えたこと:
 - E(NR-X 接続補助)は案どおり `Wrappers/Common` に置いた。`NrXConnection` / `Nr500Connection` が `WaveLoggerSession` を使うので、Common は WaveLogger.Automation を参照する(外部依存はないまま)。
