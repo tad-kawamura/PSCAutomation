@@ -79,8 +79,7 @@
 - 受信行の意味(`NF:0` / `NF:1`、READY、スイッチ状態)と受信頻度の判定は**アプリ側のプロトコルクラス**が持つ(AllCheck `As110ArduinoProtocol`、SwitchController `As100201ArduinoProtocol`)
 
 **制約**
-- 115200bps、改行 `
-`、送信 UTF-8(BOM なし)、受信は ASCII として解釈、DTR 有効(元のまま固定)
+- 115200bps、改行 `\n`(LF)、送信 UTF-8(BOM なし)、受信は ASCII として解釈、DTR 有効(元のまま固定)
 - `ConnectAsync` は応答が得られるまで PC の COM ポートを順に開いて確認文字列を送る。Arduino 以外の機器がつながった COM ポートにも送る点に注意(元のまま)
 - 異常ログは静的クラスでプロセスに 1 つ。`Configure` は起動時に 1 回呼ぶ
 - 通信断だけでは発振器や LOGGER を止めない(方針はアプリ側)
@@ -107,7 +106,7 @@ WAVE LOGGER を起動せずに、出力ファイルを直接読み書きする�
 大枠は「ロガーの値を Excel 雛形へ転記する」。アプリごとの違い(どの CH をどのシート・セルに書くか、間引き数、判定セルの読み方)はアプリ側の設定で渡す。
 
 - xlsx への直接書き込み(`TemplateWriter`、元 AllCheck / XdtConversion、移植済み): 値の列を指定シート・セルから書く。開始セル以降の旧値は消す。数式のある列・同名の保存先は止める。開いたときに再計算する設定にする。**Excel のインストール不要**
-- (未移植)Excel を起動しての操作(元 AllCheck `ExcelWorkSession`、NoiseTest `NoiseResultWorkbook`): 開く・数式の再計算・セルの読み取り・保存・PDF 保存・閉じる。汎用部分だけを wrapper にし、判定ロジックはアプリ側。どこまでを wrapper にするかは判断待ち
+- (未移植)Excel を起動しての操作(元 AllCheck `ExcelWorkSession`、NoiseTest `NoiseResultWorkbook`): 開く・数式の再計算・セルの読み取り・保存・PDF 保存・閉じる。汎用部分だけを wrapper にし、判定ロジックはアプリ側。どこまでを wrapper にするかは判断待ち。XdtConversion の `ExcelPresenter`(Excel を起動してブックを表示するだけ)は、判断が出るまで `Apps/XdtConversion` 側に置いてある
 
 **制約**
 - Excel を起動する操作は実行 PC に Excel が必要(実行時に探す方式なので、ビルドには不要)
@@ -120,7 +119,7 @@ WAVE LOGGER を起動せずに、出力ファイルを直接読み書きする�
 - `WindowActivation`: 他プロセスの窓を前面にする
 - `NrDeviceConnections` / `SingleAdapterWifiManager`: NR-X の接続先(USB / LAN / Wi-Fi)の整理と、Wi-Fi プロファイル切替。SSID 一覧はアプリ側の設定に置く
 
-## アプリの一覧(移植予定)
+## アプリの一覧
 
 | アプリ | 内容 | 使う機器 |
 |---|---|---|
@@ -128,4 +127,4 @@ WAVE LOGGER を起動せずに、出力ファイルを直接読み書きする�
 | AS110BoltCheck | AS110 の動き検査 | NR-X、WF1973 or SDG1032X、Arduino(NF インターロック) |
 | AS100201SwitchController | AS100-201 のスイッチ制御 | NR-X、WF1973(連続)、Arduino(スイッチ・READY LED) |
 | AS110NoiseTest | AS110 のノイズ測定(電流を変えながら制御圧力の p-p を判定) | NR-500、WF1973(DC)、ADCMT 7351E、Excel |
-| XdtConversion | xdt を Excel 雛形へ転記する単機能アプリ | ファイルのみ、Excel |
+| XdtConversion | xdt を Excel 雛形へ転記する単機能アプリ。**移植済み**(`Apps/XdtConversion`、`XdtConversion.slnf`) | ファイルのみ、Excel |

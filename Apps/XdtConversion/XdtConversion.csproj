@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net9.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <!-- exe 名は元のまま(XdtConversion.exe) -->
+    <AssemblyName>XdtConversion</AssemblyName>
+    <RootNamespace>PSCAutomation.Apps.XdtConversion</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- 検証プロジェクトはこのフォルダーの下にあるが、アプリには含めない -->
+    <Compile Remove="Verification\**" />
+    <EmbeddedResource Remove="Verification\**" />
+    <None Remove="Verification\**" />
+  </ItemGroup>
+  <ItemGroup>
+    <Content Include="雛形\雛形.xlsx" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" ExcludeFromSingleFile="true" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\Wrappers\LoggerFiles\LoggerFiles.csproj" />
+    <ProjectReference Include="..\..\Wrappers\Excel\Excel.csproj" />
+  </ItemGroup>
+</Project>

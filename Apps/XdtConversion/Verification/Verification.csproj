@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net9.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AssemblyName>XdtConversion.Verification</AssemblyName>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\Wrappers\LoggerFiles\LoggerFiles.csproj" />
+    <ProjectReference Include="..\..\..\Wrappers\Excel\Excel.csproj" />
+    <!-- アプリ本体は WinForms なので参照せず、変換部分(GUI・Excel COM なし)だけを取り込む(元の Verification と同じ方式) -->
+    <Compile Include="..\ConversionService.cs" Link="ConversionService.cs" />
+    <Content Include="Fixtures\**\*" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="..\雛形\雛形.xlsx" Link="template.xlsx" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>

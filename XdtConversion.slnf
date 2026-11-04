@@ -1,0 +1,11 @@
+{
+  "solution": {
+    "path": "PSCAutomation.sln",
+    "projects": [
+      "Apps\\XdtConversion\\XdtConversion.csproj",
+      "Apps\\XdtConversion\\Verification\\Verification.csproj",
+      "Wrappers\\LoggerFiles\\LoggerFiles.csproj",
+      "Wrappers\\Excel\\Excel.csproj"
+    ]
+  }
+}

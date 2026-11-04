@@ -37,7 +37,7 @@
 | 2 | A(WaveLogger.Automation)・C(Common)・E(NR-X 接続補助)・F(LoggerFiles)・Excel の移植 | **済(2026-11-04)**。ただし Excel を起動する操作(`ExcelWorkSession` / `NoiseResultWorkbook` の汎用部分)は範囲が決まっていないので未移植。出どころと変更点は `docs/移行記録.md` |
 | 3 | B(Arduino)の移植 | **済(2026-11-04)**。AllCheck 版の `ArduinoConnection` と、SwitchController 版の `Configure` 方式 + AllCheck の `SHUTDOWN_ERROR` の `ArduinoDiagnosticLog`。BoltCheck の NF 判定をどうするか(判断 3)はアプリ側の話なので、BoltCheck を移すときに決める。実機確認は未実施 |
 | 4 | D(VISA 機器)の移植 | 未着手(判断 4 待ち) |
-| 5 | アプリの移植と `.slnf` の整備 | 未着手 |
+| 5 | アプリの移植と `.slnf` の整備 | **XdtConversion は済(2026-11-04)**(`Apps/XdtConversion`、`XdtConversion.slnf`)。旧 Verification の A6 停止は検査の前提の誤りで、参照値と比べる形に直した(`docs/移行記録.md`)。AS110AllCheck・AS110BoltCheck・AS100201SwitchController・AS110NoiseTest は未着手(VISA の箱が要るので判断 4 の後) |
 
 手順 2 で決めたこと・本文書の案から変えたこと:
 - E(NR-X 接続補助)は案どおり `Wrappers/Common` に置いた。`NrXConnection` / `Nr500Connection` が `WaveLoggerSession` を使うので、Common は WaveLogger.Automation を参照する(外部依存はないまま)。
@@ -161,4 +161,4 @@ XDT(WAVE LOGGER の波形ファイル)のバイナリを触るコードが 4 か
 5. **ファームウェアをモノレポに含める**(推奨)か。
 6. **NR-X の Wi-Fi プロファイル(SSID)の置き場**: 各アプリの設定クラスか、共通の 1 か所か。(手順 2 では wrapper に持たせていない。アプリ移植までに決めればよい)
 7. 履歴は**コピーのみ**(現案)でよいか。(手順 2 はコピーのみで進め、出どころを `docs/移行記録.md` に書いた)
-8. **Excel を起動する操作のうち、どこまでを wrapper にするか**(手順 2 で判明)。AllCheck の `ExcelWorkSession` と NoiseTest の `NoiseResultWorkbook` は、Excel の起動・ブックを開く・保存・PDF 化・閉じる・COM 解放の共通部分と、AS110 固有の処理(図形内の S/N 書き換え、E21・L21 の判定、PP 値シートの行の決め方)が 1 つのクラスに入っている。
+8. **Excel を起動する操作のうち、どこまでを wrapper にするか**(手順 2 で判明)。AllCheck の `ExcelWorkSession` と NoiseTest の `NoiseResultWorkbook` は、Excel の起動・ブックを開く・保存・PDF 化・閉じる・COM 解放の共通部分と、AS110 固有の処理(図形内の S/N 書き換え、E21・L21 の判定、PP 値シートの行の決め方)が 1 つのクラスに入っている。XdtConversion の `ExcelPresenter`(Excel を起動してブックを表示するだけ)も同じ判断の対象で、それまでは `Apps/XdtConversion` 側に置く(2026-11-04)。
