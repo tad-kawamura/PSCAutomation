@@ -113,10 +113,10 @@ XDT(WAVE LOGGER の波形ファイル)のバイナリを触るコードが 4 か
 
 **推奨**: モノレポに含め、`Apps/<アプリ>/firmware/` に置く(`.ino.cpp` などの生成物は除外)。PC 側プロトコルと同じコミットで追えるのが利点。
 
-## namespace と csproj の案
+## namespace と csproj(決定: 2026-11-04)
 
-- 旧コードの namespace はアプリ名(`AS110BoltCheck` / `AS100201SwitchController` / `AS110NoiseTest.Devices`)か `XdtConversion` / `WaveLogger.Automation`。モノレポでは `Wrappers` 配下を `AS110Tools.Wrappers.<グループ>` に揃え、アプリ側は `using` の追加で対応する(機械的な変更)。
-- csproj は**依存ごとに分ける**ことを推奨(アプリが要らない依存を引き込まないため):
+- 旧コードの namespace はアプリ名(`AS110BoltCheck` / `AS100201SwitchController` / `AS110NoiseTest.Devices`)か `XdtConversion` / `WaveLogger.Automation`。モノレポでは `Wrappers` 配下を `PscAutomation.Wrappers.<グループ>`(例: `PscAutomation.Wrappers.Arduino`)、アプリ側を `PscAutomation.Apps.<アプリ>` に揃え、アプリ側は `using` の追加で対応する(機械的な変更)。
+- csproj は**依存ごとに 5 つに分ける**(決定)。アプリが要らない依存を引き込まないため。特に NI-VISA(COM 参照)を使わないアプリは、NI-VISA が入っていない PC でもビルドできる:
 
 | csproj | 中身 | 外部依存 |
 |---|---|---|
@@ -134,8 +134,8 @@ XDT(WAVE LOGGER の波形ファイル)のバイナリを触るコードが 4 か
 
 ## 人に判断してもらいたいこと
 
-1. **リポジトリ名**(仮: AS110Tools)。このフォルダ名(MergeProject)も後で合わせる。
-2. **Wrappers の csproj を 5 つに分ける案**でよいか(1 つにまとめる案も可)。
+1. ~~リポジトリ名~~ → **決定: `PscAutomation`**(2026-11-04)。AS110 は製品名で AS100201 などとは別物なので、全体の名前にしない。目的は「社内の自動化プログラムの整理」なので社名の略称 + Automation。.NET の命名規則(3 文字以上の略語は先頭だけ大文字)に合わせて `PSC` ではなく `Psc` と書く。作業フォルダ名(MergeProject)は人が区切りのよいところで変える。
+2. ~~csproj の分け方~~ → **決定: 依存ごとに 5 つ**(上の表のとおり。2026-11-04)。
 3. **BoltCheck の Arduino を AllCheck 版に揃える**(NF 判定をアプリ側へ移す。実機確認が要る)か、当面 BoltCheck だけ古い wrapper を抱えたまま移すか。
 4. **WF1973 の 3 クラスを別名で残す 2 段階案**でよいか。
 5. **ファームウェアをモノレポに含める**(推奨)か。

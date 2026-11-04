@@ -1,6 +1,7 @@
-# AS110Tools(仮称)の作業指示
+# PscAutomation の作業指示
 
-このリポジトリは、AS110 系のハード連携アプリ(マイコン・発振器・計測器・KEYENCE WAVE LOGGER)と、それらが共通で使う wrapper を 1 つに集約したモノレポ。
+このリポジトリは、PSC 社内の自動化プログラム(人が手でやっていた機器操作・画面操作・記録を、ボタン 1 つでできるようにするアプリ)と、それらが共通で使う wrapper を 1 つに集約したモノレポ。
+最初の対象は AS110 / AS100201 系のハード連携アプリ(マイコン・発振器・計測器・KEYENCE WAVE LOGGER)。特定の製品専用ではないので、製品名をリポジトリ全体の名前や共通部分の名前空間に使わない(製品名はアプリ名にだけ使う)。
 AI 未経験のメンバーでも、仕様決めから開発までをここで進められるようにするのが目的。
 
 作業指示の正本はこの `AGENTS.md`。Claude Code は `CLAUDE.md`(`@AGENTS.md` の 1 行)から本ファイルを読む。`CLAUDE.md` には独自の指示を書かず、追加・変更は本ファイルに行う。ChatGPT(Codex)で作業しても同じ手順に従う。
@@ -20,11 +21,12 @@ docs/capabilities.md   ← wrapper の機能一覧(できること・制約)
 Wrappers/              ← 共通 wrapper(C# クラスライブラリ、依存ごとに csproj を分ける)
 Apps/<各アプリ>/        ← exe はアプリごとに別。Wrappers を ProjectReference する
 specs/                 ← 仕様インタビューで作った SPEC.md
-AS110Tools.sln         ← 全体
+PscAutomation.sln      ← 全体
 *.slnf                 ← アプリ別フィルター
 ```
 
 - 言語は C#、.NET は `net9.0-windows`(WinForms)。機器なしで動かせる部分は `net9.0` でもよい
+- 名前空間は wrapper が `PscAutomation.Wrappers.<グループ>`、アプリが `PscAutomation.Apps.<アプリ>` を基本にする(旧コードを移すときに揃える)
 - 普段は `.slnf` でアプリ単位に作業する。**wrapper を変えたときだけ全体 `.sln` をビルド**して他アプリが壊れていないか確認する
 - `bin/` `obj/`、計測データ(xdt / ydt / xlsx / pdf)、ログは `.gitignore` で除外。雛形だけは入れる
 
