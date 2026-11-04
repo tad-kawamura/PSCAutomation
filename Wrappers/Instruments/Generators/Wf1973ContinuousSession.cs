@@ -64,6 +64,19 @@ public sealed class Wf1973ContinuousSession : IDisposable
             throw new InvalidOperationException($"WF1973 の設定完了を確認できません（応答：{response}）。");
     }
 
+    // 接続したまま波形の形だけを送り直す(2026-11-04 追加。AS100201SwitchController の「確認」ボタン用)。
+    // 出力の ON / OFF・振幅・周波数・オフセット・位相は変えない。出力中に呼ぶと形が切り替わる間、出力が乱れることがある。
+    public void SetWaveform(GeneratorWaveform waveform)
+    {
+        ValidateWaveform(waveform);
+        var instrument = _instrument ?? throw new ObjectDisposedException(nameof(Wf1973ContinuousSession));
+        instrument.Write(":SOURce:FUNCtion:SHAPe RAMP");
+        instrument.Write(":SOURce:FUNCtion:RAMP:SYMMetry 50PCT");
+        string response = instrument.Query("*OPC?");
+        if (response != "1")
+            throw new InvalidOperationException($"WF1973 の設定完了を確認できません（応答：{response}）。");
+    }
+
     private static void ValidateWaveform(GeneratorWaveform waveform)
     {
         if (waveform != GeneratorWaveform.Triangle)

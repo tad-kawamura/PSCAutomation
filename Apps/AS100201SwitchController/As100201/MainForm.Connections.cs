@@ -140,7 +140,15 @@ internal sealed partial class MainForm : Form
                 }
                 else
                 {
-                    try { _wf1973.QueryIdentity(); }
+                    try
+                    {
+                        _wf1973.QueryIdentity();
+                        // 接続済みでも「確認」では波形の形だけ送り直す(2026-11-04 決定)。
+                        // 動作中に別のアプリや前面パネルで DC などにされても、ここで三角波に戻せる。
+                        // 出力の ON / OFF・振幅・オフセット・位相は変えない(次の PC_go / CR_go で送る)。
+                        _wf1973.SetWaveform(As100201WaveformSettings.Waveform);
+                        AppendLog("WF1973：波形の形を三角波に設定しました。");
+                    }
                     catch (Exception ex)
                     {
                         _wf1973.Dispose();

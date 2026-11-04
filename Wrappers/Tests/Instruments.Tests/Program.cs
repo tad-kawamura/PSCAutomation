@@ -248,7 +248,19 @@ void Same(IEnumerable<string> actual, string[] expected, string name)
     var notDone = new FakeInstrument("NF,WF1973,FAKE") { Responder = c => c == "*OPC?" ? "0" : "" };
     Fails<InvalidOperationException>(() => Wf1973ContinuousSession.InitializeContinuousOutput(notDone, GeneratorWaveform.Triangle), "設定完了の応答が 1 でない");
     Fails<ArgumentOutOfRangeException>(() => Wf1973ContinuousSession.InitializeContinuousOutput(new FakeInstrument("NF,WF1973,FAKE"), (GeneratorWaveform)99), "未対応の波形");
-    Console.WriteLine("PASS Wf1973ContinuousSession: 形を指定した初期化(三角波・*OPC? の確認・未対応の波形)");
+    // 接続したまま形だけ送り直す(出力・振幅・位相は送らない)
+    var reshaped = new FakeInstrument("NF,WF1973,FAKE") { Responder = c => c == "*OPC?" ? "1" : "" };
+    var reshapeSession = new Wf1973ContinuousSession(reshaped);
+    Check(await reshapeSession.StartWithPhaseAsync(continuous, 15, () => false), "形の送り直し前の開始");
+    reshaped.Commands.Clear();
+    reshapeSession.SetWaveform(GeneratorWaveform.Triangle);
+    Same(reshaped.Commands, new[] { ":SOURce:FUNCtion:SHAPe RAMP", ":SOURce:FUNCtion:RAMP:SYMMetry 50PCT", "*OPC?" }, "形だけの送り直し");
+    reshaped.Commands.Clear();
+    Check(await reshapeSession.StartWithPhaseAsync(continuous, 165, () => false), "形の送り直し後の開始");
+    Check(!reshaped.Commands.Contains(":OUTPut:STATe ON") && !reshaped.Commands.Contains(":OUTPut:STATe OFF"), "形の送り直しで出力の状態が変わった");
+    reshapeSession.Dispose();
+    Fails<ObjectDisposedException>(() => reshapeSession.SetWaveform(GeneratorWaveform.Triangle), "Dispose 後の形の送り直し");
+    Console.WriteLine("PASS Wf1973ContinuousSession: 形を指定した初期化(三角波・*OPC? の確認・未対応の波形)、形だけの送り直し");
 }
 
 // ---------- D3 DC 出力(Wf1973DcSource) ----------
