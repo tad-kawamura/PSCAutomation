@@ -130,7 +130,7 @@ XDT(WAVE LOGGER の波形ファイル)のバイナリを触るコードが 4 か
 - AS110BoltCheck `_arduino/AS110_NfInterlock/AS110_NfInterlock.ino`
 - AS100201SwitchController `_arduino/ArduinoSwitchAndReadyLed/ArduinoSwitchAndReadyLed.ino`
 
-**推奨**: モノレポに含め、`Apps/<アプリ>/firmware/` に置く(`.ino.cpp` などの生成物は除外)。PC 側プロトコルと同じコミットで追えるのが利点。
+**決定: モノレポに含める**(2026-11-04)。`Apps/<アプリ>/firmware/` に置く(`.ino.cpp` などの生成物は除外)。PC 側プロトコルと同じコミットで追え、クローンしたときにマイコン側のコードだけ欠けることがない。3 本とも秘密情報(Wi-Fi のパスワードなど)を含まず、小さく、1 アプリ専用であることを確認済み。移す時期は各アプリの移植と同時。書き込み手順(Arduino IDE、AllCheck は `M5Unified` ライブラリが要る)は各アプリの README に書く。
 
 ## namespace と csproj(決定: 2026-11-04)
 
@@ -160,7 +160,7 @@ XDT(WAVE LOGGER の波形ファイル)のバイナリを触るコードが 4 か
 2. ~~csproj の分け方~~ → **決定: 依存ごとに 6 つ**(上の表のとおり。2026-11-04)。NI-VISA を使う箱を分けておくと、使わないアプリは NI-VISA なしでビルドできる。校正値の部品は LoggerFiles、Excel 転記は新しい箱 `Excel` に置く。
 3. **BoltCheck の Arduino を AllCheck 版に揃える**(NF 判定をアプリ側へ移す。実機確認が要る)か、当面 BoltCheck だけ古い wrapper を抱えたまま移すか。
 4. ~~WF1973 の 3 クラスを別名で残す 2 段階案~~ → **決定: 案 A(2 段階案)**(2026-11-04)。今すぐ 1 クラスに統合する案(3 アプリとも発振器の動きが変わり実機確認が要る)と、通信部分もまとめずに移す案(COM の解放と探索が 3 か所に残る)を比べて選んだ。2 段階目(3 クラスを 1 つに寄せるか)は、アプリを移して実機で安定してから決める。
-5. **ファームウェアをモノレポに含める**(推奨)か。
+5. ~~ファームウェアをモノレポに含めるか~~ → **決定: 含める**(2026-11-04)。`Apps/<アプリ>/firmware/` に、各アプリの移植と同時に移す(上の「H. ファームウェア」)。
 6. **NR-X の Wi-Fi プロファイル(SSID)の置き場**: 各アプリの設定クラスか、共通の 1 か所か。(手順 2 では wrapper に持たせていない。アプリ移植までに決めればよい)
 7. 履歴は**コピーのみ**(現案)でよいか。(手順 2 はコピーのみで進め、出どころを `docs/移行記録.md` に書いた)
 8. **Excel を起動する操作のうち、どこまでを wrapper にするか**(手順 2 で判明)。AllCheck の `ExcelWorkSession` と NoiseTest の `NoiseResultWorkbook` は、Excel の起動・ブックを開く・保存・PDF 化・閉じる・COM 解放の共通部分と、AS110 固有の処理(図形内の S/N 書き換え、E21・L21 の判定、PP 値シートの行の決め方)が 1 つのクラスに入っている。XdtConversion の `ExcelPresenter`(Excel を起動してブックを表示するだけ)も同じ判断の対象で、それまでは `Apps/XdtConversion` 側に置く(2026-11-04)。
