@@ -1,7 +1,7 @@
 # XdtConversion
 
 保存済みの旧 WAVE LOGGER / WAVE LOGGER X の xdt を直接読み、測定値を Excel 雛形へ転送する単機能アプリ。LOGGER 本体ソフトは使わない。
-元は GitHub `tad-kawamura/XdtConversion`(`9809ec3a5352`、2026-10-26)。2026-11-04 に PSCAutomation へ移した(出どころと変更点は `docs/移行記録.md`)。旧リポジトリは同日にアーカイブした(読み取り専用)。移植前の履歴はそちらで見る。
+元は GitHub `tad-kawamura/XdtConversion`(`9809ec3a5352`、2026-10-26)。2026-11-04 に PSCAutomation へ移した(出どころと変更点は `docs/移行記録.md`)。旧リポジトリは同日にアーカイブした(読み取り専用)。移植前の履歴はそちらで見る。旧リポジトリの README の冒頭には、ここへの案内を書いてある(`31620ee`)。旧リポジトリをクローンした PC は、PSCAutomation をクローンし直して作業する。
 
 - namespace は `PSCAutomation.Apps.XdtConversion`、対象は `net9.0-windows`(WinForms)。exe 名は元のまま `XdtConversion.exe`
 - xdt の読み取りは `Wrappers/LoggerFiles`(`XdtReader`)、xlsx への書き込みは `Wrappers/Excel`(`TemplateWriter`)を使う
