@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net9.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>PSCAutomation.Wrappers.Instruments.HardwareCheck</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- WF1973(バースト・連続)を動かす -->
+    <ProjectReference Include="..\..\Instruments\Instruments.csproj" />
+    <!-- NR-500 で指令電圧を記録する -->
+    <ProjectReference Include="..\..\WaveLogger.Automation\WaveLogger.Automation.csproj" />
+    <!-- 保存した xdt を読む -->
+    <ProjectReference Include="..\..\LoggerFiles\LoggerFiles.csproj" />
+  </ItemGroup>
+</Project>

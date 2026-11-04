@@ -12,8 +12,10 @@ Visa/        通信部分(探索・送受信・切断)
   VisaSearchOptions       探し方(パターン・リソース指定・USB 限定・失敗時の詳細)
 Generators/  発振器
 Meters/      DMM
-docs/        7351E の実機確認メモ(元 AS110NoiseTest)
+docs/        7351E の実機確認メモ(元 AS110NoiseTest)、WF1973 の実機確認(移植後)
 ```
+
+実機での確認は `Wrappers/Tests/Instruments.HardwareCheck`(WF1973 のバースト・連続を出しながら NR-500 で記録して判定する)。結果は `docs/WF1973実機確認.md`。
 
 ## WF1973 のクラスの選び方
 

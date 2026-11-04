@@ -62,7 +62,9 @@
 - 負荷設定は本体の設定を使う
 - SDG1032X は AS110 のバースト用途だけ確認済み
 - 同じ WF1973 を 2 つのクラスで同時に開かない(状態の管理がクラスごと)
-- 実機での動作は**未確認**(移植後)。テストは模擬の通信で、送るコマンドと順番が元と同じことを確かめただけ
+- 連続(`Wf1973ContinuousSession`)は波形の形を送らない(本体に残っている形のまま出る。DC の後に使うと DC のまま)。位相を変えて出し直すと、まず設定の差だけずれ、約 80ms 後に設定の位相からやり直す(段差が 2 回)
+- `SetDcOutput` は呼んでから約 0.16 秒後に出る(バーストの `*TRG` はすぐ出る)
+- 移植後の実機確認(2026-11-04、WF1973 の 3 クラスとも): `Wrappers/Instruments/docs/WF1973実機確認.md`。SDG1032X、連続の負の電圧(±5.1V)、旧アプリの画面からの操作は未確認
 
 ### ADCMT 7351E(DMM)(`Adcmt7351ESession`、`Wrappers/Instruments`)
 
@@ -75,7 +77,7 @@
 **制約**
 - 通信は USB のみ。コマンドは ADC 独自(SCPI 不可)。本体の LANG を ADC にしておく
 - 設定変更直後は古い読み値が残るので捨てる(`DiscardStaleReadings`。Bus トリガなら不要)
-- 実機での確認内容は `Wrappers/Instruments/docs/7351E実機確認.md`(移植前の AS110NoiseTest での確認)。移植後の実機確認は**未実施**
+- 実機での確認内容は `Wrappers/Instruments/docs/7351E実機確認.md`(移植前の AS110NoiseTest での確認)。移植後は 2026-11-04 に AS110NoiseTest の範囲(DCI・200mA・BUS トリガでの読み取り)を実機で確認(`Apps/AS110NoiseTest/README.md`)。200mA 以外のレンジ・Immediate トリガは移植後未確認
 
 ### Arduino(`Wrappers/Arduino`、`PSCAutomation.Wrappers.Arduino`)
 
