@@ -24,6 +24,9 @@ Logs/
 !**/雛形/*.xlsx
 !docs/**/*.xlsx
 !**/Verification/Fixtures/*.xdt
+# wrapper のテスト用の照合データ(Wrappers/Tests/<テスト>/Fixtures)は入れる
+!Wrappers/Tests/**/Fixtures/*.xdt
+!Wrappers/Tests/**/Fixtures/*.ydt
 ~$*
 
 # Python の一時ファイル

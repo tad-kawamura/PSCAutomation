@@ -1,0 +1,349 @@
+[
+  {
+    "name": "b",
+    "xdtSha256": "fc3112a24bc89de3aa51f1749523855f535868db0458678bb1f6f16524a57720",
+    "source": "WAVE LOGGER X R5.00.00 SaveCsvFile, 2026-10-26",
+    "acquisitionStart": "2023/12/20 10:32:08.773000",
+    "intervalText": "10ms",
+    "sampleCount": 5200,
+    "firstSample": "2023/12/20 10:32:08.773000",
+    "lastSample": "2023/12/20 10:33:00.763000",
+    "channelNames": [
+      "指令",
+      "圧力",
+      "内部リーク",
+      "電流",
+      "変位"
+    ],
+    "units": [
+      "V",
+      "kPa",
+      "NL/min",
+      "mV",
+      "V"
+    ],
+    "scalingEnabled": [
+      true,
+      true,
+      true,
+      true,
+      true
+    ],
+    "movingAverage": [
+      true,
+      true,
+      false,
+      true,
+      false
+    ],
+    "windows": [
+      29,
+      29,
+      null,
+      11,
+      null
+    ],
+    "firstProcessed": [
+      3.296,
+      400.407,
+      5.2,
+      -32.01,
+      3.226
+    ],
+    "lastProcessed": [
+      4.775,
+      400.307,
+      4.7,
+      8.62,
+      4.803
+    ],
+    "firstProcessedText": [
+      "3.296",
+      "400.407",
+      "5.200",
+      "-32.01",
+      "3.226"
+    ],
+    "lastProcessedText": [
+      "4.775",
+      "400.307",
+      "4.700",
+      "8.62",
+      "4.803"
+    ]
+  },
+  {
+    "name": "c",
+    "xdtSha256": "69ee4ecaa23de799bda31fe023007a8fc7f46d4b15475d12dacec12a750b34b3",
+    "source": "WAVE LOGGER X R5.00.00 SaveCsvFile, 2026-10-26",
+    "acquisitionStart": "2024/02/02 16:23:02.300000",
+    "intervalText": "2ms",
+    "sampleCount": 6500,
+    "firstSample": "2024/02/02 16:23:02.300000",
+    "lastSample": "2024/02/02 16:23:15.298000",
+    "channelNames": [
+      "電流(mA)",
+      "圧力(KPa)"
+    ],
+    "units": [
+      "mA",
+      "KPa"
+    ],
+    "scalingEnabled": [
+      true,
+      true
+    ],
+    "movingAverage": [
+      false,
+      false
+    ],
+    "windows": [
+      null,
+      null
+    ],
+    "firstProcessed": [
+      0.05,
+      0.199
+    ],
+    "lastProcessed": [
+      0.05,
+      0.299
+    ],
+    "firstProcessedText": [
+      "0.050",
+      "0.199"
+    ],
+    "lastProcessedText": [
+      "0.050",
+      "0.299"
+    ]
+  },
+  {
+    "name": "loggerX",
+    "xdtSha256": "420f5128f66c436edbaa19189e3f576f2508d9b78f540b004411ff6e6b54e3a5",
+    "source": "WAVE LOGGER X R5.00.00 SaveCsvFile, 2026-10-26",
+    "acquisitionStart": "2025/10/03 09:44:36.478000",
+    "intervalText": "200μs",
+    "sampleCount": 26000,
+    "firstSample": "2025/10/03 09:44:40.578000",
+    "lastSample": "2025/10/03 09:44:45.777800",
+    "channelNames": [
+      "Voltage01",
+      "Voltage02",
+      "Voltage03",
+      "ｷｰｴﾝｽ変位計"
+    ],
+    "units": [
+      "μm",
+      "V",
+      "μm",
+      "μm"
+    ],
+    "scalingEnabled": [
+      true,
+      false,
+      true,
+      true
+    ],
+    "movingAverage": [
+      false,
+      false,
+      true,
+      false
+    ],
+    "windows": [
+      null,
+      null,
+      9,
+      null
+    ],
+    "firstProcessed": [
+      -205.648,
+      0.719,
+      -199.952,
+      57.1
+    ],
+    "lastProcessed": [
+      -205.648,
+      0.717,
+      -199.944,
+      57.0
+    ],
+    "firstProcessedText": [
+      "-205.648",
+      "0.719",
+      "-199.952",
+      "57.100"
+    ],
+    "lastProcessedText": [
+      "-205.648",
+      "0.717",
+      "-199.944",
+      "57.000"
+    ]
+  },
+  {
+    "name": "PC",
+    "xdtSha256": "e322b4b679c2f047fee0e0ccfe570f9588c2bff5dc6496181c3708f0e66fa05b",
+    "source": "WAVE LOGGER X R5.00.00 SaveCsvFile, 2026-10-26",
+    "acquisitionStart": "2026/08/24 09:54:41.867000",
+    "intervalText": "1ms",
+    "sampleCount": 50000,
+    "firstSample": "2026/08/24 09:54:41.867000",
+    "lastSample": "2026/08/24 09:55:31.866000",
+    "channelNames": [
+      "指令",
+      "元圧Ps1",
+      "電流",
+      "変位",
+      "東京ﾒｰﾀ50",
+      "東京ﾒｰﾀ800"
+    ],
+    "units": [
+      "V",
+      "kPa",
+      "mV",
+      "V",
+      "L/min",
+      "L/min"
+    ],
+    "scalingEnabled": [
+      true,
+      true,
+      true,
+      true,
+      true,
+      true
+    ],
+    "movingAverage": [
+      true,
+      true,
+      false,
+      false,
+      false,
+      false
+    ],
+    "windows": [
+      3,
+      3,
+      null,
+      null,
+      null,
+      null
+    ],
+    "firstProcessed": [
+      0.073,
+      200.155,
+      4.55,
+      -0.0468,
+      7.435,
+      7.8
+    ],
+    "lastProcessed": [
+      0.072,
+      200.02,
+      2.62,
+      -0.0395,
+      7.31,
+      7.9
+    ],
+    "firstProcessedText": [
+      "0.073",
+      "200.1550",
+      "4.55",
+      "-0.0468",
+      "7.435",
+      "7.8"
+    ],
+    "lastProcessedText": [
+      "0.072",
+      "200.0200",
+      "2.62",
+      "-0.0395",
+      "7.310",
+      "7.9"
+    ]
+  },
+  {
+    "name": "CR",
+    "xdtSha256": "f065020df5c2e40fa75dc6f7d8d4676a326530b6a519637e8d50514d5dbabfe0",
+    "source": "WAVE LOGGER X R5.00.00 SaveCsvFile, 2026-10-26",
+    "acquisitionStart": "2026/08/24 09:56:25.589000",
+    "intervalText": "1ms",
+    "sampleCount": 50000,
+    "firstSample": "2026/08/24 09:56:25.589000",
+    "lastSample": "2026/08/24 09:57:15.588000",
+    "channelNames": [
+      "指令",
+      "元圧Ps1",
+      "電流",
+      "変位",
+      "東京ﾒｰﾀ50",
+      "東京ﾒｰﾀ800"
+    ],
+    "units": [
+      "V",
+      "kPa",
+      "mV",
+      "V",
+      "L/min",
+      "L/min"
+    ],
+    "scalingEnabled": [
+      true,
+      true,
+      true,
+      true,
+      true,
+      true
+    ],
+    "movingAverage": [
+      true,
+      true,
+      false,
+      false,
+      false,
+      false
+    ],
+    "windows": [
+      3,
+      3,
+      null,
+      null,
+      null,
+      null
+    ],
+    "firstProcessed": [
+      0.089,
+      199.6,
+      0.87,
+      -0.0627,
+      1.297,
+      1.8
+    ],
+    "lastProcessed": [
+      0.086,
+      199.81,
+      1.01,
+      -0.0635,
+      1.247,
+      1.9
+    ],
+    "firstProcessedText": [
+      "0.089",
+      "199.6000",
+      "0.87",
+      "-0.0627",
+      "1.297",
+      "1.8"
+    ],
+    "lastProcessedText": [
+      "0.086",
+      "199.8100",
+      "1.01",
+      "-0.0635",
+      "1.247",
+      "1.9"
+    ]
+  }
+]

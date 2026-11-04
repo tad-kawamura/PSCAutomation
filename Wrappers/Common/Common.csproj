@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net9.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AssemblyName>PSCAutomation.Wrappers.Common</AssemblyName>
+    <RootNamespace>PSCAutomation.Wrappers.Common</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- NR-X 接続補助(NrDeviceConnections)が WaveLoggerSession を使う -->
+    <ProjectReference Include="..\WaveLogger.Automation\WaveLogger.Automation.csproj" />
+  </ItemGroup>
+</Project>

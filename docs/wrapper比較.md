@@ -29,6 +29,22 @@
 
 推奨する移植順: **A・C・E・F → B → D**。前半は機械的で、全アプリのビルドが通ることを早く確認できる。B と D は実機確認が要る。
 
+## 移植の進み具合
+
+| 手順 | 内容 | 状態 |
+|---|---|---|
+| 1 | 旧 5 リポジトリの比較と統合方針(本文書) | 済(2026-11-04) |
+| 2 | A(WaveLogger.Automation)・C(Common)・E(NR-X 接続補助)・F(LoggerFiles)・Excel の移植 | **済(2026-11-04)**。ただし Excel を起動する操作(`ExcelWorkSession` / `NoiseResultWorkbook` の汎用部分)は範囲が決まっていないので未移植。出どころと変更点は `docs/移行記録.md` |
+| 3 | B(Arduino)の移植 | 未着手(判断 3 待ち) |
+| 4 | D(VISA 機器)の移植 | 未着手(判断 4 待ち) |
+| 5 | アプリの移植と `.slnf` の整備 | 未着手 |
+
+手順 2 で決めたこと・本文書の案から変えたこと:
+- E(NR-X 接続補助)は案どおり `Wrappers/Common` に置いた。`NrXConnection` / `Nr500Connection` が `WaveLoggerSession` を使うので、Common は WaveLogger.Automation を参照する(外部依存はないまま)。
+- `PcDelayObservation` は Arduino の異常ログへ直接書いていたので、書き込み先を `Start(write)` で受け取る形にした(Common が Arduino に依存しないように)。
+- `LoggerCsvReader` はアプリの設定クラスの代わりに、CH 番号・列番号・点数を引数で受け取る形にした(案どおり)。
+- 旧 AllCheck / NoiseTest の `XdtReader` と LoggerFiles の `XdtReader` は、スケーリング無効の CH の扱いが違う(`docs/移行記録.md`)。アプリ移植のときに確認する。
+
 ## グループ別の詳細
 
 ### A. WaveLogger.Automation(KEYENCE WAVE LOGGER / LOGGER X の COM 操作)
@@ -130,7 +146,7 @@ XDT(WAVE LOGGER の波形ファイル)のバイナリを触るコードが 4 か
 
 旧リポジトリでは `WaveLogger.Automation` と `XdtConversion.Core` 以外はアプリの csproj の中のフォルダで、アプリごとにコピーを持っていた(版が割れた原因)。モノレポでは `Wrappers/` はただの置き場で、その下の各フォルダが 1 つの csproj(箱)になる。
 
-引継ぎの「各アプリは Wrappers をプロジェクト参照する」は、この 6 つのどれかを参照する、という読みで進める。1 つにまとめたい場合も `ProjectReference` を 1 行にするだけなので後から変えられる。
+引継ぎの「各アプリは Wrappers をプロジェクト参照する」は、この 6 つのどれかを参照する、という読みで進める。namespace とアセンブリ名は `PSCAutomation.Wrappers.<箱のフォルダー名>`(例: `PSCAutomation.Wrappers.WaveLogger.Automation`)にした(手順 2)。1 つにまとめたい場合も `ProjectReference` を 1 行にするだけなので後から変えられる。
 
 ## git 履歴
 
@@ -143,5 +159,6 @@ XDT(WAVE LOGGER の波形ファイル)のバイナリを触るコードが 4 か
 3. **BoltCheck の Arduino を AllCheck 版に揃える**(NF 判定をアプリ側へ移す。実機確認が要る)か、当面 BoltCheck だけ古い wrapper を抱えたまま移すか。
 4. **WF1973 の 3 クラスを別名で残す 2 段階案**でよいか。
 5. **ファームウェアをモノレポに含める**(推奨)か。
-6. **NR-X の Wi-Fi プロファイル(SSID)の置き場**: 各アプリの設定クラスか、共通の 1 か所か。
-7. 履歴は**コピーのみ**(現案)でよいか。
+6. **NR-X の Wi-Fi プロファイル(SSID)の置き場**: 各アプリの設定クラスか、共通の 1 か所か。(手順 2 では wrapper に持たせていない。アプリ移植までに決めればよい)
+7. 履歴は**コピーのみ**(現案)でよいか。(手順 2 はコピーのみで進め、出どころを `docs/移行記録.md` に書いた)
+8. **Excel を起動する操作のうち、どこまでを wrapper にするか**(手順 2 で判明)。AllCheck の `ExcelWorkSession` と NoiseTest の `NoiseResultWorkbook` は、Excel の起動・ブックを開く・保存・PDF 化・閉じる・COM 解放の共通部分と、AS110 固有の処理(図形内の S/N 書き換え、E21・L21 の判定、PP 値シートの行の決め方)が 1 つのクラスに入っている。
