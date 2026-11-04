@@ -24,5 +24,5 @@ PscAutomation/
 
 - リポジトリの土台(git、AGENTS.md、docs)を作った段階。コードの移植はまだ。
 - 移植元 5 リポジトリ(すべて `tad-kawamura` の Private)の比較を終え、統合方針を `docs/wrapper比較.md` に書いた。人の判断待ちの項目は同文書の末尾。
-- リポジトリ名は `PscAutomation`、Wrappers は依存ごとに 5 つの csproj に分けると決めた。作業フォルダ名(`MergeProject`)の変更と GitHub リポジトリの作成はまだ。
+- リポジトリ名は `PscAutomation`、Wrappers は依存ごとに 6 つの csproj に分けると決めた(`docs/wrapper比較.md`)。作業フォルダ名(`MergeProject`)の変更と GitHub リポジトリの作成はまだ。
 - .NET は全アプリ `net9.0-windows`(SDK 9.0.318 で確認)。

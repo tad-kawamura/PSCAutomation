@@ -25,7 +25,7 @@
 | C. 共通小物(`ErrorNotification` / `PcDelayObservation` / `WindowActivation`) | 3 リポジトリ | namespace 以外同一 | **低** |
 | D. VISA 機器(WF1973 / SDG1032X / ADCMT 7351E) | 4 リポジトリ | **3 つの別設計**。同名クラス `Wf1973Session` が AllCheck と SwitchController で互換性なし | **高**(設計の統合) |
 | E. NR-X 接続補助(`NrDeviceConnections` / `SingleAdapterWifiManager`) | 3 リポジトリ | SwitchController が Wi-Fi プロファイル一覧をアプリ側へ分離済み。他は wrapper 内に SSID 直書き | **低** |
-| F. XDT ファイル読み書き | 4 リポジトリ | AllCheck と NoiseTest の `XdtReader` は同一。XdtConversion.Core はその上位互換。さらに NoiseTest と WaveLogger.Automation にバイナリ直接編集クラスが散在 | **中**(置き場の整理) |
+| F. ロガー出力ファイル読み書き(xdt / ydt / CSV) | 4 リポジトリ | AllCheck と NoiseTest の `XdtReader` は同一。XdtConversion.Core はその上位互換。さらに NoiseTest と WaveLogger.Automation にバイナリ直接編集クラスが散在 | **中**(置き場の整理) |
 
 推奨する移植順: **A・C・E・F → B → D**。前半は機械的で、全アプリのビルドが通ることを早く確認できる。B と D は実機確認が要る。
 
@@ -94,13 +94,14 @@ XDT(WAVE LOGGER の波形ファイル)のバイナリを触るコードが 4 か
 | NoiseTest `Conversion/XdtDisplayRange.cs`、`XdtTimestamp.cs` | 表示レンジの読み書き、日時の読み出し | 雛形 xdt の表示レンジを平均値中心に直す(LOGGER で線が画面外に出る対策) |
 | WaveLogger.Automation `XdtScalingEditor.cs` | 2 点スケーリングの読み書き | 校正値を雛形 xdt に反映 |
 
-- **採用案**: `Wrappers/Xdt`(= `XdtConversion.Core` を土台)に集約。`XdtReader.Inspect/Read` は Core が同じシグネチャを持つので AllCheck / NoiseTest は参照先を変えるだけ(ただし `XdtInfo.Channels` が配列から `IReadOnlyList` に変わるので `.Length` を使っている箇所があれば直す)。`XdtDisplayRange` / `XdtTimestamp` も同じ場所へ。`XdtScalingEditor` は WaveLogger.Automation に残すか Xdt へ移すか要判断(WaveLogger.Automation が Xdt を参照する形が自然)。
-- `TemplateWriter.cs`(AllCheck `Conversion/` と XdtConversion アプリで同一)と `LoggerCsvReader.cs`(AllCheck のみ)は Excel 雛形への転記で、機器操作ではない。wrapper ではなく「共通ユーティリティ」として `Wrappers/Excel` か `Shared/` に置く(要判断)。
+- **採用案**: `Wrappers/LoggerFiles`(= `XdtConversion.Core` を土台)に集約。`XdtReader.Inspect/Read` は Core が同じシグネチャを持つので AllCheck / NoiseTest は参照先を変えるだけ(ただし `XdtInfo.Channels` が配列から `IReadOnlyList` に変わるので `.Length` を使っている箇所があれば直す)。`XdtDisplayRange` / `XdtTimestamp` も同じ場所へ。`XdtScalingEditor` は xdt と NR-X の ydt(CH1)を直接書き換えるファイル操作なので **LoggerFiles へ移す(決定: 2026-11-04)**。WaveLogger.Automation 内で使う箇所があれば LoggerFiles を参照する。
+- ydt の解析はまだだが、**いずれ xdt と同じことを ydt でもできるようにする方針(2026-11-04、人の指示)**。箱の名前を `Xdt` ではなく `LoggerFiles` にしたのはこのため。API は xdt 専用の前提にしない。
+- `TemplateWriter.cs`(AllCheck `Conversion/` と XdtConversion アプリで同一、xlsx を ZIP / XML で直接書く)は **`Wrappers/Excel` へ(決定: 2026-11-04)**。アプリごとに微妙に違うが大枠は「ロガーの値の転記」なので wrapper にする。`LoggerCsvReader.cs`(AllCheck のみ)はロガー CSV の読み出しなので LoggerFiles へ。ただしアプリ固有の `TransferSettings` を受け取っているので、CH 番号などを引数で渡す形に直す。
 
 ### G. wrapper にしないもの(アプリ側)
 
 - `As110/*`(AS110 の Arduino プロトコル・動き検査・校正)、`As100201/*`、`UI/MainForm.*`、`Production/*`、NoiseTest の `Analysis/` `Control/` `Measurement/`(判定・電流フィードバック・測定シーケンス)。
-- Excel COM(AllCheck `Excel/ExcelWorkSession.cs`、NoiseTest `Excel/NoiseResultWorkbook.cs`)は目的が違うので今回はアプリ側に残す。共通化は後の課題。
+- Excel COM(AllCheck `Excel/ExcelWorkSession.cs`、NoiseTest `Excel/NoiseResultWorkbook.cs`)は、開く・保存・PDF 化・閉じるなどの汎用部分だけを `Wrappers/Excel` へ移し、判定ロジック・セル位置はアプリ側に残す。Excel の起動は実行時に ProgID で探す方式なので、ビルドに Excel は要らない。
 - NoiseTest の `Measurement/ILoggerDevice.cs`(wrapper を薄い interface で包み、機器なしの模擬に差し替える)は**他アプリでも真似したい形**。AGENTS.md の指針に書いた。
 
 ### H. ファームウェア
@@ -116,17 +117,20 @@ XDT(WAVE LOGGER の波形ファイル)のバイナリを触るコードが 4 か
 ## namespace と csproj(決定: 2026-11-04)
 
 - 旧コードの namespace はアプリ名(`AS110BoltCheck` / `AS100201SwitchController` / `AS110NoiseTest.Devices`)か `XdtConversion` / `WaveLogger.Automation`。モノレポでは `Wrappers` 配下を `PscAutomation.Wrappers.<グループ>`(例: `PscAutomation.Wrappers.Arduino`)、アプリ側を `PscAutomation.Apps.<アプリ>` に揃え、アプリ側は `using` の追加で対応する(機械的な変更)。
-- csproj は**依存ごとに 5 つに分ける**(決定)。アプリが要らない依存を引き込まないため。特に NI-VISA(COM 参照)を使わないアプリは、NI-VISA が入っていない PC でもビルドできる:
+- csproj は**依存ごとに 6 つに分ける**(決定)。アプリが要らない依存を引き込まないため。特に NI-VISA(COM 参照)を使わないアプリは、NI-VISA が入っていない PC でもビルドできる:
 
 | csproj | 中身 | 外部依存 |
 |---|---|---|
 | `Wrappers/WaveLogger.Automation` | A | なし(COM は late binding) |
-| `Wrappers/Xdt` | F | なし(`net9.0`) |
+| `Wrappers/LoggerFiles` | F(xdt / ydt / ロガー CSV) | なし(`net9.0`) |
 | `Wrappers/Instruments` | D | `Ivi.Visa.Interop`(COM 参照、NI-VISA) |
 | `Wrappers/Arduino` | B | `System.IO.Ports` |
 | `Wrappers/Common` | C、E | なし |
+| `Wrappers/Excel` | Excel 雛形への転記、Excel の起動・保存・PDF 化 | なし(Excel は実行時のみ必要。COM は late binding) |
 
-引継ぎの「各アプリは Wrappers をプロジェクト参照する」は、この 5 つのどれかを参照する、という読みで進める。1 つにまとめたい場合も `ProjectReference` を 1 行にするだけなので後から変えられる。
+旧リポジトリでは `WaveLogger.Automation` と `XdtConversion.Core` 以外はアプリの csproj の中のフォルダで、アプリごとにコピーを持っていた(版が割れた原因)。モノレポでは `Wrappers/` はただの置き場で、その下の各フォルダが 1 つの csproj(箱)になる。
+
+引継ぎの「各アプリは Wrappers をプロジェクト参照する」は、この 6 つのどれかを参照する、という読みで進める。1 つにまとめたい場合も `ProjectReference` を 1 行にするだけなので後から変えられる。
 
 ## git 履歴
 
@@ -135,7 +139,7 @@ XDT(WAVE LOGGER の波形ファイル)のバイナリを触るコードが 4 か
 ## 人に判断してもらいたいこと
 
 1. ~~リポジトリ名~~ → **決定: `PscAutomation`**(2026-11-04)。AS110 は製品名で AS100201 などとは別物なので、全体の名前にしない。目的は「社内の自動化プログラムの整理」なので社名の略称 + Automation。.NET の命名規則(3 文字以上の略語は先頭だけ大文字)に合わせて `PSC` ではなく `Psc` と書く。作業フォルダ名(MergeProject)は人が区切りのよいところで変える。
-2. ~~csproj の分け方~~ → **決定: 依存ごとに 5 つ**(上の表のとおり。2026-11-04)。
+2. ~~csproj の分け方~~ → **決定: 依存ごとに 6 つ**(上の表のとおり。2026-11-04)。NI-VISA を使う箱を分けておくと、使わないアプリは NI-VISA なしでビルドできる。校正値の部品は LoggerFiles、Excel 転記は新しい箱 `Excel` に置く。
 3. **BoltCheck の Arduino を AllCheck 版に揃える**(NF 判定をアプリ側へ移す。実機確認が要る)か、当面 BoltCheck だけ古い wrapper を抱えたまま移すか。
 4. **WF1973 の 3 クラスを別名で残す 2 段階案**でよいか。
 5. **ファームウェアをモノレポに含める**(推奨)か。

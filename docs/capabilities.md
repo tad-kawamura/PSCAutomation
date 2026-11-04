@@ -14,7 +14,8 @@
 | ADCMT 7351E | DMM。直流電流の実測 | **USB のみ**(USBTMC、VISA)。GPIB / RS-232C は不可 | `Wrappers/Instruments` | NoiseTest |
 | Arduino(UNO R4 Minima、M5Stack 等) | 試験治具のマイコン。スイッチ・LED・NF 弁のインターロック | USB シリアル(COM ポート、行単位テキスト) | `Wrappers/Arduino` | AllCheck、BoltCheck、SwitchController |
 | Windows の Wi-Fi | NR-X を Wi-Fi で使うときの接続先切替 | `netsh` | `Wrappers/Common`(E) | AllCheck 他 |
-| XDT ファイル | WAVE LOGGER の波形ファイル | ファイル | `Wrappers/Xdt` | XdtConversion.Core 他 |
+| ロガーの出力ファイル(xdt / ydt / CSV) | WAVE LOGGER の波形ファイルと CSV | ファイル | `Wrappers/LoggerFiles` | XdtConversion.Core 他 |
+| Excel ブック(xlsx) | 測定値の転記・判定・PDF 保存 | ファイル直接 / Excel COM(Excel 本体ソフト経由) | `Wrappers/Excel` | AllCheck、XdtConversion、NoiseTest |
 
 ## できること
 
@@ -26,7 +27,6 @@
 - 保存: xdt、CSV
 - 参照波形の読み込み、横軸拡大、LOGGER 画面の復元・前面表示
 - 終了処理: × 検知、停止・Quit・COM 解放、対象プロセスだけを終了(別プロセスは守る)
-- 雛形 xdt の 2 点スケーリングの読み書き(`XdtScalingEditor`)
 - 機器なしの模擬に差し替えるための薄い interface の例: AS110NoiseTest `Measurement/ILoggerDevice.cs`
 
 **制約**
@@ -34,7 +34,6 @@
 - 終了・再接続の前に必ず `await ShutdownAsync(log)`。失敗したら新しいセッションに置き換えず、同じものを保持して再試行
 - LOGGER を人が手で操作すると状態が変わり COM 例外になる。成功扱いせず画面に出す
 - 実行 PC に WAVE LOGGER 本体ソフトとドライバが必要。NR-500 は旧 WAVE LOGGER(4.03.00)で測る(X 2.00.10 が入っていても)
-- NR-X の YDT は CH1 のスケーリングのみ対応
 
 ### WF1973 / SDG1032X(発振器)
 
@@ -71,16 +70,32 @@
 - UTF-8、DTR 有効。ボーレート等は接続設定で渡す
 - 通信断だけでは発振器や LOGGER を止めない(方針はアプリ側)
 
-### XDT ファイル(`Wrappers/Xdt`)
+### ロガーの出力ファイル(`Wrappers/LoggerFiles`)
+
+WAVE LOGGER を起動せずに、出力ファイルを直接読み書きする。
+
 
 - 旧 LOGGER / LOGGER X の判別、サンプル数、CH 一覧(名前・単位・スケーリング 2 点・移動平均)
 - 値の読み出し: 生値 / スケーリング後 / 移動平均後
 - サンプリング周期、収集開始日時、先頭・最終データ日時(メーカー CSV と照合済み)
-- 表示レンジの読み書き(雛形の表示レンジを平均値中心に直す)、2 点スケーリングの書き換え
+- 表示レンジの読み書き(雛形の表示レンジを平均値中心に直す)
+- 雛形の 2 点スケーリング(校正値)の読み書き(`XdtScalingEditor`、元は WaveLogger.Automation 内): xdt と NR-X100 の ydt(CH1 のみ)
+- ロガーの CSV の読み出し(`LoggerCsvReader`、元 AllCheck)
 
 **制約**
-- ydt(NR-X)は対象外(CH1 のスケーリング書き換えのみ)
+- ydt(NR-X)は今のところ CH1 のスケーリング読み書きのみ。解析はまだだが、**いずれ xdt と同じこと(値・周期・日時・表示レンジ)を ydt でもできるようにする方針**。API は xdt 専用の名前や前提にせず、ydt を後から足せる形にする
 - 日時のタイムゾーンと一部の周期単位は未確認。推測しない
+
+### Excel(`Wrappers/Excel`)
+
+大枠は「ロガーの値を Excel 雛形へ転記する」。アプリごとの違い(どの CH をどのシート・セルに書くか、間引き数、判定セルの読み方)はアプリ側の設定で渡す。
+
+- xlsx への直接書き込み(`TemplateWriter`、元 AllCheck / XdtConversion): 値の列を指定シート・セルから書く。**Excel のインストール不要**
+- Excel を起動しての操作(元 AllCheck `ExcelWorkSession`、NoiseTest `NoiseResultWorkbook`): 開く・数式の再計算・セルの読み取り・保存・PDF 保存・閉じる。汎用部分だけを wrapper にし、判定ロジックはアプリ側
+
+**制約**
+- Excel を起動する操作は実行 PC に Excel が必要(実行時に探す方式なので、ビルドには不要)
+- 移植時に汎用部分とアプリ固有部分を切り分ける。どこまでを wrapper にするかは移植時に確認する
 
 ### 共通(`Wrappers/Common`)
 
