@@ -1,0 +1,29 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net9.0-windows</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AssemblyName>PSCAutomation.Wrappers.Instruments</AssemblyName>
+    <RootNamespace>PSCAutomation.Wrappers.Instruments</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- 通信部分の探索ループを、模擬の通信で確かめるため -->
+    <InternalsVisibleTo Include="Instruments.Tests" />
+  </ItemGroup>
+  <!-- NI-VISA の COM 相互運用 DLL(移植元 3 アプリの csproj と同じ探し方) -->
+  <PropertyGroup>
+    <VisaProgramFiles Condition="'$(ProgramW6432)' != ''">$(ProgramW6432)</VisaProgramFiles>
+    <VisaProgramFiles Condition="'$(VisaProgramFiles)' == ''">$(ProgramFiles)</VisaProgramFiles>
+    <VisaInteropPath Condition="'$(VisaInteropPath)' == '' and Exists('$(VisaProgramFiles)\IVI Foundation\VISA\VisaCom64\Primary Interop Assemblies\Ivi.Visa.Interop.dll')">$(VisaProgramFiles)\IVI Foundation\VISA\VisaCom64\Primary Interop Assemblies\Ivi.Visa.Interop.dll</VisaInteropPath>
+    <VisaInteropPath Condition="'$(VisaInteropPath)' == '' and Exists('$(MSBuildProgramFiles32)\IVI Foundation\VISA\VisaCom\Primary Interop Assemblies\Ivi.Visa.Interop.dll')">$(MSBuildProgramFiles32)\IVI Foundation\VISA\VisaCom\Primary Interop Assemblies\Ivi.Visa.Interop.dll</VisaInteropPath>
+  </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="Ivi.Visa.Interop">
+      <HintPath>$(VisaInteropPath)</HintPath>
+      <Private>true</Private>
+    </Reference>
+  </ItemGroup>
+  <Target Name="ValidateVisaInteropPath" BeforeTargets="ResolveAssemblyReferences">
+    <Error Condition="!Exists('$(VisaInteropPath)')" Text="Ivi.Visa.Interop.dll が見つかりません。VISA COM対応環境をインストールするか、VisaInteropPath にDLLのフルパスを指定してください。現在の指定: '$(VisaInteropPath)'" />
+  </Target>
+</Project>

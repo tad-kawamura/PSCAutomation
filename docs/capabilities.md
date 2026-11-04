@@ -1,6 +1,6 @@
 # wrapper の機能一覧(できること・制約)
 
-> **2026-11-04 更新**。WAVE LOGGER・ロガーの出力ファイル・共通(NR-X 接続補助を含む)・Excel の xlsx 直接書き込み・Arduino は `Wrappers/` へ移植済みで、この一覧は実装に合わせてある。VISA 機器・Excel を起動する操作は**まだ移していない**(旧リポジトリを調べた時点の内容)。各項目の「元」は旧リポジトリの場所。出どころと移植時の変更は `docs/移行記録.md`。
+> **2026-11-04 更新**。WAVE LOGGER・ロガーの出力ファイル・共通(NR-X 接続補助を含む)・Excel の xlsx 直接書き込み・Arduino・VISA 機器(発振器・DMM)は `Wrappers/` へ移植済みで、この一覧は実装に合わせてある。Excel を起動する操作は**まだ移していない**(旧リポジトリを調べた時点の内容)。各項目の「元」は旧リポジトリの場所。出どころと移植時の変更は `docs/移行記録.md`。
 >
 > ここに書いた動作のうち、機器や Excel を使うものは**実機で確認していない**(ビルドと、模擬クラスを使うテストだけ)。
 
@@ -11,9 +11,9 @@
 | 機器 | 役割 | PC との接続 | wrapper(置き場) | 元 |
 |---|---|---|---|---|
 | KEYENCE NR-500 / NR-X100(WAVE LOGGER / WAVE LOGGER X) | データロガー。波形を xdt / ydt で記録 | COM オートメーション(WAVE LOGGER 本体ソフト経由)。本体は USB / LAN / Wi-Fi | `Wrappers/WaveLogger.Automation`(移植済み) | AS110AllCheck 他 3 つ(ほぼ同一) |
-| NF WF1973 | ファンクションジェネレータ。三角波バースト / 連続波 / DC オフセット | USB(VISA、NI-VISA 必須) | `Wrappers/Instruments`(未移植) | AllCheck(バースト)、SwitchController(連続)、NoiseTest(DC) |
-| SIGLENT SDG1032X | ファンクションジェネレータ(WF1973 の代替) | USB(VISA) | `Wrappers/Instruments`(未移植) | AllCheck、BoltCheck |
-| ADCMT 7351E | DMM。直流電流の実測 | **USB のみ**(USBTMC、VISA)。GPIB / RS-232C は不可 | `Wrappers/Instruments`(未移植) | NoiseTest |
+| NF WF1973 | ファンクションジェネレータ。三角波バースト / 連続波 / DC オフセット | USB(VISA、NI-VISA 必須) | `Wrappers/Instruments`(移植済み) | AllCheck(バースト)、SwitchController(連続)、NoiseTest(DC) |
+| SIGLENT SDG1032X | ファンクションジェネレータ(WF1973 の代替) | USB(VISA) | `Wrappers/Instruments`(移植済み) | AllCheck、BoltCheck |
+| ADCMT 7351E | DMM。直流電流の実測 | **USB のみ**(USBTMC、VISA)。GPIB / RS-232C は不可 | `Wrappers/Instruments`(移植済み) | NoiseTest |
 | Arduino(UNO R4 Minima、M5Stack 等) | 試験治具のマイコン。スイッチ・LED・NF 弁のインターロック | USB シリアル(COM ポート、行単位テキスト) | `Wrappers/Arduino`(移植済み) | AllCheck、BoltCheck、SwitchController |
 | Windows の Wi-Fi | NR-X を Wi-Fi で使うときの接続先切替 | `netsh` | `Wrappers/Common`(移植済み) | AllCheck 他 |
 | ロガーの出力ファイル(xdt / ydt / CSV) | WAVE LOGGER の波形ファイルと CSV | ファイル | `Wrappers/LoggerFiles`(移植済み) | XdtConversion.Core 他 |
@@ -38,30 +38,44 @@
 - LOGGER を人が手で操作すると状態が変わり COM 例外になる。成功扱いせず画面に出す
 - 実行 PC に WAVE LOGGER 本体ソフトとドライバが必要。NR-500 は旧 WAVE LOGGER(4.03.00)で測る(X 2.00.10 が入っていても)
 
-### WF1973 / SDG1032X(発振器)(未移植)
+### VISA の通信(`Wrappers/Instruments`、`PSCAutomation.Wrappers.Instruments`)
 
-- バースト: 三角波(対称 50%)、周波数・オフセット・振幅・周期数・開始位相を設定し、外部トリガ(`*TRG`)で指定周期数だけ出す。設定完了を `*OPC?` で確認。同じ設定なら再送しない
-- 連続: 振幅・位相・周波数を設定して位相同期で再開始。出力中は OFF にしない。押下連打の途中で中断できる
-- DC: オフセット電圧の設定と出力 ON/OFF(AS110 では **1V = 6mA** の電流指令に使う)
-- 出力停止(`StopOutput`)。`Dispose` 時に出力 OFF を試みる
-- 機器の探索: VISA の `?*INSTR` を総当たりして `*IDN?` で機種を見分ける方式と、USB の VID/PID(`USB?*::0x0D4A::0x000D::?*::INSTR`)で直接開く方式がある
+発振器・DMM のクラスは、通信部分 `VisaInstrumentSession`(元 SwitchController。NoiseTest の探し方を足した)を通して機器とやり取りする。機器クラスは `IInstrumentSession` を受け取るので、模擬に差し替えて機器なしで確かめられる。
+
+- 機器の探索(`VisaInstrumentSession.Connect`): VISA リソースを探して `*IDN?` を送り、渡した判定に合った最初の機器に、渡した初期化コマンドを送って返す。探し方は `VisaSearchOptions` で選ぶ
+  - `?*INSTR` の総当たり(既定)/ USB の VID/PID などのパターン指定 / リソース名の直接指定
+  - USB だけに絞る、失敗時のメッセージに「通信できなかったリソースと理由」「識別が合わなかったリソース」を付ける
+  - 該当なしのときは VISA の例外ではなく、渡したメッセージの `InvalidOperationException`
+- 送受信(`Write` / `Read` / `Query`)、タイムアウト変更、切断(`Dispose`。COM オブジェクトを解放する)
+
+### WF1973 / SDG1032X(発振器)(`Wrappers/Instruments`)
+
+使い方ごとにクラスが分かれている(判断 4、2026-11-04)。どれを使うかは `Wrappers/Instruments/README.md`。
+
+- バースト(`FunctionGeneratorConnection.Connect` → `Wf1973BurstSession` / `Sdg1032XSession`、元 AllCheck): USB の WF1973 か SDG1032X を自動で見分ける。三角波(対称 50%)、周波数・オフセット・振幅・周期数・開始位相を設定し、外部トリガで指定周期数だけ出す(WF1973 は `*TRG`、SDG1032X は `C1:BTWV MTRIG`)。設定完了を `*OPC?` で確認(SDG1032X は設定値を読み戻して照合)。同じ設定なら再送しない。DC 出力(`SetDcOutput`、±5V まで)、出力停止(`StopOutput`)
+- 連続(`Wf1973ContinuousSession`、元 SwitchController): 振幅・位相・周波数を設定して位相同期で再開始。出力中は OFF にしない。押下連打の途中で中断できる
+- DC(`Wf1973DcSource`、元 NoiseTest): 接続時に DC 波形・0V にして確認。出力を切らずにオフセット電圧だけ変える(`SetOffsetVolts`、±10V、0.1mV 単位、本体エラーを確認)。出力 ON(`SetOutput(true)`)の後 50ms 待つ。AS110 では **1V = 6mA** の電流指令に使う
+- どれも `Dispose` 時に出力 OFF を試みる(タイムアウト 500ms、失敗しても解放は続ける)。連続(`Wf1973ContinuousSession`)だけは元のとおり出力 OFF を送らない
 
 **制約**
-- NI-VISA(`Ivi.Visa.Interop` COM)が実行 PC に要る
-- オフセットは ±5V まで(wrapper 側で弾く)
+- NI-VISA(`Ivi.Visa.Interop` COM)が実行 PC とビルド PC に要る(Instruments を参照しないアプリには不要)
 - 負荷設定は本体の設定を使う
 - SDG1032X は AS110 のバースト用途だけ確認済み
+- 同じ WF1973 を 2 つのクラスで同時に開かない(状態の管理がクラスごと)
+- 実機での動作は**未確認**(移植後)。テストは模擬の通信で、送るコマンドと順番が元と同じことを確かめただけ
 
-### ADCMT 7351E(DMM)(未移植)
+### ADCMT 7351E(DMM)(`Adcmt7351ESession`、`Wrappers/Instruments`)
 
-- 直流電流を読む(`ReadMilliamps`)。応答は `DCI_ +006.027E-03` 形式、約 400ms/回
-- 設定(レンジ 200mA / 2000mA / 10A / Auto、サンプリング速度、オートゼロ、スムージング、商用周波数)を適用して、読み返して照合
-- トリガ: Immediate / Manual / External / **Bus**(読むたびに `*TRG`。古い値を掴まない)
-- エラーの読み出し(`DrainErrors`)
+- 直流電流を読む(`ReadMilliamps`)。応答は `DCI_ +006.027E-03` 形式、約 400ms/回(SLOW2)。DCI 以外・レンジオーバー・演算有効の値は例外
+- 設定(`ApplySettings`: レンジ 200mA / 2000mA / 10A / Auto、サンプリング速度、オートゼロ、スムージング、商用周波数)を 1 つずつ送って `ERR?` で確かめ、問い合わせて照合
+- トリガ: Immediate / **Bus**(読むたびに `*TRG`。古い値を掴まない)。Manual・External は PC から測定を始められないので受け付けない
+- エラーの読み出し(`DrainErrors`)、現在の設定の一覧(`ReadConfiguration`)
+- `Dispose` 時にトリガを Immediate に戻す(前面パネルの表示が止まったままにならない)
 
 **制約**
-- 通信は USB のみ。コマンドは ADC 独自(SCPI 不可)
+- 通信は USB のみ。コマンドは ADC 独自(SCPI 不可)。本体の LANG を ADC にしておく
 - 設定変更直後は古い読み値が残るので捨てる(`DiscardStaleReadings`。Bus トリガなら不要)
+- 実機での確認内容は `Wrappers/Instruments/docs/7351E実機確認.md`(移植前の AS110NoiseTest での確認)。移植後の実機確認は**未実施**
 
 ### Arduino(`Wrappers/Arduino`、`PSCAutomation.Wrappers.Arduino`)
 

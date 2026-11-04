@@ -36,8 +36,8 @@
 | 1 | 旧 5 リポジトリの比較と統合方針(本文書) | 済(2026-11-04) |
 | 2 | A(WaveLogger.Automation)・C(Common)・E(NR-X 接続補助)・F(LoggerFiles)・Excel の移植 | **済(2026-11-04)**。ただし Excel を起動する操作(`ExcelWorkSession` / `NoiseResultWorkbook` の汎用部分)は範囲が決まっていないので未移植。出どころと変更点は `docs/移行記録.md` |
 | 3 | B(Arduino)の移植 | **済(2026-11-04)**。AllCheck 版の `ArduinoConnection` と、SwitchController 版の `Configure` 方式 + AllCheck の `SHUTDOWN_ERROR` の `ArduinoDiagnosticLog`。BoltCheck の NF 判定をどうするか(判断 3)はアプリ側の話なので、BoltCheck を移すときに決める。実機確認は未実施 |
-| 4 | D(VISA 機器)の移植 | 未着手(判断 4 待ち) |
-| 5 | アプリの移植と `.slnf` の整備 | **XdtConversion は済(2026-11-04)**(`Apps/XdtConversion`、`XdtConversion.slnf`)。旧 Verification の A6 停止は検査の前提の誤りで、参照値と比べる形に直した(`docs/移行記録.md`)。AS110AllCheck・AS110BoltCheck・AS100201SwitchController・AS110NoiseTest は未着手(VISA の箱が要るので判断 4 の後) |
+| 4 | D(VISA 機器)の移植 | **済(2026-11-04)**。判断 4 の案 A(下記 D 節の採用案)で `Wrappers/Instruments` へ。通信部分を 1 つにし、WF1973 は 3 クラスを別名で残した。送るコマンドと順番は元のまま(模擬の通信で確認)。実機確認は未実施 |
+| 5 | アプリの移植と `.slnf` の整備 | **XdtConversion は済(2026-11-04)**(`Apps/XdtConversion`、`XdtConversion.slnf`)。旧 Verification の A6 停止は検査の前提の誤りで、参照値と比べる形に直した(`docs/移行記録.md`)。AS110AllCheck・AS110BoltCheck・AS100201SwitchController・AS110NoiseTest は未着手(VISA の箱は手順 4 でできた) |
 
 手順 2 で決めたこと・本文書の案から変えたこと:
 - E(NR-X 接続補助)は案どおり `Wrappers/Common` に置いた。`NrXConnection` / `Nr500Connection` が `WaveLoggerSession` を使うので、Common は WaveLogger.Automation を参照する(外部依存はないまま)。
@@ -91,6 +91,8 @@
 **採用案(2 段階)**:
 1. まず **VISA トランスポートを 1 つにする**(D2 の `VisaInstrumentSession` を土台に D3 の `VisaUtil` の探索パターン指定を足す)。機器クラスは 3 つを別名で残す: `Wf1973BurstSession`(D1)、`Wf1973ContinuousSession`(D2)、`Wf1973DcSource`(D3)、`Sdg1032XSession`、`Adcmt7351ESession`。アプリ側の呼び出しは `using` とクラス名の置換だけで済む。
 2. 動作が安定してから、WF1973 の 3 クラスを 1 つに寄せるかを判断する(急がない)。
+
+→ 1 段階目は手順 4 で実施(2026-11-04)。名前は案のとおり。D1 の接続入口 `FunctionGeneratorConnection` と `IFunctionGeneratorSession` は名前を変えずに残した。D3 の `VisaUtil` は `VisaInstrumentSession` に吸収した。詳細は `docs/移行記録.md`「手順 4」。
 
 ### E. NR-X 接続補助
 
@@ -157,7 +159,7 @@ XDT(WAVE LOGGER の波形ファイル)のバイナリを触るコードが 4 か
 1. ~~リポジトリ名~~ → **決定: `PSCAutomation`**(2026-11-04)。AS110 は製品名で AS100201 などとは別物なので、全体の名前にしない。目的は「社内の自動化プログラムの整理」なので社名の略称 + Automation。PSC は全部大文字で書く(人の指示。名前空間も `PSCAutomation.…`)。作業フォルダ名は `MergeProject` から `PSCAutomation` に変更済み(2026-11-04、人が実施)。
 2. ~~csproj の分け方~~ → **決定: 依存ごとに 6 つ**(上の表のとおり。2026-11-04)。NI-VISA を使う箱を分けておくと、使わないアプリは NI-VISA なしでビルドできる。校正値の部品は LoggerFiles、Excel 転記は新しい箱 `Excel` に置く。
 3. **BoltCheck の Arduino を AllCheck 版に揃える**(NF 判定をアプリ側へ移す。実機確認が要る)か、当面 BoltCheck だけ古い wrapper を抱えたまま移すか。
-4. **WF1973 の 3 クラスを別名で残す 2 段階案**でよいか。
+4. ~~WF1973 の 3 クラスを別名で残す 2 段階案~~ → **決定: 案 A(2 段階案)**(2026-11-04)。今すぐ 1 クラスに統合する案(3 アプリとも発振器の動きが変わり実機確認が要る)と、通信部分もまとめずに移す案(COM の解放と探索が 3 か所に残る)を比べて選んだ。2 段階目(3 クラスを 1 つに寄せるか)は、アプリを移して実機で安定してから決める。
 5. **ファームウェアをモノレポに含める**(推奨)か。
 6. **NR-X の Wi-Fi プロファイル(SSID)の置き場**: 各アプリの設定クラスか、共通の 1 か所か。(手順 2 では wrapper に持たせていない。アプリ移植までに決めればよい)
 7. 履歴は**コピーのみ**(現案)でよいか。(手順 2 はコピーのみで進め、出どころを `docs/移行記録.md` に書いた)
