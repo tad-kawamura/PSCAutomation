@@ -116,7 +116,7 @@ XDT(WAVE LOGGER の波形ファイル)のバイナリを触るコードが 4 か
 
 ## namespace と csproj(決定: 2026-11-04)
 
-- 旧コードの namespace はアプリ名(`AS110BoltCheck` / `AS100201SwitchController` / `AS110NoiseTest.Devices`)か `XdtConversion` / `WaveLogger.Automation`。モノレポでは `Wrappers` 配下を `PscAutomation.Wrappers.<グループ>`(例: `PscAutomation.Wrappers.Arduino`)、アプリ側を `PscAutomation.Apps.<アプリ>` に揃え、アプリ側は `using` の追加で対応する(機械的な変更)。
+- 旧コードの namespace はアプリ名(`AS110BoltCheck` / `AS100201SwitchController` / `AS110NoiseTest.Devices`)か `XdtConversion` / `WaveLogger.Automation`。モノレポでは `Wrappers` 配下を `PSCAutomation.Wrappers.<グループ>`(例: `PSCAutomation.Wrappers.Arduino`)、アプリ側を `PSCAutomation.Apps.<アプリ>` に揃え、アプリ側は `using` の追加で対応する(機械的な変更)。
 - csproj は**依存ごとに 6 つに分ける**(決定)。アプリが要らない依存を引き込まないため。特に NI-VISA(COM 参照)を使わないアプリは、NI-VISA が入っていない PC でもビルドできる:
 
 | csproj | 中身 | 外部依存 |
@@ -138,7 +138,7 @@ XDT(WAVE LOGGER の波形ファイル)のバイナリを触るコードが 4 か
 
 ## 人に判断してもらいたいこと
 
-1. ~~リポジトリ名~~ → **決定: `PscAutomation`**(2026-11-04)。AS110 は製品名で AS100201 などとは別物なので、全体の名前にしない。目的は「社内の自動化プログラムの整理」なので社名の略称 + Automation。.NET の命名規則(3 文字以上の略語は先頭だけ大文字)に合わせて `PSC` ではなく `Psc` と書く。作業フォルダ名(MergeProject)は人が区切りのよいところで変える。
+1. ~~リポジトリ名~~ → **決定: `PSCAutomation`**(2026-11-04)。AS110 は製品名で AS100201 などとは別物なので、全体の名前にしない。目的は「社内の自動化プログラムの整理」なので社名の略称 + Automation。PSC は全部大文字で書く(人の指示。名前空間も `PSCAutomation.…`)。作業フォルダ名(MergeProject)は人が区切りのよいところで変える。
 2. ~~csproj の分け方~~ → **決定: 依存ごとに 6 つ**(上の表のとおり。2026-11-04)。NI-VISA を使う箱を分けておくと、使わないアプリは NI-VISA なしでビルドできる。校正値の部品は LoggerFiles、Excel 転記は新しい箱 `Excel` に置く。
 3. **BoltCheck の Arduino を AllCheck 版に揃える**(NF 判定をアプリ側へ移す。実機確認が要る)か、当面 BoltCheck だけ古い wrapper を抱えたまま移すか。
 4. **WF1973 の 3 クラスを別名で残す 2 段階案**でよいか。

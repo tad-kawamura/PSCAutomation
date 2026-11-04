@@ -1,4 +1,4 @@
-# PscAutomation
+# PSCAutomation
 
 PSC 社内の自動化プログラム(人が手でやっていた機器操作・画面操作・記録を、ボタン 1 つでできるようにするアプリ)と、それらが共通で使う wrapper を 1 つのリポジトリに集約するモノレポ。最初の対象は AS110 / AS100201 系のハード連携アプリ(マイコン・発振器・計測器・KEYENCE WAVE LOGGER)。
 
@@ -10,13 +10,13 @@ PSC 社内の自動化プログラム(人が手でやっていた機器操作・
 ## 目標構成
 
 ```
-PscAutomation/
+PSCAutomation/
 ├── AGENTS.md / CLAUDE.md
 ├── docs/capabilities.md   ← wrapper の機能一覧(できること・制約)
 ├── Wrappers/              ← 共通 wrapper(C# クラスライブラリ)
 ├── Apps/<各アプリ>/        ← exe はアプリごとに別
 ├── specs/                 ← 仕様インタビューで作った SPEC.md
-├── PscAutomation.sln
+├── PSCAutomation.sln
 └── *.slnf                 ← アプリ別フィルター
 ```
 
@@ -24,5 +24,5 @@ PscAutomation/
 
 - リポジトリの土台(git、AGENTS.md、docs)を作った段階。コードの移植はまだ。
 - 移植元 5 リポジトリ(すべて `tad-kawamura` の Private)の比較を終え、統合方針を `docs/wrapper比較.md` に書いた。人の判断待ちの項目は同文書の末尾。
-- リポジトリ名は `PscAutomation`、Wrappers は依存ごとに 6 つの csproj に分けると決めた(`docs/wrapper比較.md`)。作業フォルダ名(`MergeProject`)の変更と GitHub リポジトリの作成はまだ。
+- リポジトリ名は `PSCAutomation`、Wrappers は依存ごとに 6 つの csproj に分けると決めた(`docs/wrapper比較.md`)。作業フォルダ名(`MergeProject`)の変更と GitHub リポジトリの作成はまだ。
 - .NET は全アプリ `net9.0-windows`(SDK 9.0.318 で確認)。
