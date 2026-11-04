@@ -1,8 +1,8 @@
 # wrapper の機能一覧(できること・制約)
 
-> **2026-11-04 更新**。WAVE LOGGER・ロガーの出力ファイル・共通(NR-X 接続補助を含む)・Excel の xlsx 直接書き込み・Arduino・VISA 機器(発振器・DMM)は `Wrappers/` へ移植済みで、この一覧は実装に合わせてある。Excel を起動する操作は**まだ移していない**(旧リポジトリを調べた時点の内容)。各項目の「元」は旧リポジトリの場所。出どころと移植時の変更は `docs/移行記録.md`。
+> **2026-11-04 更新**。WAVE LOGGER・ロガーの出力ファイル・共通(NR-X 接続補助を含む)・Excel(xlsx 直接書き込みと、Excel を起動する操作)・Arduino・VISA 機器(発振器・DMM)は `Wrappers/` へ移植済みで、この一覧は実装に合わせてある。各項目の「元」は旧リポジトリの場所。出どころと移植時の変更は `docs/移行記録.md`。
 >
-> ここに書いた動作のうち、機器や Excel を使うものは**実機で確認していない**(ビルドと、模擬クラスを使うテストだけ)。
+> ここに書いた動作のうち、機器を使うものは**実機で確認していない**(ビルドと、模擬クラスを使うテストだけ)。Excel を起動する操作は、Excel のある PC で `Wrappers/Tests/Excel.Tests` が実際に Excel を動かして確かめている(アプリからの呼び出しは未確認)。
 
 新しい依頼を受けたら、まずここを読んで「今の wrapper で何ができるか」を把握し、できる範囲から選択肢を出す。ここに無い機器・操作は、wrapper の新規作成(全アプリに影響)として人に確認する。
 
@@ -17,7 +17,7 @@
 | Arduino(UNO R4 Minima、M5Stack 等) | 試験治具のマイコン。スイッチ・LED・NF 弁のインターロック | USB シリアル(COM ポート、行単位テキスト) | `Wrappers/Arduino`(移植済み) | AllCheck、BoltCheck、SwitchController |
 | Windows の Wi-Fi | NR-X を Wi-Fi で使うときの接続先切替 | `netsh` | `Wrappers/Common`(移植済み) | AllCheck 他 |
 | ロガーの出力ファイル(xdt / ydt / CSV) | WAVE LOGGER の波形ファイルと CSV | ファイル | `Wrappers/LoggerFiles`(移植済み) | XdtConversion.Core 他 |
-| Excel ブック(xlsx) | 測定値の転記・判定・PDF 保存 | ファイル直接 / Excel COM(Excel 本体ソフト経由) | `Wrappers/Excel`(直接書き込みのみ移植済み) | AllCheck、XdtConversion、NoiseTest |
+| Excel ブック(xlsx) | 測定値の転記・判定・PDF 保存 | ファイル直接 / Excel COM(Excel 本体ソフト経由) | `Wrappers/Excel`(移植済み) | AllCheck、XdtConversion、NoiseTest |
 
 ## できること
 
@@ -120,11 +120,23 @@ WAVE LOGGER を起動せずに、出力ファイルを直接読み書きする�
 大枠は「ロガーの値を Excel 雛形へ転記する」。アプリごとの違い(どの CH をどのシート・セルに書くか、間引き数、判定セルの読み方)はアプリ側の設定で渡す。
 
 - xlsx への直接書き込み(`TemplateWriter`、元 AllCheck / XdtConversion、移植済み): 値の列を指定シート・セルから書く。開始セル以降の旧値は消す。数式のある列・同名の保存先は止める。開いたときに再計算する設定にする。**Excel のインストール不要**
-- (未移植)Excel を起動しての操作(元 AllCheck `ExcelWorkSession`、NoiseTest `NoiseResultWorkbook`): 起動・開く・閉じる・画面に出して渡す・保存・PDF 保存・セルの読み書き・列への書き込み・再計算待ち・図形内の文字の部分置換を部品として wrapper に置く予定(`docs/wrapper比較.md` 判断 8)。判定・セル位置・置き換える文字のパターンはアプリ側。AllCheck・NoiseTest を移すときに実装する。それまで XdtConversion の `ExcelPresenter`(Excel を起動してブックを表示するだけ)は `Apps/XdtConversion` 側に置いてある
+- Excel を起動しての操作(元 AllCheck `ExcelWorkSession`、NoiseTest `NoiseResultWorkbook`、XdtConversion `ExcelPresenter` の共通部分、移植済み)。判定・セル位置・置き換える文字のパターンはアプリ側で渡す
+  - 起動・終了(`ExcelApplication`): このアプリ専用の Excel を起動する(人が開いている Excel にはつながない)。画面に出すか・確認ダイアログを出すかを選べる。後始末(Dispose)で、開いたブックを保存せずに閉じ、Excel を終了する(ほかにブックが開いていれば残す/必ず終了する、を選べる)。Excel が落ちた・人が閉じたかを確かめられる(`IsConnected`)
+  - ブックを開く(`ExcelApplication.Open`): 読み取り専用で開かれた(ほかで開いている、ファイルが読み取り専用)ら閉じて止める。読み取り専用を指定して開くこともできる
+  - 保存(`ExcelWorkbook`): 上書き保存、開いたまま別名で保存(`SaveCopyAs`)
+  - PDF(`ExcelSheet.ExportAsPdf`): シートを PDF に保存
+  - セルの読み書き(`ExcelSheet`): 1 セル・範囲の読み書き、値の消去(書式は残す)、数式の有無、列の最後の行、行のコピー(数式・罫線ごと)。名前定義の範囲を読む(`ExcelWorkbook.ReadNamedRange`)
+  - 開いているブックの列に測定値を書く(`ExcelSheet.WriteColumns`): 書き込み先に数式があれば何も書かずに止める。隣の列はまとめて書く。開始セルより下の前回の値は消さない(消すのは `TemplateWriter`)
+  - シリアル番号などの書き換え: セルなら `SetValue`。図形(テキストボックス・オートシェイプ)の中の文字は `ExcelSheet.ReplaceShapeText` で、文字ごとの書式(フォント・大きさ・太字・下線)を保ったまま値の部分だけを置き換える。置き換える場所は正規表現の `(?<value>…)` で指定する。図形の文字の見本は `GetShapeTexts` で読める
+  - 計算結果を読む: ブック全体・シートごとの再計算(測定値のシートを先に計算できる)、計算が終わるまで待つ(打ち切り時間つき)、判定セルを文字で読む(`GetText`)
+  - 終わったら人に渡す: `ExcelApplication.HandOverToUser`(以後 Dispose しても閉じない)。ブックとシートを画面の前に出す(`ExcelWorkbook.ShowWindow`。Windows の前面に出すには返った窓のハンドルを `WindowActivation.TryActivate` に渡す)
+  - 保存済みのブックを開いて渡すだけなら `ExcelViewer.OpenForUserAsync`(元 XdtConversion `ExcelPresenter`。画面のスレッドを止めない)
 
 **制約**
 - Excel を起動する操作は実行 PC に Excel が必要(実行時に探す方式なので、ビルドには不要)
-- 移植時に汎用部分とアプリ固有部分を切り分ける。どこまでを wrapper にするかは移植時に確認する
+- Excel を起動する操作は、同じスレッド(ふつうは画面のスレッド)から呼ぶ
+- 測定値の書き込みは、ロガーの xdt / ydt を読んだ値の配列を渡す形。xdt / ydt の違いは LoggerFiles 側で吸収する
+- XdtConversion はまだ自分の `ExcelPresenter` を使っている(`ExcelViewer` への乗り換えは任意。AllCheck・NoiseTest は移植時にこの部品を使う)
 
 ### 共通(`Wrappers/Common`、`PSCAutomation.Wrappers.Common`)
 

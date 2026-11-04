@@ -6,6 +6,7 @@ using PSCAutomation.Wrappers.Excel;
 // TemplateWriter(元: AS110AllCheck / XdtConversion の TemplateWriter.cs)の検査。
 // 旧 XdtConversion Verification の TemplateWriter 部分(末尾消去・数式列保護・同名停止・セル上限)を、
 // 実際の雛形 xlsx の代わりにコードで作った最小の xlsx で確かめる。Excel のインストールは不要。
+// 続けて、Excel がある PC では Excel を起動する操作も確かめる(ExcelComChecks.cs)。
 XNamespace s = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
 void Check(bool ok, string message) { if (!ok) throw new Exception(message); }
 void Fails<T>(Action action, string name) where T : Exception
@@ -60,6 +61,12 @@ try
     Fails<ArgumentException>(() => TemplateWriter.Save(template, Path.Combine(temp, "j.xlsx"), Array.Empty<TransferColumn>()), "転送対象なし");
     Check(Directory.GetFiles(temp, "*.tmp", SearchOption.AllDirectories).Length == 0, "一時ファイルが残った");
     Console.WriteLine("PASS TemplateWriter: 同名保存・雛形上書き・数式列・存在しないシート・重複列・非数値・空指定を止め、一時ファイルを残さない");
+
+    // Excel を起動する操作は、Excel のある PC でだけ確かめる。
+    if (OperatingSystem.IsWindows() && ExcelComChecks.IsExcelInstalled)
+        await ExcelComChecks.RunAsync(temp, args.Contains("--visible"));
+    else
+        Console.WriteLine("SKIP Excel を起動する操作: Excel がインストールされていない");
     Console.WriteLine("Excel: all checks passed.");
 }
 finally { Directory.Delete(temp, true); }

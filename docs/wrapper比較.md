@@ -34,7 +34,7 @@
 | 手順 | 内容 | 状態 |
 |---|---|---|
 | 1 | 旧 5 リポジトリの比較と統合方針(本文書) | 済(2026-11-04) |
-| 2 | A(WaveLogger.Automation)・C(Common)・E(NR-X 接続補助)・F(LoggerFiles)・Excel の移植 | **済(2026-11-04)**。ただし Excel を起動する操作(`ExcelWorkSession` / `NoiseResultWorkbook` の汎用部分)は未移植(範囲は判断 8 で決定。AllCheck・NoiseTest を移すときに行う)。出どころと変更点は `docs/移行記録.md` |
+| 2 | A(WaveLogger.Automation)・C(Common)・E(NR-X 接続補助)・F(LoggerFiles)・Excel の移植 | **済(2026-11-04)**。Excel を起動する操作(`ExcelWorkSession` / `NoiseResultWorkbook` / `ExcelPresenter` の汎用部分)は判断 8 のあとに移植(2026-11-04)。出どころと変更点は `docs/移行記録.md` |
 | 3 | B(Arduino)の移植 | **済(2026-11-04)**。AllCheck 版の `ArduinoConnection` と、SwitchController 版の `Configure` 方式 + AllCheck の `SHUTDOWN_ERROR` の `ArduinoDiagnosticLog`。BoltCheck の NF 判定をどうするか(判断 3)はアプリ側の話なので、BoltCheck を移すときに決める。実機確認は未実施 |
 | 4 | D(VISA 機器)の移植 | **済(2026-11-04)**。判断 4 の案 A(下記 D 節の採用案)で `Wrappers/Instruments` へ。通信部分を 1 つにし、WF1973 は 3 クラスを別名で残した。送るコマンドと順番は元のまま(模擬の通信で確認)。実機確認は未実施 |
 | 5 | アプリの移植と `.slnf` の整備 | **XdtConversion は済(2026-11-04)**(`Apps/XdtConversion`、`XdtConversion.slnf`)。旧 Verification の A6 停止は検査の前提の誤りで、参照値と比べる形に直した(`docs/移行記録.md`)。AS110AllCheck・AS110BoltCheck・AS100201SwitchController・AS110NoiseTest は未着手(VISA の箱は手順 4 でできた) |
@@ -171,4 +171,4 @@ XDT(WAVE LOGGER の波形ファイル)のバイナリを触るコードが 4 か
    - 3 アプリで違う動き(保存のしかた、確認ダイアログを出すか、終了時に Excel を閉じるか)は選べる設定にして、各アプリの今の動きを変えない。
    - 転送(雛形に測定値を書く)は既に `TemplateWriter` で wrapper にある。値の配列を受け取る形なので、xdt / ydt の違いは LoggerFiles 側で吸収する。
    - 比較した案: B(起動・開く・閉じる・解放・表示だけ。保存・PDF・S/N 書き換えはアプリごとにコピーが残る)、C(wrapper にせずアプリ側へそのまま移す。起動・解放が 3 か所に残る)。
-   - 実装は AllCheck・NoiseTest を移すときに行う。それまで `ExcelPresenter` は `Apps/XdtConversion` 側に置いたまま。確認に計測器は要らないが、Excel を実際に動かして元と同じ結果になるかを見る。
+   - 部品は先に移植した(2026-11-04、`docs/移行記録.md`「Excel を起動する操作」)。AllCheck・NoiseTest は移すときにこの部品を使う形に書き直し、Excel を実際に動かして元と同じ結果になるかを見る。XdtConversion の `ExcelPresenter` は同じものが `ExcelViewer` にあり、乗り換えは任意(`AGENTS.md`「wrapper の増やし方」)。

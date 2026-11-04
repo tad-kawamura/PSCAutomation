@@ -4,7 +4,7 @@ using System.Runtime.InteropServices;
 namespace PSCAutomation.Apps.XdtConversion;
 
 // 元: XdtConversion XdtConversion/ExcelPresenter.cs。変更は namespace のみ。
-// Excel を起動する操作をどこまで Wrappers/Excel に置くかは判断待ち(docs/wrapper比較.md 判断 8)なので、アプリ側に置いたまま。
+// 同じものが Wrappers/Excel の ExcelViewer にある(失敗時に Excel が残らないよう直してある)。乗り換えは任意(AGENTS.md「wrapper の増やし方」)。
 
 /// <summary>保存済みのブックをExcelで表示する。計算・グラフ更新はExcelに任せる。</summary>
 public static class ExcelPresenter
