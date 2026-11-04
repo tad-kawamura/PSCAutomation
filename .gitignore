@@ -1,0 +1,33 @@
+# Visual Studio / .NET
+bin/
+obj/
+.vs/
+*.user
+*.suo
+packages/
+TestResults/
+publish/
+
+# 計測データ・ログ・マニュアル類はリポジトリに入れない
+*.xdt
+*.ydt
+*.pdf
+*.xlsx
+*.log
+Logs/
+学習データ/
+試験データ/
+# 雛形(測定用 xdt と結果 Excel)と docs 内の資料は入れる
+!雛形/*.xdt
+!雛形/*.xlsx
+!**/雛形/*.xdt
+!**/雛形/*.xlsx
+!docs/**/*.xlsx
+!**/Verification/Fixtures/*.xdt
+~$*
+
+# Python の一時ファイル
+__pycache__/
+
+# Arduino の生成物(.ino を正本とする)
+*.ino.cpp

@@ -1,0 +1,8 @@
+* text=auto
+# バッチは cmd が読める Shift-JIS(CP932)で作業ツリーに置き、リポジトリには UTF-8 で入れる
+*.cmd text eol=crlf working-tree-encoding=CP932
+*.bat text eol=crlf working-tree-encoding=CP932
+*.xdt binary
+*.ydt binary
+*.xlsx binary
+*.pdf binary
