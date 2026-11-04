@@ -2,7 +2,7 @@
 
 AS100-201 のスイッチ制御・測定アプリ。治具の Arduino のスイッチ操作を受け取り、WF1973 の連続出力(三角波)を位相をそろえて出し直し、KEYENCE WAVE LOGGER の測定開始・停止を行う。
 
-元は GitHub `tad-kawamura/AS100201SwitchController`(`5eb5b6391a82`、2026-10-28)。移植前の履歴はそちらで見る(旧リポジトリは読むだけ。扱いは人が決める)。
+元は GitHub `tad-kawamura/AS100201SwitchController`(`5eb5b6391a82`、2026-10-28)。旧リポジトリは 2026-11-04 にアーカイブした(読み取り専用)。移植前の履歴はそちらで見る。旧リポジトリの README・AGENTS.md の冒頭には、ここへの案内を書いてある(`c8a5e4b`)。旧リポジトリをクローンした PC は、PSCAutomation をクローンし直して作業する。
 
 - 仕様(機器・操作・異常時・移植で変えたこと): [specs/AS100201SwitchController/SPEC.md](../../specs/AS100201SwitchController/SPEC.md)
 - Arduino スケッチ: `firmware/ArduinoSwitchAndReadyLed/ArduinoSwitchAndReadyLed.ino`(移植で内容は変えていない)

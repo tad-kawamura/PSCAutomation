@@ -93,7 +93,7 @@ PSCAutomation.sln      ← 全体
   - `tad-kawamura`(メインの作業者): `main` に直接コミットし、そのまま `git push origin main` まで行う。push の前に `git fetch origin` し、遠隔に新しいコミットがあれば `git pull --ff-only` で取り込んでから push する
   - それ以外の人: `main` には直接コミットしない。作業用のブランチ(例: `feature/<内容>`)を切ってコミットし、そのブランチを push して `main` 向けのプルリクエストを作る。取り込み(マージ)は `tad-kawamura` が確認してから行う
 - `reset --hard`、`clean`、強制 push、無断の変更破棄で同期しない。無関係な変更をコミットに混ぜない
-- 移植元の旧リポジトリ(`AS110AllCheck` / `AS110BoltCheck` / `AS100201SwitchController` / `XdtConversion` / `AS110NoiseTest`、いずれも `tad-kawamura` の Private)は**読むだけ**。削除・アーカイブ・push・設定変更は、人がリポジトリを名指しで指示したとき以外 AI がしない。扱いは人が決める(`XdtConversion`・`AS110NoiseTest` は 2026-11-04 に人の指示でアーカイブ済み)。アーカイブするときは、先にその旧リポジトリの README(と CLAUDE.md / AGENTS.md)の冒頭へ移転先の案内を書いて push する(アーカイブ後は push できず、旧リポジトリをクローンした PC が移転先を知る手段が無くなるため)
+- 移植元の旧リポジトリ(`AS110AllCheck` / `AS110BoltCheck` / `AS100201SwitchController` / `XdtConversion` / `AS110NoiseTest`、いずれも `tad-kawamura` の Private)は**読むだけ**。削除・アーカイブ・push・設定変更は、人がリポジトリを名指しで指示したとき以外 AI がしない。扱いは人が決める(`XdtConversion`・`AS110NoiseTest`・`AS100201SwitchController` は 2026-11-04 に人の指示でアーカイブ済み)。アーカイブするときは、先にその旧リポジトリの README(と CLAUDE.md / AGENTS.md)の冒頭へ移転先の案内を書いて push する(アーカイブ後は push できず、旧リポジトリをクローンした PC が移転先を知る手段が無くなるため)
 - 移植前の git 履歴は持ち込んでいない(判断 7、コピーのみ)。移植前の経緯(いつ・なぜ変えたか)を調べるときは、`docs/移行記録.md` の「移植元のコミット」を見て、旧リポジトリ(アーカイブ済みのものも読める)の履歴を見る
 
 ## 言語
