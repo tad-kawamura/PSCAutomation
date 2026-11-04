@@ -104,4 +104,11 @@ dotnet run --project Tools/MeasurementCheck -- --real --sn SN60226 --memo 実機
   - `NoiseJudgeCheck --all` で学習データ 428 本を判定し、`Tools/Analysis/noise_judge_cs.csv` が移植前の結果とバイト単位で一致(xdt の読み出しを wrapper に替えても値・判定が変わらない)
   - `ExcelWriteCheck` を移植前と移植後のツールで同じ xdt(SN60226・SN60231・ヨーク165 SN1、46 本)に対して実行し、できた xlsx の全シートの値・数式が一致(2,415 セル)。103 台分(雛形の 100 行を超えて行を足す場合)も一致(3,929 セル)
   - `FolderProfile` で発行し、発行フォルダーが `MeasurementCheck.exe`・`雛形\`・`実機確認.cmd` だけになること、発行した exe の `--sim` が Excel まで通ること
-- 未確認: **実機すべて**(WF1973・7351E・NR-500・WAVE LOGGER を移植後のコードで動かすこと)。移植前は 2026-11-03 に実機で通しているが、移植後は VISA の探し方・LOGGER の wrapper・Excel の部品が変わっているので、`実機確認 logger` → `real` → `full` → `cancel` を流し直す。発行した exe を別の PC で動かすこと
+- 実機確認(2026-11-04、移植後のコードを `dotnet run -c Release` で。WF1973・7351E・NR-500 を USB でつないだ PC、旧 WAVE LOGGER、弁 SN「1」(動作確認用)・供給 約 440kPa。保存先 `C:\AS110Noise\確認_移植後`、Excel は `AS110ノイズ測定_移植後確認.xlsx`):
+  - `--sim`: すべて OK(Excel で再計算した集計 最大 1.8・黄 1・赤 1・判定 赤)
+  - 手順 1 `--logger-only`(5・10mA、Excel なし): `GetUnitInfo(0) = 193`、記録 39.7 / 39.6 秒、xdt 2 本とも 39,032 バイト。終了時 `ファイル数=0`、NRWL.exe は残らない
+  - 手順 2 `--real`(5・10mA): 7351E `F5 R6 PR4 ... TRS3`、実測 5.024 / 10.040mA(補正 0 回)。p-p 0.8 / 1.8 kPa、Excel 行 8 の集計 最大 1.8・黄 1・赤 0・判定 黄。1 電流あたり 42.7 / 42.5 秒。終了時 出力 OFF(0V)
+  - `cancel`(記録開始 20 秒後に中断): `OK: 中断 → 出力 OFF=True / LOGGER 停止=True`。途中の xdt は保存されない。LOGGER は Quit で閉じる
+  - 手順 3 `full`(7〜30mA、24 本): 完走、合計 1020 秒、1 電流あたり 平均 42.5 / 最長 42.8 秒。電流合わせは 24 本とも補正 0 回・±0.04mA 以内。10mA は手順 2 と重なり `_2` 付きで保存。Excel 行 8 の集計 最大 2.1・黄 12・赤 2(9mA・28mA)・判定 赤。終了時 出力 OFF(0V)
+  - 移植前(2026-11-03、SN60226)と同じ流れ・所要時間(記録 39.6〜39.8 秒、1 電流 約 42.5 秒)で動き、赤も同じ 9mA・28mA に出た
+- 未確認: WF1973 の前面パネルでの 0V・出力 OFF の目視(ログの `出力 OFF(0V)` だけ)、LOGGER 画面の p-p 表示とアプリの p-p の目視照合、発行した exe を実機 PC・別の PC で動かすこと(今回は `dotnet run`)
