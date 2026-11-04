@@ -5,7 +5,7 @@
 
 - namespace は `PSCAutomation.Apps.XdtConversion`、対象は `net9.0-windows`(WinForms)。exe 名は元のまま `XdtConversion.exe`
 - xdt の読み取りは `Wrappers/LoggerFiles`(`XdtReader`)、xlsx への書き込みは `Wrappers/Excel`(`TemplateWriter`)を使う
-- アプリ側に置いているもの: 画面(`MainForm.cs`)、間引きと CH → シート・セルの対応(`ConversionService.cs`)、Excel を起動して表示する部分(`ExcelPresenter.cs`)
+- アプリ側に置いているもの: 画面(`MainForm.cs`)、間引きと CH → シート・セルの対応(`ConversionService.cs`)。Excel を起動して表示する部分は共通部品 `Wrappers/Excel` の `ExcelViewer` を使う(2026-11-04 に、アプリ内の `ExcelPresenter.cs` から乗り換えた)
 
 ## 開発・実行
 
@@ -86,4 +86,5 @@ dotnet run --project Apps/XdtConversion/Verification -c Release
 ## 確認状況
 
 - 確認(2026-11-04): Release / Debug ビルド(警告 0)、`Verification` の成功、旧アプリの出力との一致、exe が起動して画面が出ること。
-- 未確認: 画面操作(ファイル選択・ドラッグ・転送表の編集・設定の保存と復元)と、Excel の起動・表示(`ExcelPresenter`)。
+- 確認(2026-11-04、`ExcelViewer` への乗り換え後): 全体 `PSCAutomation.sln` の Release ビルドと `XdtConversion.slnf` の Debug ビルド(警告 0)、`Verification` の成功。`ExcelViewer` そのものは `Wrappers/Tests/Excel.Tests` で Excel を起動して確かめている。
+- 未確認: 画面操作(ファイル選択・ドラッグ・転送表の編集・設定の保存と復元)と、画面から変換して Excel が開くまで(乗り換え後のアプリでは未実施)。

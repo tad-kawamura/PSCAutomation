@@ -4,7 +4,8 @@ using PSCAutomation.Wrappers.LoggerFiles;
 
 namespace PSCAutomation.Apps.XdtConversion;
 
-// 元: XdtConversion XdtConversion/MainForm.cs。変更は namespace と using のみ(設定の保存先 %LOCALAPPDATA%\XdtConversion も元のまま)。
+// 元: XdtConversion XdtConversion/MainForm.cs。変更は namespace と using(設定の保存先 %LOCALAPPDATA%\XdtConversion も元のまま)と、
+// Excel の表示を共通部品 ExcelViewer に乗り換えたこと(2026-11-04。元はアプリ内の ExcelPresenter)。
 
 public sealed class MainForm : Form
 {
@@ -129,6 +130,7 @@ public sealed class MainForm : Form
         if (mappings.Count == 0) throw new ArgumentException("転送する行にチェックを入れてください。");
         return mappings;
     }
+    private const string ExcelViewerFailure = "Excelの起動・表示処理に失敗しました。";
     private async Task RunAsync()
     {
         if (busy) return;
@@ -151,12 +153,22 @@ public sealed class MainForm : Form
             Append($"   XDT読込・換算・移動平均・間引き：{report.ReadConvert.TotalSeconds:F3} 秒 / 雛形への書込・別名保存：{report.Save.TotalSeconds:F3} 秒");
             Append("保存完了：" + destination);
             status.Text = "Excel起動・表示中…";
-            TimeSpan display = await ExcelPresenter.OpenAsync(destination, message =>
+            TimeSpan display;
+            try
             {
-                // Excel専用スレッドからGUIへ途中経過を渡す。
-                if (!IsDisposed && IsHandleCreated)
-                    BeginInvoke(new Action(() => { Append(message); status.Text = message; }));
-            });
+                display = await ExcelViewer.OpenForUserAsync(destination, message =>
+                {
+                    // Excel専用スレッドからGUIへ途中経過を渡す。
+                    if (!IsDisposed && IsHandleCreated)
+                        BeginInvoke(new Action(() => { Append(message); status.Text = message; }));
+                });
+            }
+            catch (InvalidOperationException ex) when (ex.Message.StartsWith(ExcelViewerFailure, StringComparison.Ordinal))
+            {
+                // 共通部品のメッセージに、元の ExcelPresenter にあったこのアプリ固有の一文を戻す(表示される文は乗り換え前と同じ)。
+                throw new InvalidOperationException(
+                    ExcelViewerFailure + "変換済みのExcelファイルは保存されています。" + ex.Message[ExcelViewerFailure.Length..], ex);
+            }
             Append($"② Excel起動・表示時間：{display.TotalSeconds:F3} 秒（Excel起動・ブック読込・自動計算設定・表示要求まで。計算完了は監視しません）");
             status.Text = "転送・表示完了";
         }

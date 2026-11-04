@@ -171,4 +171,4 @@ XDT(WAVE LOGGER の波形ファイル)のバイナリを触るコードが 4 か
    - 3 アプリで違う動き(保存のしかた、確認ダイアログを出すか、終了時に Excel を閉じるか)は選べる設定にして、各アプリの今の動きを変えない。
    - 転送(雛形に測定値を書く)は既に `TemplateWriter` で wrapper にある。値の配列を受け取る形なので、xdt / ydt の違いは LoggerFiles 側で吸収する。
    - 比較した案: B(起動・開く・閉じる・解放・表示だけ。保存・PDF・S/N 書き換えはアプリごとにコピーが残る)、C(wrapper にせずアプリ側へそのまま移す。起動・解放が 3 か所に残る)。
-   - 部品は先に移植した(2026-11-04、`docs/移行記録.md`「Excel を起動する操作」)。AllCheck・NoiseTest は移すときにこの部品を使う形に書き直し、Excel を実際に動かして元と同じ結果になるかを見る。XdtConversion の `ExcelPresenter` は同じものが `ExcelViewer` にあり、乗り換えは任意(`AGENTS.md`「wrapper の増やし方」)。
+   - 部品は先に移植した(2026-11-04、`docs/移行記録.md`「Excel を起動する操作」)。AllCheck・NoiseTest は移すときにこの部品を使う形に書き直し、Excel を実際に動かして元と同じ結果になるかを見る。XdtConversion は `ExcelPresenter` から `ExcelViewer` に乗り換えた(2026-11-04)。

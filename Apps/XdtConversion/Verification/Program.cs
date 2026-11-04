@@ -134,7 +134,7 @@ try
     Console.WriteLine("末尾消去・同名停止・間引き数 0・xdt 未指定・数式列保護・不正CH・破損ファイル検出 OK");
 }
 finally { Directory.Delete(temp, true); }
-Console.WriteLine("全検証成功。Excel COM（ExcelPresenter）と GUI は別途 Windows の実機で確認してください。");
+Console.WriteLine("全検証成功。Excel COM（Wrappers/Excel の ExcelViewer）と GUI は別途 Windows の実機で確認してください。");
 
 // 参照値: int 点数、int CH 数、(int CH 番号、double × 点数) × CH 数
 static Dictionary<int, double[]> ReadReference(string path)
