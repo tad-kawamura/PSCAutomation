@@ -1,6 +1,6 @@
 # wrapper の機能一覧(できること・制約)
 
-> **2026-11-04 更新**。WAVE LOGGER・ロガーの出力ファイル・共通(NR-X 接続補助を含む)・Excel の xlsx 直接書き込みは `Wrappers/` へ移植済みで、この一覧は実装に合わせてある。Arduino・VISA 機器・Excel を起動する操作は**まだ移していない**(旧リポジトリを調べた時点の内容)。各項目の「元」は旧リポジトリの場所。出どころと移植時の変更は `docs/移行記録.md`。
+> **2026-11-04 更新**。WAVE LOGGER・ロガーの出力ファイル・共通(NR-X 接続補助を含む)・Excel の xlsx 直接書き込み・Arduino は `Wrappers/` へ移植済みで、この一覧は実装に合わせてある。VISA 機器・Excel を起動する操作は**まだ移していない**(旧リポジトリを調べた時点の内容)。各項目の「元」は旧リポジトリの場所。出どころと移植時の変更は `docs/移行記録.md`。
 >
 > ここに書いた動作のうち、機器や Excel を使うものは**実機で確認していない**(ビルドと、模擬クラスを使うテストだけ)。
 
@@ -14,7 +14,7 @@
 | NF WF1973 | ファンクションジェネレータ。三角波バースト / 連続波 / DC オフセット | USB(VISA、NI-VISA 必須) | `Wrappers/Instruments`(未移植) | AllCheck(バースト)、SwitchController(連続)、NoiseTest(DC) |
 | SIGLENT SDG1032X | ファンクションジェネレータ(WF1973 の代替) | USB(VISA) | `Wrappers/Instruments`(未移植) | AllCheck、BoltCheck |
 | ADCMT 7351E | DMM。直流電流の実測 | **USB のみ**(USBTMC、VISA)。GPIB / RS-232C は不可 | `Wrappers/Instruments`(未移植) | NoiseTest |
-| Arduino(UNO R4 Minima、M5Stack 等) | 試験治具のマイコン。スイッチ・LED・NF 弁のインターロック | USB シリアル(COM ポート、行単位テキスト) | `Wrappers/Arduino`(未移植) | AllCheck、BoltCheck、SwitchController |
+| Arduino(UNO R4 Minima、M5Stack 等) | 試験治具のマイコン。スイッチ・LED・NF 弁のインターロック | USB シリアル(COM ポート、行単位テキスト) | `Wrappers/Arduino`(移植済み) | AllCheck、BoltCheck、SwitchController |
 | Windows の Wi-Fi | NR-X を Wi-Fi で使うときの接続先切替 | `netsh` | `Wrappers/Common`(移植済み) | AllCheck 他 |
 | ロガーの出力ファイル(xdt / ydt / CSV) | WAVE LOGGER の波形ファイルと CSV | ファイル | `Wrappers/LoggerFiles`(移植済み) | XdtConversion.Core 他 |
 | Excel ブック(xlsx) | 測定値の転記・判定・PDF 保存 | ファイル直接 / Excel COM(Excel 本体ソフト経由) | `Wrappers/Excel`(直接書き込みのみ移植済み) | AllCheck、XdtConversion、NoiseTest |
@@ -63,15 +63,28 @@
 - 通信は USB のみ。コマンドは ADC 独自(SCPI 不可)
 - 設定変更直後は古い読み値が残るので捨てる(`DiscardStaleReadings`。Bus トリガなら不要)
 
-### Arduino(`ArduinoConnection` / `ArduinoDiagnosticLog`)(未移植)
+### Arduino(`Wrappers/Arduino`、`PSCAutomation.Wrappers.Arduino`)
 
-- COM ポートを開く・閉じる・再接続、行単位の送受信、受信スレッド、切断検知(ポート消失 / クローズ / 書込失敗)
-- 異常ログ: 種別(`COM_DISAPPEARED` `PORT_CLOSED` `RX_STALE` `WRITE_ERROR` `SHUTDOWN_ERROR` 等)付きでファイル保存。アプリ名と固有の異常種別は起動時に `Configure` で注入
+`ArduinoConnection`(元 AllCheck)と `ArduinoDiagnosticLog`(元 SwitchController の `Configure` 方式 + AllCheck の `SHUTDOWN_ERROR`)。
+
+- COM ポートを開く・閉じる・再接続、行単位の送受信、受信スレッド、切断検知(ポート消失 / クローズ / 書込失敗)(`ArduinoConnection`)
+  - 接続(`ConnectAsync(request, isReply)`): COM ポートを総当たりで開き、1.7 秒待ってから `request` を送り、`isReply` が真を返す行が 2 秒以内に来たポートを使う。送る文字列と応答の判定はアプリが渡す
+  - 確認(`VerifyAsync`): 接続済みなら同じやり取りで生存確認、未接続なら接続する。失敗したらポートを閉じる
+  - 受信は `LineReceived` イベント(専用スレッドから呼ばれる)、切断は `Disconnected` イベント。再接続の方針はアプリ側
+- 異常ログ(`ArduinoDiagnosticLog`): 正常時は直近 1 分をメモリに持つだけ。異常種別(`COM_DISAPPEARED` `PORT_CLOSED` `RX_STALE` `WRITE_ERROR` `READER_ERROR` `SHUTDOWN_ERROR` 等)を書くと、直近 1 分の記録ごとファイルに保存し始める。復旧(`CompleteIfActive`)後 30 秒は同じファイルにまとめる
+  - アプリ名と固有の異常種別は起動時に `ArduinoDiagnosticLog.Configure("アプリ名", "NF_STALE", ...)` で注入する(通信を始める前に 1 回)
+  - 保存先は実行ファイルの隣の `Logs\ArduinoIncident_*.log`。書けないときは `%LOCALAPPDATA%\<アプリ名>\Logs`(`PrimaryDirectory` / `FallbackDirectory`)
+  - 共通の異常種別か判定する `IsIncident(kind)`
+- PC 遅延観測(`Wrappers/Common` の `PcDelayObservation`)と組み合わせるときは `PcDelayObservation.Start(ArduinoDiagnosticLog.Write)`
 - 受信行の意味(`NF:0` / `NF:1`、READY、スイッチ状態)と受信頻度の判定は**アプリ側のプロトコルクラス**が持つ(AllCheck `As110ArduinoProtocol`、SwitchController `As100201ArduinoProtocol`)
 
 **制約**
-- UTF-8、DTR 有効。ボーレート等は接続設定で渡す
+- 115200bps、改行 `
+`、送信 UTF-8(BOM なし)、受信は ASCII として解釈、DTR 有効(元のまま固定)
+- `ConnectAsync` は応答が得られるまで PC の COM ポートを順に開いて確認文字列を送る。Arduino 以外の機器がつながった COM ポートにも送る点に注意(元のまま)
+- 異常ログは静的クラスでプロセスに 1 つ。`Configure` は起動時に 1 回呼ぶ
 - 通信断だけでは発振器や LOGGER を止めない(方針はアプリ側)
+- 実機(Arduino・COM ポート)での動作は**未確認**。テストはポートを開かない範囲(ログの種別・保存、ポートなしでの振る舞い)だけ
 
 ### ロガーの出力ファイル(`Wrappers/LoggerFiles`、`PSCAutomation.Wrappers.LoggerFiles`)
 

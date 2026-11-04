@@ -35,7 +35,7 @@
 |---|---|---|
 | 1 | 旧 5 リポジトリの比較と統合方針(本文書) | 済(2026-11-04) |
 | 2 | A(WaveLogger.Automation)・C(Common)・E(NR-X 接続補助)・F(LoggerFiles)・Excel の移植 | **済(2026-11-04)**。ただし Excel を起動する操作(`ExcelWorkSession` / `NoiseResultWorkbook` の汎用部分)は範囲が決まっていないので未移植。出どころと変更点は `docs/移行記録.md` |
-| 3 | B(Arduino)の移植 | 未着手(判断 3 待ち) |
+| 3 | B(Arduino)の移植 | **済(2026-11-04)**。AllCheck 版の `ArduinoConnection` と、SwitchController 版の `Configure` 方式 + AllCheck の `SHUTDOWN_ERROR` の `ArduinoDiagnosticLog`。BoltCheck の NF 判定をどうするか(判断 3)はアプリ側の話なので、BoltCheck を移すときに決める。実機確認は未実施 |
 | 4 | D(VISA 機器)の移植 | 未着手(判断 4 待ち) |
 | 5 | アプリの移植と `.slnf` の整備 | 未着手 |
 

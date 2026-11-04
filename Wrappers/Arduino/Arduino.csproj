@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net9.0-windows</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AssemblyName>PSCAutomation.Wrappers.Arduino</AssemblyName>
+    <RootNamespace>PSCAutomation.Wrappers.Arduino</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- 移植元(AS110AllCheck / AS100201SwitchController)と同じ版 -->
+    <PackageReference Include="System.IO.Ports" Version="10.0.12" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- 受信・送信の遅い区間を PcDelayObservation で観測する(元のまま) -->
+    <ProjectReference Include="..\Common\Common.csproj" />
+  </ItemGroup>
+</Project>
