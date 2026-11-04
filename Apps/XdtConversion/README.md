@@ -59,7 +59,7 @@ PC だけ転送するときは CR の行のチェックを外す。転送しな�
 
 ## オフライン PC 用の発行
 
-Visual Studio でプロジェクトを右クリック → 発行 → フォルダーで、付属の `FolderProfile` を選ぶ(Release / win-x64 / 自己完結 / 単一ファイル)。発行フォルダー全体(exe と `雛形` フォルダー)をコピーする。Excel は持ち運び先の PC に必要。
+Visual Studio でプロジェクトを右クリック → 発行 → フォルダーで、付属の `FolderProfile` を選ぶ(Release / win-x64 / 自己完結 / 単一ファイル)。発行フォルダーには `XdtConversion.exe`(約 108MB、.NET の入っていない PC でも動く)と `雛形` フォルダーだけが出る(`.pdb` は exe に入れてある)。この 2 つをコピーする。Excel は持ち運び先の PC に必要。
 
 ```powershell
 dotnet publish Apps/XdtConversion/XdtConversion.csproj -p:PublishProfile=FolderProfile
@@ -87,4 +87,6 @@ dotnet run --project Apps/XdtConversion/Verification -c Release
 
 - 確認(2026-11-04): Release / Debug ビルド(警告 0)、`Verification` の成功、旧アプリの出力との一致、exe が起動して画面が出ること。
 - 確認(2026-11-04、`ExcelViewer` への乗り換え後): 全体 `PSCAutomation.sln` の Release ビルドと `XdtConversion.slnf` の Debug ビルド(警告 0)、`Verification` の成功。`ExcelViewer` そのものは `Wrappers/Tests/Excel.Tests` で Excel を起動して確かめている。
-- 未確認: 画面操作(ファイル選択・ドラッグ・転送表の編集・設定の保存と復元)と、画面から変換して Excel が開くまで(乗り換え後のアプリでは未実施)。
+- 人が確認(2026-11-04、乗り換え後の Release ビルドの exe): `雛形` の PC / CR の xdt を選び、既定の転送設定・間引き 10 で「変換・保存 → Excel表示」を押して「転送・表示完了」になること。
+- 確認(2026-11-04): `FolderProfile` で発行し、発行フォルダーが exe と `雛形\雛形.xlsx` だけになること、発行した exe が起動して画面が出ること。
+- 未確認: ファイルのドラッグ、転送表の編集、設定の保存と復元、Excel を開くのに失敗したときの表示、発行した exe を別の PC で動かすこと。

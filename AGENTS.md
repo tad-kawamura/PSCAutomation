@@ -28,6 +28,7 @@ PSCAutomation.sln      ← 全体
 - 言語は C#、.NET は `net9.0-windows`(WinForms)。機器なしで動かせる部分は `net9.0` でもよい
 - 名前空間は wrapper が `PSCAutomation.Wrappers.<グループ>`、アプリが `PSCAutomation.Apps.<アプリ>` を基本にする(旧コードを移すときに揃える)
 - 普段は `.slnf` でアプリ単位に作業する。**wrapper を変えたときだけ全体 `.sln` をビルド**して他アプリが壊れていないか確認する
+- exe を発行するときは**単一ファイル**(自己完結・win-x64 の exe 1 つ)にする。.NET の入っていない PC でもそのまま動く。設定は各アプリの `Properties/PublishProfiles/FolderProfile.pubxml` に置く(`Apps/XdtConversion` のものを写す。`.pdb` も exe に入れ、Wrappers の `.pdb` は出さない)。発行フォルダーに exe と並べてよいのは、人が差し替える雛形などのフォルダーだけ
 - `bin/` `obj/`、計測データ(xdt / ydt / xlsx / pdf)、ログは `.gitignore` で除外。雛形だけは入れる
 
 ## 仕様決め(新しい依頼を受けたとき)
