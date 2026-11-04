@@ -131,7 +131,7 @@ WAVE LOGGER を起動せずに、出力ファイルを直接読み書きする�
 - `ErrorNotification`: 警告・エラーのメッセージボックスを最前面に表示(LOGGER の後ろに隠れない)
 - `PcDelayObservation`: PC の処理遅延(タイマーの遅れ)を監視して記録。書き込み先は `Start(write)` で渡す(例: Arduino の異常ログ)
 - `WindowActivation`: 他プロセスの窓を前面にする
-- `NrDeviceConnections` / `SingleAdapterWifiManager`: NR-X の接続先(USB / LAN / Wi-Fi)の整理と、Wi-Fi プロファイル切替。SSID 一覧はアプリ側の設定に置く
+- `NrDeviceConnections` / `SingleAdapterWifiManager`: NR-X の接続先(USB / LAN / Wi-Fi)の整理と、Wi-Fi プロファイル切替。SSID 一覧は wrapper に持たず、アプリ側に置く(置き場はアプリを作るときに AI が聞く。`AGENTS.md`「仕様決め」)
 
 ## アプリの一覧
 

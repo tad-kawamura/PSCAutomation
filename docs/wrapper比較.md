@@ -99,7 +99,8 @@
 `Logger/NrDeviceConnections.cs`(NR-X の USB / LAN / Wi-Fi 接続先の整理)、`Logger/SingleAdapterWifiManager.cs`(Wi-Fi 切替、3 リポジトリ同一)、`Logger/LoggerImports.cs`(1 行、同一)。
 
 - AllCheck / BoltCheck の `NrDeviceConnections.cs` には `NrWifiProfiles`(実機の SSID `NRX_E8FDF803634C` と IP)が直書き。SwitchController は `As100201/As100201ConnectionSettings.cs` へ分離済み。
-- **採用案**: SwitchController の分け方(wrapper にはプロファイル一覧を持たない)。SSID 一覧は各アプリの設定クラスに置く。同じ機器を複数アプリで使うなら共通設定ファイルで 1 か所にする(要判断)。
+- **採用案**: SwitchController の分け方(wrapper にはプロファイル一覧を持たない)。
+- SSID の置き場(アプリの設定クラスか、共通の 1 か所か)は**ここでは一律に決めない(決定: 2026-11-04)**。NR-X を使うかどうか・Wi-Fi で使うかどうかはアプリ次第なので、アプリを作る(移植する)ときに AI が聞く(`AGENTS.md`「仕様決め」)。NR-X を使わない人に「使わないから要らない」と言わせない。
 
 ### F. XDT ファイル読み書き
 
@@ -161,6 +162,6 @@ XDT(WAVE LOGGER の波形ファイル)のバイナリを触るコードが 4 か
 3. **BoltCheck の Arduino を AllCheck 版に揃える**(NF 判定をアプリ側へ移す。実機確認が要る)か、当面 BoltCheck だけ古い wrapper を抱えたまま移すか。
 4. ~~WF1973 の 3 クラスを別名で残す 2 段階案~~ → **決定: 案 A(2 段階案)**(2026-11-04)。今すぐ 1 クラスに統合する案(3 アプリとも発振器の動きが変わり実機確認が要る)と、通信部分もまとめずに移す案(COM の解放と探索が 3 か所に残る)を比べて選んだ。2 段階目(3 クラスを 1 つに寄せるか)は、アプリを移して実機で安定してから決める。
 5. ~~ファームウェアをモノレポに含めるか~~ → **決定: 含める**(2026-11-04)。`Apps/<アプリ>/firmware/` に、各アプリの移植と同時に移す(上の「H. ファームウェア」)。
-6. **NR-X の Wi-Fi プロファイル(SSID)の置き場**: 各アプリの設定クラスか、共通の 1 か所か。(手順 2 では wrapper に持たせていない。アプリ移植までに決めればよい)
+6. ~~NR-X の Wi-Fi プロファイル(SSID)の置き場~~ → **決定: アプリごとに、作る(移植する)ときに AI が聞く**(2026-11-04)。NR-X を使うかはアプリを作る人の想定次第で、使わない人もいる。使う機器に NR-X が入り、Wi-Fi で使うときだけ、置き場を選択肢で聞く(`AGENTS.md`「仕様決め」)。wrapper には持たせない(手順 2 のまま)。AllCheck・BoltCheck・SwitchController を移すときも同じく聞く。
 7. 履歴は**コピーのみ**(現案)でよいか。(手順 2 はコピーのみで進め、出どころを `docs/移行記録.md` に書いた)
 8. **Excel を起動する操作のうち、どこまでを wrapper にするか**(手順 2 で判明)。AllCheck の `ExcelWorkSession` と NoiseTest の `NoiseResultWorkbook` は、Excel の起動・ブックを開く・保存・PDF 化・閉じる・COM 解放の共通部分と、AS110 固有の処理(図形内の S/N 書き換え、E21・L21 の判定、PP 値シートの行の決め方)が 1 つのクラスに入っている。XdtConversion の `ExcelPresenter`(Excel を起動してブックを表示するだけ)も同じ判断の対象で、それまでは `Apps/XdtConversion` 側に置く(2026-11-04)。
