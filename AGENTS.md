@@ -62,6 +62,9 @@ PSCAutomation.sln      ← 全体
 ## Git と既存リポジトリ
 
 - 通常ブランチは `main`。作業開始時に `git status` と `git fetch origin` で状態を確認し、差分を見てから `git pull --ff-only` で取り込む
+- 作業の区切り(ビルド・テストが通ったところ)でのコミットと共有のしかたは、作業者で分ける。作業者は `git config user.name` で見分ける
+  - `tad-kawamura`(メインの作業者): `main` に直接コミットし、そのまま `git push origin main` まで行う。push の前に `git fetch origin` し、遠隔に新しいコミットがあれば `git pull --ff-only` で取り込んでから push する
+  - それ以外の人: `main` には直接コミットしない。作業用のブランチ(例: `feature/<内容>`)を切ってコミットし、そのブランチを push して `main` 向けのプルリクエストを作る。取り込み(マージ)は `tad-kawamura` が確認してから行う
 - `reset --hard`、`clean`、強制 push、無断の変更破棄で同期しない。無関係な変更をコミットに混ぜない
 - 移植元の旧リポジトリ(`AS110AllCheck` / `AS110BoltCheck` / `AS100201SwitchController` / `XdtConversion` / `AS110NoiseTest`、いずれも `tad-kawamura` の Private)は**読むだけ**。削除・アーカイブ・push・設定変更は AI がしない。扱いは人が決める
 
