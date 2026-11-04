@@ -133,6 +133,12 @@ WAVE LOGGER を起動せずに、出力ファイルを直接読み書きする�
 - `WindowActivation`: 他プロセスの窓を前面にする
 - `NrDeviceConnections` / `SingleAdapterWifiManager`: NR-X の接続先(USB / LAN / Wi-Fi)の整理と、Wi-Fi プロファイル切替。SSID 一覧は wrapper に持たず、アプリ側に置く(置き場はアプリを作るときに AI が聞く。`AGENTS.md`「仕様決め」)
 
+**NR-X を Wi-Fi で使うとき**(USB なら以下は要らない)
+- 事前準備: 最初の 1 回だけ、使う PC の Windows の Wi-Fi 画面から NR-X に接続し、プロファイルを保存しておく。wrapper はパスワードを扱わず、Windows に保存されたプロファイルだけを使う。未登録なら例外で止まる
+- アプリに要る値: Wi-Fi プロファイル名(通常は SSID と同じ)、NR-X の IP アドレスとポート番号。社内の実機の値は旧 AllCheck / BoltCheck の `Logger/NrDeviceConnections.cs`、SwitchController の `As100201/As100201ConnectionSettings.cs`(いずれも `NrWifiProfiles`)に書かれている
+- PC の Wi-Fi アダプター 1 台で接続先を切り替えるので、NR-X につないでいる間は PC がふだんの Wi-Fi(社内 LAN・インターネット)から外れる。終わったら元の接続先に戻す(`RestoreAsync`。切り替え前が未接続なら未接続に戻す)
+- 接続の完了はタイムアウト付きで確かめる。時間内につながらなければ例外
+
 ## アプリの一覧
 
 | アプリ | 内容 | 使う機器 |
