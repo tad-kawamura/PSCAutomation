@@ -6,6 +6,7 @@ PSC 社内の自動化プログラム(人が手でやっていた機器操作・
 - 何ができるか(wrapper の機能一覧)は [docs/capabilities.md](docs/capabilities.md)
 - 立ち上げの経緯は [docs/引継ぎ_2026-11-04.md](docs/引継ぎ_2026-11-04.md)
 - 旧リポジトリの wrapper 比較と統合方針は [docs/wrapper比較.md](docs/wrapper比較.md)
+- 移植前の git 履歴は持ち込んでいない(コピーのみ)。移植前の経緯は旧リポジトリ(アーカイブ済みのものも読める)で見る。どのコミットから移したかは [docs/移行記録.md](docs/移行記録.md)
 
 ## 目標構成
 
