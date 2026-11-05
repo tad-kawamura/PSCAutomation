@@ -24,6 +24,8 @@ Logs/
 !雛形/*.xlsx
 !**/雛形/*.xdt
 !**/雛形/*.xlsx
+# NR-X(WAVE LOGGER X)用の雛形(AS110AllCheck)
+!**/雛形/*.ydt
 !docs/**/*.xlsx
 !**/Verification/Fixtures/*.xdt
 # wrapper のテスト用の照合データ(Wrappers/Tests/<テスト>/Fixtures)は入れる

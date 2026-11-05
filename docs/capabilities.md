@@ -141,6 +141,7 @@ WAVE LOGGER を起動せずに、出力ファイルを直接読み書きする�
 - Excel を起動する操作は、同じスレッド(ふつうは画面のスレッド)から呼ぶ
 - 測定値の書き込みは、ロガーの xdt / ydt を読んだ値の配列を渡す形。xdt / ydt の違いは LoggerFiles 側で吸収する
 - XdtConversion は `ExcelViewer` に乗り換え済み(2026-11-04)。AllCheck・NoiseTest は移植時にこの部品を使う
+- AS110AllCheck は 2026-11-05 の移植で `ExcelApplication`・`ExcelWorkbook`・`ExcelSheet` に乗り換えた(作業ブックの再利用・図形の S/N 書き換え・判定・別名保存・PDF・前面表示)。実際の雛形(圧縮5 の図形、sheet1 の E21・L21)で、Excel のある PC の検査(`Apps/AS110AllCheck/Tests/ExcelHeader`・`SaveAvailability`)は通した。機器をつないだ通しは未確認
 
 ### 共通(`Wrappers/Common`、`PSCAutomation.Wrappers.Common`)
 

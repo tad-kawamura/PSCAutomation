@@ -1,0 +1,18 @@
+{
+  "solution": {
+    "path": "PSCAutomation.sln",
+    "projects": [
+      "Apps\\AS110AllCheck\\AS110AllCheck.csproj",
+      "Apps\\AS110AllCheck\\Tests\\Verification\\AS110AllCheck.Verification.csproj",
+      "Apps\\AS110AllCheck\\Tests\\AppShutdown\\AppShutdownTests.csproj",
+      "Apps\\AS110AllCheck\\Tests\\SaveAvailability\\SaveAvailability.csproj",
+      "Apps\\AS110AllCheck\\Tests\\ExcelHeader\\ExcelHeaderTests.csproj",
+      "Wrappers\\WaveLogger.Automation\\WaveLogger.Automation.csproj",
+      "Wrappers\\Common\\Common.csproj",
+      "Wrappers\\Arduino\\Arduino.csproj",
+      "Wrappers\\Instruments\\Instruments.csproj",
+      "Wrappers\\LoggerFiles\\LoggerFiles.csproj",
+      "Wrappers\\Excel\\Excel.csproj"
+    ]
+  }
+}

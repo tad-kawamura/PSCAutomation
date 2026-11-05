@@ -1,0 +1,478 @@
+﻿using System.Diagnostics;
+namespace PSCAutomation.Apps.AS110AllCheck;
+internal sealed partial class MainForm : Form
+{
+    private readonly ProductionWorkflow _flow = new();
+    private readonly TransferSettings _transferSettings = TransferSettings.Load();
+    private readonly ComboBox _modeBox = new() { DropDownStyle=ComboBoxStyle.DropDownList,Width=125 };
+    private bool _modeSelected;
+
+    private Control BuildModeSelectionPanel()
+    {
+        var panel = new FlowLayoutPanel
+        {
+            AutoSize=true, Dock=DockStyle.Fill, BackColor=Color.AliceBlue,
+            Padding=new Padding(12), Margin=new Padding(0, 4, 0, 12)
+        };
+        var modeFont = new Font(Font.FontFamily, 16, FontStyle.Bold);
+        _modeBox.Font=modeFont;
+        _modeBox.Width=230;
+        _modeBox.DropDownHeight=180;
+        _modeBox.Items.AddRange(["動き検査","データ調整","データ取り"]);
+        _modeBox.SelectionChangeCommitted+=(_,_)=>ChangeTestMode();
+        panel.Controls.AddRange([new Label
+        {
+            Text="モードを選択", AutoSize=true, Font=modeFont,
+            ForeColor=Color.MidnightBlue, Margin=new Padding(0, 5, 18, 0)
+        }, _modeBox]);
+        return panel;
+    }
+    private readonly ComboBox _modelBox = new() { DropDownStyle=ComboBoxStyle.DropDownList,Width=225 };
+    private readonly TextBox _serialBox = new() { Width=110,Text="1" };
+    private readonly Label _serialLabel = new() { Text="開始S/N", AutoSize=true };
+    private readonly TextBox _rootBox = new() { Width=280,ReadOnly=true };
+    private readonly Label _flowLabel = new() { AutoSize=true,MaximumSize=new Size(760,0) };
+    private readonly Button _transferButton=new(),_saveButton=new(),_leakOutputButton=new(),_leakButton=new(),_completeButton=new(),_remeasureButton=new(),_retryCaptureButton=new();
+    private bool _leakOutputReady;
+    // 出力OFFを送信できず、発振器の出力が残っている可能性がある状態。
+    // 解除は出力OFFの送信成功、または再接続（接続時に出力OFFを送信）だけで行う。
+    private bool _generatorOutputUnknown, _generatorOutputAlertShown;
+    private readonly string _boardToken=Guid.NewGuid().ToString("N");
+    private long _displayEpoch;
+    private string _displaySignature="";
+    private ExcelWorkSession? _excel;
+    private Form? _saveNotice;
+    private string? _capturePath;
+    private bool _reviewStage,_leakRunning,_closeAfterLeak,_lastExcelPass;
+    private string _excelJudgmentStatus="未確認",_excelJudgmentError="";
+    private string _saveAvailabilitySignature="";
+    private string? _ownedSaveBase;
+    private CancellationTokenSource? _leakCancel;
+    private readonly string _sessionFolder=Path.Combine(Path.GetTempPath(),"AS110BoltCheck","ver3-"+Guid.NewGuid().ToString("N"));
+
+    private Control BuildProductionPanel()
+    {
+        var panel=new FlowLayoutPanel { AutoSize=true,Dock=DockStyle.Fill,FlowDirection=FlowDirection.TopDown,WrapContents=false };
+        var selection=new FlowLayoutPanel { AutoSize=true,WrapContents=true,MaximumSize=new Size(780,0) };
+        _modelBox.Items.AddRange(ProductModel.All);_modelBox.SelectedIndex=0;
+        var applyModel=new Button {Text="型式を適用",AutoSize=true};
+        applyModel.Click+=async (_,_)=>await SelectProductModelAsync();
+        selection.Controls.AddRange([_modelBox,applyModel,_serialLabel,_serialBox]);
+        var paths=new FlowLayoutPanel {AutoSize=true};
+        _rootBox.Text=_transferSettings.SaveRoot;
+        var choose=new Button {Text="保存先選択",AutoSize=true};
+        choose.Click+=(_,_)=> {
+            if(_operationInProgress || _flow.Measuring || _flow.SaveFailed || _leakRunning || _flow.HasSaved) return;
+            using var dialog=new FolderBrowserDialog();
+            if(dialog.ShowDialog(this)==DialogResult.OK) { _rootBox.Text=dialog.SelectedPath;_transferSettings.SaveRoot=dialog.SelectedPath;_transferSettings.Save();UpdateControls(); }
+        };
+        var release=new Button {Text="完了番号の保護解除",AutoSize=true};
+        release.Click+=(_,_)=>ReleaseCompletedSerial();
+        var settings=new Button {Text="転送設定",AutoSize=true};settings.Click+=(_,_)=>EditTransferSettings();
+        paths.Controls.AddRange([choose,_rootBox,release,settings]);
+        var actions=new FlowLayoutPanel {AutoSize=true,WrapContents=true,MaximumSize=new Size(780,0)};
+        ConfigureButton(_transferButton,"Excel転送",(_,_)=>TransferLatest());
+        ConfigureButton(_saveButton,"保存",(_,_)=>SaveLatest());
+        ConfigureButton(_leakOutputButton,"+30mA",(_,_)=>StartLeakOutput());
+        ConfigureButton(_leakButton,"漏れ試験実施",async (_,_)=>await LeakCheckAsync());
+        ConfigureButton(_completeButton,"合格",(_,_)=>CompleteProduct());
+        ConfigureButton(_remeasureButton,"再測定へ戻る",(_,_)=>{
+            if(_operationInProgress || _leakRunning || _flow.SaveFailed)return;
+            if(_leakOutputReady)
+            {
+                RunOperation("漏れ試験出力停止",()=>{StopLeakOutput();_reviewStage=false;return "出力を停止して再測定へ戻りました。";});
+                return;
+            }
+            if(!_flow.HasSaved){_saveNotice?.Close();_saveNotice=null;_capturePath=null;_flow.Invalidate();}
+            _reviewStage=false;UpdateControls();
+        });
+        ConfigureButton(_retryCaptureButton,"一時保存を再試行",(_,_)=>RetryCapture());
+        actions.Controls.AddRange([_transferButton,_saveButton,_leakOutputButton,_leakButton,_completeButton,_remeasureButton,_retryCaptureButton]);
+        panel.Controls.AddRange([selection,paths,actions,_flowLabel]);
+        _modelBox.SelectionChangeCommitted+=async (_,_)=>await SelectProductModelAsync();
+        _serialBox.Leave+=(_,_)=>{if(!CanChangeSetup || _flow.Mode!=TestMode.Production)return;RunOperation("S/N設定",()=>{ConfigureProduct(requireSaveRoot:false);return "設定しました";});};
+        return panel;
+    }
+    private bool CanChangeSetup => !_operationInProgress && !_flow.Measuring && !_flow.SaveFailed && !_flow.CaptureFailed && !_leakRunning && !_flow.HasCapture;
+    private ProductModel SelectedModel => _modelBox.SelectedItem as ProductModel ?? ProductModel.All[0];
+    private CompletionStore Store => new(_rootBox.Text.Length>0?_rootBox.Text:throw new InvalidOperationException("保存先を選択してください。"));
+    private void ConfigureProduct(bool requireSaveRoot=true)
+    {
+        if (_flow.Mode == TestMode.Motion) return;
+        if (_flow.Mode == TestMode.Adjustment) { _flow.ConfigureAdjustment(SelectedModel); return; }
+        _flow.Configure(_serialBox.Text.Trim(),SelectedModel);
+        if(_flow.Mode==TestMode.Production && (requireSaveRoot || _rootBox.Text.Length>0)) { var store=Store;using var held=store.Lock();if(store.IsComplete(_flow.Serial))throw new InvalidOperationException("このS/Nは完了済みです。保護解除が必要です。"); }
+    }
+    private void ChangeTestMode()
+    {
+        if(_operationInProgress || _flow.Measuring || _flow.SaveFailed || _flow.CaptureFailed || _leakRunning) { _modeBox.SelectedIndex=(int)_flow.Mode;return; }
+        TestMode next=(TestMode)_modeBox.SelectedIndex;
+        if (_modeBox.SelectedIndex < 0) return;
+        if(next==TestMode.Motion && _flow.HasCapture) { _modeBox.SelectedIndex=(int)_flow.Mode;return; }
+        bool templatePurposeChanged = (_flow.Mode == TestMode.Motion) != (next == TestMode.Motion);
+        CloseJudgmentNotice();
+        _flow.Mode=next;
+        _modeSelected=true;
+        if (templatePurposeChanged) ResetTemplate();
+        RunOperation("モード選択",()=> { ConfigureProduct(requireSaveRoot:false); StopLeakOutput();_generator?.PrepareBurst(CurrentBurstSettings);return _modeBox.Text; });
+        UpdateControls();
+    }
+    private GeneratorBurstSettings CurrentBurstSettings => As110MotionTest.GetSettings(
+        isSdg1032X: _generator is Sdg1032XSession, isMotion: _flow.Mode == TestMode.Motion);
+    private async Task SelectProductModelAsync()
+    {
+        if(!CanChangeSetup) { _modelBox.SelectedItem=_flow.Model;return; }
+        await RunOperationAsync("型式選択",async ()=> {
+            ConfigureProduct(requireSaveRoot:false);
+            if(!_standScalingApplied)return "スタンドを先に選択してください。";
+            string[] candidates=Directory.GetFiles(TemplateFolderPath,"*.xyb").Where(p=>
+                System.Text.RegularExpressions.Regex.IsMatch(Path.GetFileNameWithoutExtension(p),System.Text.RegularExpressions.Regex.Escape(SelectedModel.Name)+@"(?![A-Za-z0-9])",System.Text.RegularExpressions.RegexOptions.IgnoreCase)).ToArray();
+            if(candidates.Length!=1) throw new InvalidOperationException($"{SelectedModel.Name}の参照波形が{candidates.Length}件です。対応する.xybを1件置いてください。");
+            RefreshLoggerState();if(!LoggerReadyToStart)throw new InvalidOperationException("LOGGERの停止を待ってください。");
+            await LoadReferenceFileAsync(candidates[0]);_selectedReferencePath=candidates[0];
+            int steps=(_selectedStand?.HorizontalZoomSteps??0)-_horizontalZoomStepsApplied;
+            if(steps>0)await _logger.ZoomHorizontalAsync(steps,AppendLog,()=>_horizontalZoomStepsApplied++);
+            RestoreReferenceSelection(); CompletePreparationDisplay();return SelectedModel.ToString();
+        });
+    }
+    private void UpdateProductionControls()
+    {
+        bool idle=!_operationInProgress && !_leakRunning && !_flow.Measuring;
+        bool ready=idle && ConnectionsReady && _standScalingApplied && _templateLoaded && LoggerReadyToStart && _arduino.MeasurementInputReady;
+        _modeBox.Enabled=idle && !_flow.SaveFailed && !_flow.CaptureFailed && !_flow.HasSaved;
+        _modelBox.Enabled=CanChangeSetup && _standScalingApplied && _flow.Mode!=TestMode.Motion;
+        _serialLabel.Visible=_serialBox.Visible=_flow.Mode==TestMode.Production;
+        _serialBox.Enabled=CanChangeSetup && _flow.Mode==TestMode.Production;
+        _startButton.Text=_flow.Mode==TestMode.Motion?"測定開始":"データ調整";
+        _startButton.Enabled=ready && !_flow.SaveFailed && !_flow.CaptureFailed && (!_reviewStage) && (_flow.Mode!=TestMode.Motion || MotionContactEnergized);
+        _transferButton.Enabled=idle && _flow.HasCapture && !_flow.CaptureFailed && !_reviewStage;
+        string saveBlockReason=GetSaveBlockReason();
+        _saveButton.Enabled=saveBlockReason.Length==0;
+        string saveAvailability=$"モード={_flow.Mode} / 処理中={_operationInProgress} / 測定中={_flow.Measuring} / 漏れチェック中={_leakRunning} / revision={_flow.Revision} / 転送revision={_flow.TransferredRevision} / 転送済み={_flow.HasTransfer} / ExcelOK={_lastExcelPass} / 保存後工程={_reviewStage} / 保存ボタン={_saveButton.Enabled} / 理由={saveBlockReason}";
+        if(saveAvailability!=_saveAvailabilitySignature)
+        {
+            _saveAvailabilitySignature=saveAvailability;
+            AppendLog("保存許可："+saveAvailability);
+        }
+        _leakOutputButton.Enabled=ready && _reviewStage && _flow.Mode==TestMode.Production && _flow.HasSaved && !_leakOutputReady;
+        _leakButton.Enabled=ready && _reviewStage && _flow.Mode==TestMode.Production && _flow.HasSaved && _leakOutputReady;
+        _completeButton.Enabled=idle && !_leakOutputReady && _flow.CanComplete && _arduino.MeasurementInputReady && ConnectionsReady;
+        _remeasureButton.Text=_flow.HasSaved?"再測定へ戻る":"設定変更（測定を破棄）";
+        _remeasureButton.Enabled=idle && (_reviewStage || _flow.HasCapture) && !_flow.SaveFailed;
+        _retryCaptureButton.Visible=_flow.CaptureFailed;_retryCaptureButton.Enabled=idle && _flow.CaptureFailed && ConnectionsReady;
+        string identity = _flow.Mode == TestMode.Adjustment ? "データ調整（保存・S/N設定なし）" : $"S/N {_flow.Serial}";
+        _flowLabel.Text=$"{identity}　{(_leakRunning?"漏れチェック中":_flow.Measuring?"測定中":_flow.CaptureFailed?"一時保存失敗：再試行してください":_flow.SaveFailed?"保存失敗：同じ番号で再保存してください":_flow.HasSaved?$"一式保存済み／漏れチェック {_flow.LeakChecks}回":_flow.HasTransfer?$"Excel転送済み：{_excelJudgmentStatus}":_flow.HasCapture?"一時保存済み：Excel転送できます":_excelPreparing?"測定待ち（Excel準備中）":"測定待ち")}";
+        if (_flow.Mode == TestMode.Motion) _flowLabel.Text = _flow.Measuring ? "動き検査中" : "動き検査：保存・S/N設定なし";
+        if(_leakOutputReady && !_leakRunning && !_generatorOutputUnknown)_flowLabel.Text+="／+30mA出力中：漏れ試験実施を押してください";
+        if(_generatorOutputUnknown)_flowLabel.Text+="／発振器の出力状態不明：本体で出力OFFを確認し「確認」で再接続してください";
+        if(_flow.Mode==TestMode.Production && _flow.HasTransfer && !_reviewStage && saveBlockReason.Length>0)
+            _flowLabel.Text+=$"／保存待機：{saveBlockReason}";
+        UpdateDeveloperContactControls();
+        SendBoardDisplay();
+    }
+    private string GetSaveBlockReason()
+    {
+        if(_operationInProgress)return "処理中";
+        if(_leakRunning)return "漏れチェック中";
+        if(_flow.Measuring)return "測定中";
+        if(_flow.Mode!=TestMode.Production)return "データ取り以外";
+        if(!_flow.HasTransfer)return "最新測定の転送未完了";
+        if(!_lastExcelPass)return _excelJudgmentStatus;
+        if(_reviewStage)return "一式保存後の工程";
+        return "";
+    }
+    private string BuildBoardDisplaySignature()
+    {
+        string a=_reviewStage?"+30mA":_startButton.Text,b=_reviewStage?"漏れ試験実施":_flow.CaptureFailed?"一時保存再試行":"Excel転送",c=_reviewStage?"合格":_flow.Mode==TestMode.Production?"保存":"-";
+        bool aa=_reviewStage?_leakOutputButton.Enabled:_startButton.Enabled, bb=_reviewStage?_leakButton.Enabled:_flow.CaptureFailed?_retryCaptureButton.Enabled:_transferButton.Enabled, cc=_reviewStage?_completeButton.Enabled:_saveButton.Enabled;
+        if (_flow.Mode == TestMode.Motion) { a="測定開始"; b=c="-"; bb=cc=false; }
+        string displaySerial = _flow.Mode == TestMode.Production ? _flow.Serial : "-";
+        return $"{(int)_flow.Mode}:{(aa?1:0)}{(bb?1:0)}{(cc?1:0)}:{displaySerial}:{a}:{b}:{c}:{_flowLabel.Text.Replace(':',' ')}";
+    }
+    private void SendBoardDisplay()
+    {
+        if(!_arduino.IsConnected)return;
+        string signature=BuildBoardDisplaySignature();
+        if(signature!=_displaySignature){_displaySignature=signature;_displayEpoch++;}
+        try { _arduino.SendDisplay($"UI:{_displayEpoch}:{_boardToken}:{signature}"); }
+        catch(Exception ex){AppendLog("M5Stack表示送信失敗："+ex.Message);}
+    }
+    private void BoardButtonRequested(int button,long epoch,string token)
+    {
+        long received=Stopwatch.GetTimestamp();
+        if(IsDisposed || !IsHandleCreated)return;
+        BeginInvoke((Action)(async ()=> {
+            if(_closeRequested || _repeatConfirmationShown || _operationInProgress || _leakRunning || !_arduino.MeasurementInputReady || token!=_boardToken || epoch!=_displayEpoch || Stopwatch.GetElapsedTime(received).TotalSeconds>=1)return;
+            if (_flow.Mode == TestMode.Motion && button != 1) return;
+            AppendLog($"M5Stack操作受付：{(char)('A'+button-1)} / モード={_flow.Mode} / revision={_flow.Revision} / 保存後工程={_reviewStage}");
+            if(_reviewStage){if(button==1 && _leakOutputButton.Enabled)StartLeakOutput();else if(button==2 && _leakButton.Enabled)await LeakCheckAsync();else if(button==3 && _completeButton.Enabled)CompleteProduct();}
+            else if(button==1 && _startButton.Enabled)ExecuteMeasurement(received,_arduino.MeasurementRequestVersion);
+            else if(button==2){if(_flow.CaptureFailed && _retryCaptureButton.Enabled)RetryCapture();else if(_transferButton.Enabled)TransferLatest();}
+            else if(button==3 && _saveButton.Enabled)SaveLatest();
+        }));
+    }
+    private void CaptureLatest()
+    {
+        _flow.CaptureFailed=true;
+        // トリガ待ちは停止とみなさず、残データの読み出し完了後だけ保存する。
+        if (_logger.GetState() != 1)
+            throw new InvalidOperationException("LOGGERの停止完了を確認できません。一時保存を再試行してください。");
+        Directory.CreateDirectory(_sessionFolder);
+        string extension=Path.GetExtension(GetDetectedTemplatePath());
+        string path=Path.Combine(_sessionFolder,"latest"+extension),stage=Path.Combine(_sessionFolder,"capture"+extension);
+        if(File.Exists(stage))File.Delete(stage);
+        long result=_logger.SaveXdt(stage);
+        if(result!=0 || !File.Exists(stage) || new FileInfo(stage).Length==0)throw new IOException($"LOGGERの一時保存に失敗（戻り値{result}）。");
+        if(extension.Equals(".ydt",StringComparison.OrdinalIgnoreCase))
+        {
+            long count=_logger.GetDataCount();
+            if(count!=_transferSettings.ExpectedSamples)throw new InvalidDataException($"測定点数が{count}点です。LOGGER設定を確認してください。");
+            string csv=stage+".csv";if(File.Exists(csv))File.Delete(csv);
+            long csvResult=_logger.SaveCsv(csv);
+            if(csvResult!=0 || !File.Exists(csv) || new FileInfo(csv).Length==0)throw new IOException($"NR-Xの標準CSV一時保存に失敗（戻り値{csvResult}）。");
+            File.Move(csv,path+".csv",true);
+        }
+        else
+        {
+            var info=XdtReader.Inspect(stage);
+            if(info.Samples!=_transferSettings.ExpectedSamples)throw new InvalidDataException($"測定点数が{info.Samples}点です。{_transferSettings.ExpectedSamples}点ではありません。LOGGER設定を確認してください。");
+        }
+        File.Move(stage,path,true);_capturePath=path;_flow.CaptureSucceeded();
+    }
+    private void RetryCapture()
+    {
+        if(_operationInProgress || !_flow.CaptureFailed)return;
+        RunOperation("一時保存再試行",()=>{RefreshLoggerState();if(!LoggerReadyToStart)throw new InvalidOperationException("LOGGER停止を待ってください。");try { CaptureLatest(); } catch(InvalidDataException) { _flow.Invalidate(); throw; } return "最新結果を一時保存しました。";});
+    }
+    private async void TransferLatest()
+    {
+        if(!_transferButton.Enabled)return;
+        if(!ConfirmRepeatAfterPass("Excel転送"))return;
+        if(!_transferButton.Enabled)return;
+        bool transferred=false;
+        var transferTimer=Stopwatch.StartNew();
+        await RunOperationAsync("Excel転送",async ()=> {
+            if(!_flow.HasCapture || _capturePath is null)throw new InvalidOperationException("最新測定がありません。");
+            // 旧転送結果を先に無効化し、失敗時に古いExcelで保存できないようにする。
+            _saveNotice?.Close(); _saveNotice=null;
+            _lastExcelPass=false; _flow.TransferFailed();
+            // 初回転送の途中で応答待ちになっても、この所有先を次の再試行へ引き継ぐ。
+            _excel ??= new ExcelWorkSession();
+            _excel=ExcelWorkSession.Open(ExcelTemplatePath,ExcelWorkPath,_capturePath,_transferSettings,_flow.Model,
+                _flow.Mode==TestMode.Production?_flow.Serial:"-",_flow.MeasuredAt,_excel,AppendLog);
+            var calculationTimer=Stopwatch.StartNew();
+            bool pass=_lastExcelPass=await _excel.IsPassAsync();
+            _excelJudgmentError="";
+            _excelJudgmentStatus=pass?"両方OK":"判定NG・保存不可";
+            AppendLog($"Excel判定：{_excel.JudgmentDescription} / 保存{(pass?"可":"不可")}");
+            _flow.TransferSucceeded();
+            transferred=true;
+            AppendLog($"Excel転送時間：計算・判定={calculationTimer.Elapsed.TotalMilliseconds:F0}ms / 合計={transferTimer.Elapsed.TotalMilliseconds:F0}ms");
+            return pass?"E21・L21：両方OK":"E21・L21：不合格（正式保存できません）";
+        });
+        if (transferred)
+        {
+            ShowJudgmentNotice();
+            AppendLog($"Excel転送時間：表示処理完了まで合計={transferTimer.Elapsed.TotalMilliseconds:F0}ms");
+        }
+    }
+    private void RefreshExcelJudgment()
+    {
+        if(_operationInProgress || _flow.Measuring || _leakRunning || !_flow.HasTransfer || _reviewStage || _excel is null)return;
+        bool previous=_lastExcelPass;
+        string previousStatus=_excelJudgmentStatus;
+        try
+        {
+            bool? pass=_excel.ReadCurrentPass();
+            _lastExcelPass=pass==true;
+            _excelJudgmentStatus=pass is null?"Excel計算中・保存待機":pass.Value?"両方OK":"判定NG・保存不可";
+            _excelJudgmentError="";
+            if(previousStatus!=_excelJudgmentStatus)
+                AppendLog(pass is null?"Excel判定：計算中のため保存待機":$"Excel判定更新：{_excel.JudgmentDescription} / 保存{(_lastExcelPass?"可":"不可")}");
+        }
+        catch(Exception ex)
+        {
+            _lastExcelPass=false;
+            _excelJudgmentStatus="Excel判定取得不可・Excelを確認／再転送";
+            if(_excelJudgmentError!=ex.Message)AppendLog("Excel判定取得失敗："+ex.Message);
+            _excelJudgmentError=ex.Message;
+        }
+        if(previous!=_lastExcelPass || previousStatus!=_excelJudgmentStatus)
+        {
+            CloseJudgmentNotice();
+            if(_excelJudgmentError.Length==0 && _excelJudgmentStatus!="Excel計算中・保存待機")ShowJudgmentNotice();
+        }
+    }
+    private void SaveLatest()
+    {
+        if(!_saveButton.Enabled)return;
+        RunOperation("正式保存",()=> {
+            _saveNotice?.Close(); _saveNotice=null;
+            _flow.SaveFailed=true;
+            if(_excel is null || !_flow.HasTransfer || _capturePath is null)throw new InvalidOperationException("最新結果をExcelへ転送してください。");
+            if(!_excel.IsPass()) { _lastExcelPass=false; _flow.SaveFailed=false;throw new InvalidOperationException("E21・L21の両方がOKではありません。"); }
+            var store=Store;using var held=store.Lock();
+            if(store.IsComplete(_flow.Serial))throw new InvalidOperationException("完了済みのS/Nは上書きできません。");
+            string root=Path.GetFullPath(_rootBox.Text),baseName=_flow.BaseName;
+            string excel=Path.Combine(root,"Excel",baseName+".xlsx"),pdf=Path.Combine(root,"PDF",baseName+".pdf"),logger=Path.Combine(root,"LOGGER",baseName+Path.GetExtension(_capturePath));
+            string ownership=root+"|"+baseName;
+            if(_ownedSaveBase!=ownership && !store.WasReleased(_flow.Serial) && new[]{excel,pdf,logger}.Any(File.Exists))throw new IOException("同名ファイルがあります。別途開いているファイルや過去の保存を確認してください。");
+            _ownedSaveBase=ownership;
+            foreach(string file in new[]{excel,pdf,logger})Directory.CreateDirectory(Path.GetDirectoryName(file)!);
+            // 生成は一時ファイルへ。個別の置換が失敗してもSavedRevisionは更新しない。
+            string stage=Path.Combine(root,"tmp",Guid.NewGuid().ToString("N"));Directory.CreateDirectory(stage);
+            try
+            {
+                string x=Path.Combine(stage,"result.xlsx"),p=Path.Combine(stage,"result.pdf"),l=Path.Combine(stage,"result"+Path.GetExtension(logger));
+                _excel.SaveCopies(x,p);File.Copy(_capturePath,l);
+                foreach(string f in new[]{x,p,l})if(!File.Exists(f)||new FileInfo(f).Length==0)throw new IOException("保存ファイルが生成されませんでした。");
+                File.Move(x,excel,true);File.Move(p,pdf,true);File.Move(l,logger,true);
+                _flow.SaveSucceeded();_reviewStage=true;
+            }
+            finally {try{Directory.Delete(stage,true);}catch{}}
+            return "Excel・PDF・LOGGERをすべて保存しました。漏れチェックを行ってください。";
+        });
+    }
+    private void StartLeakOutput()
+    {
+        if(!_leakOutputButton.Enabled)return;
+        RunOperation("+30mA",()=> {
+            if(!_flow.HasSaved || _logger.GetState()!=1)throw new InvalidOperationException("一式保存とLOGGERの完全停止を確認してください。");
+            if(_closeRequested)return "終了要求のため出力を開始しません。";
+            try
+            {
+                _leakOutputReady=true;
+                _generator!.SetDcOutput(5);
+            }
+            catch(Exception ex)
+            {
+                // 出力開始の失敗に加えて停止も失敗した場合は、両方の内容を表示する。
+                try { StopLeakOutput(); }
+                catch(Exception stopEx) { throw new InvalidOperationException(ex.Message+"\n"+stopEx.Message,ex); }
+                throw;
+            }
+            return "DC +5V出力を開始しました。漏れ試験実施でLOGGER測定を開始してください。";
+        });
+    }
+    // 出力OFFの送信に成功したときだけ、出力中の表示（_leakOutputReady）を解除する。
+    // 失敗時は出力が残っている可能性があるため「出力状態不明」とし、測定・合格等を止める。
+    private void StopLeakOutput()
+    {
+        var generator=_generator;
+        if(generator is null)
+        {
+            if(!_leakOutputReady && !_generatorOutputUnknown)return;
+            _generatorOutputUnknown=true;
+            throw new InvalidOperationException(GeneratorOutputUnknownMessage("発振器が未接続です"));
+        }
+        try { generator.StopOutput(); }
+        catch(Exception ex)
+        {
+            _generatorOutputUnknown=true;
+            throw new InvalidOperationException(GeneratorOutputUnknownMessage(ex.Message),ex);
+        }
+        MarkGeneratorOutputOff("出力OFFを送信しました");
+    }
+    private void MarkGeneratorOutputOff(string detail)
+    {
+        if(_generatorOutputUnknown)AppendLog($"発振器：{detail}。出力状態不明を解除しました。");
+        _leakOutputReady=false;
+        _generatorOutputUnknown=false;
+        _generatorOutputAlertShown=false;
+    }
+    private static string GeneratorOutputUnknownMessage(string reason)=>
+        $"発振器の出力OFFを確認できません（{reason}）。出力（漏れ試験のDC +5Vを含む）が残っている可能性があります。" +
+        "発振器本体で出力をOFFにし、接続を確認して「確認」を押してください。";
+    // 処理の外（状態監視等）で出力状態不明になったときの警告。
+    // 終了処理中は表示しない。「確認」中は再接続を試した結果をまとめて表示する。
+    private void WarnGeneratorOutputUnknown(string message)
+    {
+        AppendLog(message);
+        if(_closeRequested || _checkingConnections || _generatorOutputAlertShown || IsDisposed || !IsHandleCreated)return;
+        _generatorOutputAlertShown=true;
+        ErrorNotification.Show(this,message,"発振器の出力状態不明",MessageBoxButtons.OK,MessageBoxIcon.Warning);
+    }
+    private async Task LeakCheckAsync()
+    {
+        if(!_leakButton.Enabled)return;
+        await RunOperationAsync("漏れチェック",async ()=> {
+            if(!_flow.HasSaved || !_leakOutputReady)throw new InvalidOperationException("最新データ一式を保存し、+30mAを押してください。");
+            if(_logger.GetState()!=1)throw new InvalidOperationException("LOGGERの完全停止を確認してから漏れチェックしてください。");
+            _leakRunning=true;_leakCancel=new CancellationTokenSource();UpdateControls();
+            try
+            {
+                TopMost=false;
+                try { AppendLog(_logger.BringToFront()?"漏れチェック：LOGGERを最前面に表示しました。":"漏れチェック：Windowsが前面切替を許可しませんでした。LOGGER画面をクリックしてください。"); }
+                catch(Exception ex){AppendLog("漏れチェックのLOGGER前面表示："+ex.Message);}
+                try
+                {
+                    await LeakCheckSequence.RunAsync(
+                        ()=>{long result=_logger.StartSingleAcquisition();AppendLog($"漏れチェック LOGGER Start：戻り値={result}");return result;},
+                        StopLeakOutput,
+                        StopLeakLoggerAsync,_leakCancel.Token);
+                }
+                catch(OperationCanceledException) when(_closeAfterLeak) { return "アプリ終了のため発振器出力とLOGGER収集を停止しました。"; }
+                if(!ConnectionsReady || !_arduino.MeasurementInputReady)throw new IOException("通信を確認できません。漏れチェックをやり直してください。");
+                _flow.LeakSucceeded();return "出力中のままLOGGER収集を開始し、収集開始から10秒で出力と収集を停止しました。";
+            }
+            finally
+            {
+                _leakRunning=false;_leakCancel?.Dispose();_leakCancel=null;
+            }
+        });
+        if(_closeAfterLeak && !IsDisposed) BeginInvoke((Action)Close);
+    }
+    private async Task StopLeakLoggerAsync()
+    {
+        _logger.Stop();
+        AppendLog("漏れチェック LOGGER Stop：停止を要求しました。");
+        var elapsed=Stopwatch.StartNew();
+        long state;
+        while((state=_logger.GetState())!=1)
+        {
+            if(elapsed.Elapsed>=TimeSpan.FromSeconds(5))throw new TimeoutException($"漏れチェックのLOGGER停止を確認できません（状態{state}）。再確認してください。");
+            await Task.Delay(100);
+        }
+        _logger.ResetMeasurementStart();
+        _measurementState.MeasurementStarted=false;
+        _measurementState.State=1;
+        AppendLog("漏れチェック LOGGER：完全停止を確認しました。");
+    }
+    private void CompleteProduct()
+    {
+        if(!_completeButton.Enabled)return;
+        RunOperation("合格確定",()=> {
+            if(!_flow.CanComplete || _excel is null)throw new InvalidOperationException("最新結果の保存と漏れチェックが必要です。");
+            var store=Store;using var held=store.Lock();if(store.IsComplete(_flow.Serial))throw new IOException("このS/Nは完了済みです。");
+            _excel.CloseVerified(); // 閉じる処理が失敗したら記録・加算しない。
+            store.Append("COMPLETE",_flow.Serial,_flow.Model.Name,_flow.BaseName);
+            string previous=_flow.Serial;_flow.Advance();_serialBox.Text=_flow.Serial;_reviewStage=false;_ownedSaveBase=null;
+            _excel.Dispose();_excel=null;_capturePath=null;
+            return $"S/N{previous}完了。次はS/N{_flow.Serial}です。";
+        });
+        // 製品の付け替え中に、次のS/N用のExcelを準備する。
+        if(_excel is null)RequestExcelPreparation();
+    }
+    private void ReleaseCompletedSerial()
+    {
+        if(_operationInProgress || _flow.Measuring || _leakRunning)return;
+        using var dialog=new Form {Text="保護解除するS/N",ClientSize=new Size(330,100),StartPosition=FormStartPosition.CenterParent,TopMost=true};
+        var input=new TextBox{Left=15,Top=15,Width=180};var ok=new Button{Text="解除",Left=210,Top=15,DialogResult=DialogResult.OK};dialog.Controls.AddRange([input,ok]);dialog.AcceptButton=ok;
+        if(dialog.ShowDialog(this)!=DialogResult.OK)return;
+        RunOperation("保護解除",()=> {
+            if(!long.TryParse(input.Text,out long n)||n<0)throw new ArgumentException("S/Nを数字で入力してください。");
+            var store=Store;using var held=store.Lock();string serial=n.ToString();if(!store.IsComplete(serial))throw new InvalidOperationException("このS/Nは完了記録がありません。");
+            store.Append("RELEASE",serial,"-","-");return $"S/N{serial}の保護を解除しました。既存ファイルは残しています。";
+        });
+    }
+    private void EditTransferSettings()
+    {
+        if(_operationInProgress || _flow.Measuring || _leakRunning || _flow.HasSaved || _flow.SaveFailed)return;
+        using var dialog=new Form {Text="Excel転送設定",ClientSize=new Size(480,300),StartPosition=FormStartPosition.CenterParent,TopMost=true};
+        _flow.TransferFailed();
+        var grid=new PropertyGrid {Dock=DockStyle.Fill,SelectedObject=_transferSettings,ToolbarVisible=false,PropertySort=PropertySort.NoSort};
+        var ok=new Button{Text="設定保存",Dock=DockStyle.Bottom,Height=40,DialogResult=DialogResult.OK};dialog.Controls.AddRange([grid,ok]);
+        if(dialog.ShowDialog(this)==DialogResult.OK)RunOperation("転送設定保存",()=>{_transferSettings.Save();_rootBox.Text=_transferSettings.SaveRoot;return "設定しました。";});
+        UpdateControls();
+    }
+}

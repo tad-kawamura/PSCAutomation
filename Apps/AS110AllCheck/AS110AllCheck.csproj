@@ -1,0 +1,47 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net9.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <!-- exe 名は元のまま(AS110AllCheck.exe)。現場へ渡す「データ調整verX.YY」は DataAdjustment プロファイルで名前を変える -->
+    <AssemblyTitle>AS110AllCheck</AssemblyTitle>
+    <AssemblyName>AS110AllCheck</AssemblyName>
+    <RootNamespace>PSCAutomation.Apps.AS110AllCheck</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- 検査・M5Stack スケッチ・資料・雛形はこのフォルダーの下にあるが、アプリのコードには含めない -->
+    <Compile Remove="Tests\**;firmware\**;docs\**;雛形\**" />
+    <EmbeddedResource Remove="Tests\**;firmware\**;docs\**;雛形\**" />
+    <None Remove="Tests\**;firmware\**;docs\**;雛形\**" />
+    <!-- 雛形は exe に入れず、exe の隣の「雛形」フォルダーへ出す(人が差し替えるため) -->
+    <Content Include="雛形\**\*">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+      <CopyToPublishDirectory>Always</CopyToPublishDirectory>
+      <ExcludeFromSingleFile>true</ExcludeFromSingleFile>
+    </Content>
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- 終了処理の検査から内部の型を直接使う(元: Properties/AssemblyInfo.cs) -->
+    <InternalsVisibleTo Include="AppShutdownTests" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- KEYENCE WAVE LOGGER(NR-500 / NR-X) -->
+    <ProjectReference Include="..\..\Wrappers\WaveLogger.Automation\WaveLogger.Automation.csproj" />
+    <!-- NR-500 / NR-X の本体確認と Wi-Fi 切替、エラー表示、前面表示、PC 遅延観測 -->
+    <ProjectReference Include="..\..\Wrappers\Common\Common.csproj" />
+    <!-- M5Stack(USB シリアル)と異常ログ -->
+    <ProjectReference Include="..\..\Wrappers\Arduino\Arduino.csproj" />
+    <!-- 発振器 WF1973 / SDG1032X のバースト出力(NI-VISA が要る) -->
+    <ProjectReference Include="..\..\Wrappers\Instruments\Instruments.csproj" />
+    <!-- xdt の読み取り・校正の書き換え、NR-X の CSV 読み取り -->
+    <ProjectReference Include="..\..\Wrappers\LoggerFiles\LoggerFiles.csproj" />
+    <!-- 雛形への書き込み(Excel 不要)と、作業ブックの Excel 操作 -->
+    <ProjectReference Include="..\..\Wrappers\Excel\Excel.csproj" />
+  </ItemGroup>
+</Project>

@@ -1,0 +1,14 @@
+2026.10.02 15:25
+
+アプリ完成
+AS110動き検査　＝　AS110MotionTest
+
+exeファイルは
+"C:\_kawamura\04_アプリ関係\AS110BoltCheck\bin\AS110MotionTest_ver1"
+このフォルダをPCにUSBなどでコピペすること！
+AS110MotionTest_ver1
+
+※NI-VISAがPCに入っていないと動かない
+※”雛形”のフォルダをAS110MotionTest_ver1に入れておく必要あり
+またその中に雛形ファイルがないと動かない
+雛形ファイルは事前に色々設定しておかないと使えないよ

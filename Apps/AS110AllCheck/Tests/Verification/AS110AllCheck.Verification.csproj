@@ -1,0 +1,29 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- 実機を使わない工程・校正・変換の検査。機器・Excel なしで dotnet run できる -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net9.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- アプリのうち Windows に依存しない部分だけを直接取り込む -->
+    <Compile Include="../../As110/As110Calibration.cs" Link="App/As110Calibration.cs" />
+    <Compile Include="../../As110/CalibrationHistory.cs" Link="App/CalibrationHistory.cs" />
+    <Compile Include="../../As110/As110StandSettings.cs" Link="App/As110StandSettings.cs" />
+    <Compile Include="../../As110/As110MotionTest.cs" Link="App/As110MotionTest.cs" />
+    <Compile Include="../../Production/ProductionWorkflow.cs" Link="App/ProductionWorkflow.cs" />
+    <Compile Include="../../Production/LeakCheckSequence.cs" Link="App/LeakCheckSequence.cs" />
+    <Compile Include="../../Excel/TransferSettings.cs" Link="App/TransferSettings.cs" />
+    <!-- 発振器の設定値の型だけを使う(Instruments は NI-VISA を要るので参照しない) -->
+    <Compile Include="../../../../Wrappers/Instruments/Generators/GeneratorBurstSettings.cs" Link="Wrappers/GeneratorBurstSettings.cs" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- xdt の読み取り・校正の書き換え・NR-X の CSV、雛形への書き込み(どちらも net9.0、機器・Excel 不要) -->
+    <ProjectReference Include="../../../../Wrappers/LoggerFiles/LoggerFiles.csproj" />
+    <ProjectReference Include="../../../../Wrappers/Excel/Excel.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <Content Include="../../雛形/*.xdt" Link="Fixtures/%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>

@@ -7,3 +7,5 @@
 *.bin binary
 *.xlsx binary
 *.pdf binary
+# WAVE LOGGER の参照波形(AS110AllCheck の 雛形)
+*.xyb binary
