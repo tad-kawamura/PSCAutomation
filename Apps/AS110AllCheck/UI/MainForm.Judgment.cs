@@ -22,10 +22,10 @@ internal sealed partial class MainForm : Form
             : "M5StackまたはPC画面からデータ調整・Excel転送できます。";
         var notice = new Form
         {
-            Text = result, ClientSize = new Size(480, 175),
+            Text = result, ClientSize = new Size(480, 110),
             StartPosition = FormStartPosition.CenterScreen, ShowInTaskbar = false,
             FormBorderStyle = FormBorderStyle.FixedDialog, MaximizeBox = false,
-            MinimizeBox = false, TopMost = true
+            MinimizeBox = false, TopMost = true, KeyPreview = true
         };
         notice.Controls.Add(new Label
         {
@@ -34,10 +34,14 @@ internal sealed partial class MainForm : Form
             AutoSize = true, Location = new Point(15, 12)
         });
         notice.Controls.Add(new Label { Text = guide, AutoSize = true, Location = new Point(15, 70) });
-        var ok = new Button { Text = "OK（Enter）", Size = new Size(120, 32), Location = new Point(345, 125) };
-        ok.Click += (_, _) => { notice.Close(); ShowTransferredExcel(); };
-        notice.Controls.Add(ok);
-        notice.AcceptButton = ok;
+        // 自動で閉じるのでOKボタンは置かない。表示中のEnterはExcelへ渡さず、ここで閉じる。
+        notice.KeyDown += (_, e) =>
+        {
+            if (e.KeyCode != Keys.Enter) return;
+            e.Handled = e.SuppressKeyPress = true;
+            notice.Close();
+            ShowTransferredExcel();
+        };
         notice.FormClosed += (_, _) => { if (ReferenceEquals(_saveNotice, notice)) _saveNotice = null; };
         _saveNotice = notice;
         // モデルレスにしてPCの操作ボタンとM5Stackからも閉じられるようにする。
@@ -51,7 +55,7 @@ internal sealed partial class MainForm : Form
     }
 
     // 合否ポップアップを表示しておく時間。過ぎると自動で閉じてExcelを前面に出す。
-    private const int JudgmentNoticeDisplayMilliseconds = 1000;
+    private const int JudgmentNoticeDisplayMilliseconds = 700;
 
     private void StartJudgmentNoticeAutoClose(Form notice)
     {
@@ -71,7 +75,7 @@ internal sealed partial class MainForm : Form
     private void ActivateJudgmentNotice(Form notice, Control input)
     {
         if (!WindowActivation.TryActivate(notice, input))
-            AppendLog("合否表示の入力先を切り替えられませんでした。ポップアップのOKをクリックしてください。");
+            AppendLog("ポップアップの入力先を切り替えられませんでした。");
     }
 
     private bool ConfirmRepeatAfterPass(string action)

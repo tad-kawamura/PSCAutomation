@@ -30,13 +30,14 @@ internal static class JudgmentNoticeTests
             SendKeys.SendWait("{ENTER}");
             Application.DoEvents();
             if (Notice() is not null) throw new Exception("Enter did not dismiss judgment notice");
-            // データ調整・データ取りとも約1秒で自動的に閉じる。
+            // データ調整・データ取りとも約0.7秒で自動的に閉じる。OKボタンは置かない。
             Call("ShowJudgmentNotice");
             var waiting = Notice() ?? throw new Exception("Judgment notice missing before auto close check");
+            if (waiting.Controls.OfType<Button>().Any()) throw new Exception("Judgment notice must not have buttons");
             var watch = System.Diagnostics.Stopwatch.StartNew();
-            while (watch.ElapsedMilliseconds < 600) { Application.DoEvents(); Thread.Sleep(10); }
+            while (watch.ElapsedMilliseconds < 400) { Application.DoEvents(); Thread.Sleep(10); }
             if (Notice() is null) throw new Exception("Judgment notice closed too early");
-            while (watch.ElapsedMilliseconds < 1500) { Application.DoEvents(); Thread.Sleep(10); }
+            while (watch.ElapsedMilliseconds < 1100) { Application.DoEvents(); Thread.Sleep(10); }
             bool autoClosed = Notice() is null && waiting.IsDisposed;
             if (!autoClosed)
                 throw new Exception($"Wrong auto close: mode={mode}, closed={autoClosed}");

@@ -27,7 +27,7 @@ internal sealed partial class MainForm : Form
             AppendLog($"Excel転送時間：Excel前面表示処理={displayTimer.Elapsed.TotalMilliseconds:F0}ms");
             // Excelを表示してからポップアップへ入力先を戻す。
             if (_saveNotice is { IsDisposed: false, Visible: true } notice)
-                ActivateJudgmentNotice(notice, (Control)notice.AcceptButton!);
+                ActivateJudgmentNotice(notice, notice);
         }
     }
 
