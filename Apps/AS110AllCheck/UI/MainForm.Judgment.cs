@@ -55,7 +55,7 @@ internal sealed partial class MainForm : Form
     }
 
     // 合否ポップアップを表示しておく時間。過ぎると自動で閉じてExcelを前面に出す。
-    private const int JudgmentNoticeDisplayMilliseconds = 700;
+    private const int JudgmentNoticeDisplayMilliseconds = 400;
 
     private void StartJudgmentNoticeAutoClose(Form notice)
     {
