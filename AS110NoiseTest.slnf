@@ -10,7 +10,8 @@
       "Wrappers\\WaveLogger.Automation\\WaveLogger.Automation.csproj",
       "Wrappers\\LoggerFiles\\LoggerFiles.csproj",
       "Wrappers\\Instruments\\Instruments.csproj",
-      "Wrappers\\Excel\\Excel.csproj"
+      "Wrappers\\Excel\\Excel.csproj",
+      "Wrappers\\Common\\Common.csproj"
     ]
   }
 }
