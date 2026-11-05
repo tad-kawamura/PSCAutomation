@@ -2,7 +2,7 @@ using System.Buffers.Binary;
 using PSCAutomation.Apps.AS110NoiseTest.Measurement;
 using PSCAutomation.Wrappers.LoggerFiles;
 
-namespace PSCAutomation.Apps.AS110NoiseTest.Tools.MeasurementCheck;
+namespace PSCAutomation.Apps.AS110NoiseTest.Simulation;
 
 // 制御圧力の波形の種類(模擬)。
 internal enum WaveProfile
@@ -12,7 +12,7 @@ internal enum WaveProfile
     Red,     // 矩形波 ±0.5 kPa(周期 4 秒)+ 白色ノイズ → 赤
 }
 
-// WAVE LOGGER の代わり。OpenFile した雛形 xdt を元に、SaveXdt でデータ部だけ差し替えた xdt を書く。
+// WAVE LOGGER の代わり(機器なしの確認用。Tools/MeasurementCheck --sim と、画面の AS110NoiseTest.exe --sim で使う)。OpenFile した雛形 xdt を元に、SaveXdt でデータ部だけ差し替えた xdt を書く。
 // 状態は 1(停止)↔ 4(測定中)だけ。記録時間は duration(実機は雛形の 40 秒、模擬では短くする)。
 // CH1(電流)は模擬プラントの実電流、CH3(制御圧力)は電流ごとの WaveProfile で作る。CH2・CH4 は雛形のまま。
 internal sealed class SimulatedLogger(

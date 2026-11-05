@@ -4,6 +4,7 @@ using PSCAutomation.Apps.AS110NoiseTest.Control;
 using PSCAutomation.Wrappers.Instruments;
 using PSCAutomation.Apps.AS110NoiseTest.Excel;
 using PSCAutomation.Apps.AS110NoiseTest.Measurement;
+using PSCAutomation.Apps.AS110NoiseTest.Simulation;
 using PSCAutomation.Wrappers.WaveLogger.Automation;
 using PSCAutomation.Wrappers.LoggerFiles;
 
@@ -14,7 +15,7 @@ namespace PSCAutomation.Apps.AS110NoiseTest.Tools.MeasurementCheck;
 //   MeasurementCheck --logger-only  LOGGER(NR-500)だけ実機。電流は模擬(WF1973・7351E なしで LOGGER の流れを確かめる)
 //   MeasurementCheck --real         全部実機(7351E は DCI・200mA 固定・BUS トリガに設定してから使う。--no-meter-config で設定しない)
 // 共通オプション:
-//   --sn SN60000 --memo 備忘録 --start 5 --step 5 --end 20   測定条件(既定 SN=SIM0001、備忘録=模擬、5〜20mA 5mA 刻み)
+//   --model AS110-035 --sn SN60000 --memo 備忘録 --start 5 --step 5 --end 20   測定条件(既定 型式=AS110-035、SN=SIM0001、備忘録=模擬、5〜20mA 5mA 刻み)
 //   --out <フォルダ>     xdt の保存先(既定 %TEMP%\AS110NoiseTest_MeasurementCheck)
 //   --excel <xlsx>       結果 Excel(既定 保存先\AS110ノイズ測定_確認.xlsx。無ければ雛形から作る)
 //   --settle 1           電流を合わせてから記録開始までの待ち [s]
@@ -35,7 +36,7 @@ internal static class Program
     private sealed class Options
     {
         public Mode Mode;
-        public string Sn = "SIM0001", Memo = "模擬";
+        public string Model = "AS110-035", Sn = "SIM0001", Memo = "模擬";
         public int Start = 5, Step = 5, End = 20;
         public string? Out, Excel;
         public double Settle = 1.0, Duration = 2.0;
@@ -106,7 +107,7 @@ internal static class Program
                 throw new ArgumentException($"--duration は {settings.StateReadDelayMilliseconds * 2 / 1000.0:0.#} 秒以上にしてください(状態を読み始める前に終わってしまう)。");
             settings = settings with { AcquisitionTimeoutSeconds = Math.Max(10, opts.Duration * 2 + 5) };
         }
-        var plan = new MeasurementPlan(opts.Sn, opts.Memo, opts.Start, opts.Step, opts.End, outFolder, excel);
+        var plan = new MeasurementPlan(opts.Model, opts.Sn, opts.Memo, opts.Start, opts.Step, opts.End, outFolder, excel);
         var controlSettings = new CurrentControlSettings();
         Console.WriteLine($"モード: {opts.Mode} / 保存先 {outFolder} / Excel {(opts.NoExcel ? "使わない" : excel)}");
 
@@ -266,6 +267,7 @@ internal static class Program
                 case "--logger-only": o.Mode = Mode.LoggerOnly; break;
                 case "--real": o.Mode = Mode.Real; break;
                 case "--fix-display": o.Mode = Mode.FixDisplay; o.FixDisplayPath = Next(); break;
+                case "--model": o.Model = Next(); break;
                 case "--sn": o.Sn = Next(); break;
                 case "--memo": o.Memo = Next(); break;
                 case "--start": o.Start = ParseInt(Next()); break;
@@ -338,7 +340,7 @@ internal static class Program
 
     private static void Usage()
     {
-        Console.WriteLine("使い方: MeasurementCheck --sim | --logger-only | --real [--sn SN] [--memo 備忘録] [--start 5 --step 5 --end 20]");
+        Console.WriteLine("使い方: MeasurementCheck --sim | --logger-only | --real [--model 型式] [--sn SN] [--memo 備忘録] [--start 5 --step 5 --end 20]");
         Console.WriteLine("        [--out フォルダ] [--excel xlsx] [--settle 1] [--final mA] [--visible] [--leave-open] [--no-excel]");
         Console.WriteLine("        模擬: [--duration 2] [--yellow 10,20] [--red 20] [--cancel-after 3]   LOGGER: [--logger auto|x|legacy] [--usb-id 0]");
         Console.WriteLine("        MeasurementCheck --fix-display <xdt かフォルダ>   既存 xdt の制御圧力の表示レンジを平均値中心に直す");

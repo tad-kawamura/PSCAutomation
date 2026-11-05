@@ -65,6 +65,8 @@ internal sealed class MeasurementSequence
 
     // 経過(画面・ログ用)。
     public Action<string>? Log { get; set; }
+    // 1 つの電流を始めるたびに呼ぶ(何番目 0 始まり、全部の数、指令 mA)。画面の「12mA 測定中」用。
+    public Action<int, int, int>? StepStarting { get; set; }
     // 1 つの電流が終わるたびに呼ぶ(画面の表更新用)。
     public Action<MeasurementStepResult>? StepCompleted { get; set; }
     // 待ち方。既定は呼び出しスレッドを止める(中断要求で OperationCanceledException)。
@@ -81,7 +83,7 @@ internal sealed class MeasurementSequence
         plan.Validate(_controlSettings.MaxMilliamps);
         IReadOnlyList<int> currents = plan.Currents();
         Directory.CreateDirectory(plan.OutputFolder);
-        WriteLog($"測定開始: SN {plan.SerialNumber} / 備忘録「{plan.Memo}」/ {string.Join(", ", currents)} mA({currents.Count} 点)");
+        WriteLog($"測定開始: 型式 {plan.Model} / SN {plan.SerialNumber} / 備忘録「{plan.Memo}」/ {string.Join(", ", currents)} mA({currents.Count} 点)");
         WriteLog($"  LOGGER: {_logger.Description} / 雛形 {Path.GetFileName(_settings.TemplateXdtPath)} / 保存先 {plan.OutputFolder}");
 
         var results = new List<MeasurementStepResult>(currents.Count);
@@ -94,6 +96,7 @@ internal sealed class MeasurementSequence
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 WriteLog($"[{i + 1}/{currents.Count}] {currents[i]} mA");
+                StepStarting?.Invoke(i, currents.Count, currents[i]);
                 MeasurementStepResult result = RunStep(plan, currents[i], cancellationToken);
                 WriteLog($"  所要 {result.Elapsed.TotalSeconds:F1} 秒");
                 results.Add(result);
@@ -161,7 +164,7 @@ internal sealed class MeasurementSequence
         XdtNoiseAnalysis analysis = XdtNoiseAnalyzer.Analyze(xdtPath, _judge, _channels);
         DateTime measuredAt = XdtTimestamp.TryRead(xdtPath) ?? startedAt;
         var record = new NoiseResultRecord(
-            measuredAt, plan.SerialNumber, plan.Memo ?? "", milliamps, current.MeasuredMilliamps, analysis, Path.GetFileName(xdtPath));
+            measuredAt, plan.Model, plan.SerialNumber, plan.Memo ?? "", milliamps, current.MeasuredMilliamps, analysis, Path.GetFileName(xdtPath));
         int row = _writer.Write(record);
         if (_settings.SaveExcelAfterEachStep) _writer.Save();
         NoiseMetrics m = analysis.Metrics;
@@ -228,7 +231,7 @@ internal sealed class MeasurementSequence
 
     private string ResolveXdtPath(MeasurementPlan plan, int milliamps)
     {
-        string name = _settings.BuildXdtFileName(plan.SerialNumber, plan.Memo ?? "", milliamps);
+        string name = _settings.BuildXdtFileName(plan.Model, plan.SerialNumber, plan.Memo ?? "", milliamps);
         string path = Path.Combine(plan.OutputFolder, name);
         if (!File.Exists(path)) return path;
         if (_settings.OverwriteExistingXdt)

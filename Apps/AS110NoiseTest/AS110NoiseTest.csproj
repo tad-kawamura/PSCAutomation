@@ -38,5 +38,15 @@
     <ProjectReference Include="..\..\Wrappers\Instruments\Instruments.csproj" />
     <!-- 結果ブックへの書き込み(Excel を起動して操作) -->
     <ProjectReference Include="..\..\Wrappers\Excel\Excel.csproj" />
+    <!-- 最前面のメッセージ(ErrorNotification)、結果 Excel・画面を前に出す(WindowActivation) -->
+    <ProjectReference Include="..\..\Wrappers\Common\Common.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- 雛形(測定用 xdt・結果 Excel・型式一覧)を exe の隣の 雛形\ にコピーする。単一ファイルで発行しても exe に入れない
+         (雛形や型式一覧を差し替えるたびに発行し直さずに済むように。AGENTS.md)。開発中はアプリのフォルダーの 雛形 も見つかる。 -->
+    <None Update="雛形\AS110ノイズ測定用.xdt" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" ExcludeFromSingleFile="true" />
+    <None Update="雛形\AS110ノイズ測定_雛形.xlsx" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" ExcludeFromSingleFile="true" />
+    <None Update="雛形\型式一覧.txt" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" ExcludeFromSingleFile="true" />
   </ItemGroup>
 </Project>

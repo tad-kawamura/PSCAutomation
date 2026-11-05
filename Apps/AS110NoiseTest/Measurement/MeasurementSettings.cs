@@ -25,9 +25,9 @@ internal sealed record MeasurementSettings
     // 中断・異常時に Stop を送ってから停止を確認するまでの上限 [s]。
     public double StopTimeoutSeconds { get; init; } = 5.0;
 
-    // 保存する xdt のファイル名。{memo} {sn} {ma} を置き換える(ma は整数)。備忘録が空なら前後の _ を 1 つにする。
-    // 既定は学習データと同じ規則(docs/仕様確認メモ.md「未確認」の規則をそのまま採用)。
-    public string XdtFileNamePattern { get; init; } = "AS110_035_{memo}_{sn}_{ma}mA_20ms_440kPa.xdt";
+    // 保存する xdt のファイル名。{model} {memo} {sn} {ma} を置き換える(ma は整数)。備忘録が空なら前後の _ を 1 つにする。
+    // 型式は - を _ にして入れる(AS110-035 → AS110_035。学習データと同じ名前になる。2026-11-05)。
+    public string XdtFileNamePattern { get; init; } = "{model}_{memo}_{sn}_{ma}mA_20ms_440kPa.xdt";
     // 同名の xdt があるとき true なら上書き、false なら _2, _3 … を付けて別名で保存する
     // (LOGGER の SaveFile が上書き確認の画面を出して止まらないように、既定は別名)。
     public bool OverwriteExistingXdt { get; init; } = false;
@@ -70,15 +70,19 @@ internal sealed record MeasurementSettings
     }
 
     // xdt のファイル名(フォルダなし)。ファイル名に使えない文字は _ にする。
-    public string BuildXdtFileName(string serialNumber, string memo, int milliamps)
+    public string BuildXdtFileName(string model, string serialNumber, string memo, int milliamps)
     {
         string name = XdtFileNamePattern
+            .Replace("{model}", ModelForFileName(model))
             .Replace("{sn}", Sanitize(serialNumber))
             .Replace("{ma}", milliamps.ToString(CultureInfo.InvariantCulture))
             .Replace("{memo}", Sanitize(memo));
         if (string.IsNullOrWhiteSpace(memo)) name = name.Replace("__", "_");
         return name;
     }
+
+    // ファイル名に入れるときの型式の表記(- を _ に。例 AS110-035 → AS110_035)。結果 Excel の名前の初期値にも使う。
+    public static string ModelForFileName(string? model) => Sanitize(model).Replace('-', '_');
 
     private static readonly Regex InvalidChars =
         new("[" + Regex.Escape(new string(Path.GetInvalidFileNameChars())) + "]", RegexOptions.Compiled);

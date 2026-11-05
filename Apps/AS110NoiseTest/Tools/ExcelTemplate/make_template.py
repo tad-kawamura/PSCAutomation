@@ -22,7 +22,7 @@ from openpyxl.worksheet.properties import PageSetupProperties
 # ---- レイアウト定数(アプリ側と合わせる。変えたら 雛形/README.md も直す) ----
 FONT_NAME = "游ゴシック"
 MA_MIN, MA_MAX = 1, 35                 # 電流列は 1〜35 mA 固定(上限 35mA)
-MA_FIRST_COL = 4                        # D 列 = 1mA
+MA_FIRST_COL = 5                        # E 列 = 1mA(A 測定日 / B 型式 / C SN / D 備忘録)
 HEADER_ROW = 7                          # 見出し行
 FIRST_DATA_ROW = 8                      # データ 1 行目
 PREPARED_ROWS = 100                     # 罫線・数式を入れておく行数
@@ -50,7 +50,7 @@ def col(ma: int) -> str:
 
 
 MA_FIRST, MA_LAST = col(MA_MIN), col(MA_MAX)      # D, AL
-EXTRA = {"最大p-p": 39, "黄": 40, "赤": 41, "判定": 42, "備考": 43}   # AM..AQ(PP値のみ)
+EXTRA = {"最大p-p": 40, "黄": 41, "赤": 42, "判定": 43, "備考": 44}   # AN..AR(PP値のみ)
 
 
 def font(bold=False, size=11, color=None):
@@ -65,32 +65,32 @@ def set_font_all(ws):
 
 
 def clear_legend(ws):
-    for addr in ("D2", "P2"):
+    for addr in ("E2", "Q2"):
         ws[addr].fill = PatternFill()
         ws[addr].value = None
-    ws["E2"].value = None
-    ws["Q2"].value = None
+    ws["F2"].value = None
+    ws["R2"].value = None
 
 
 def grid_frame(ws, subtitle: str, with_extra: bool):
     """PP値・平均値・赤判定で共通の枠(タイトル、凡例、集計行、見出し、罫線)を作る。"""
     ws["A1"] = "NF弁ノイズ確認"
     ws["A1"].font = font(bold=True, size=14)
-    ws["D1"] = subtitle
-    ws["D1"].font = font(bold=True)
+    ws["E1"] = subtitle
+    ws["E1"].font = font(bold=True)
     ws["A2"] = "Ps=440kPa"
     # 凡例
-    ws["D2"].fill = YELLOW
-    ws["D2"] = "黄"
-    ws["D2"].alignment = CENTER
-    ws["E2"] = f"p-p ≥ 黄しきい値({SHEET_SET}シート C3、既定 1.4 kPa)。条件付き書式で自動"
-    ws["P2"].fill = RED
-    ws["P2"] = "赤"
-    ws["P2"].alignment = CENTER
-    ws["Q2"] = f"矩形波的な変動。アプリが{SHEET_RED}シートに「赤」と書いた列(人が訂正するときはそのセルを消す/書く)"
+    ws["E2"].fill = YELLOW
+    ws["E2"] = "黄"
+    ws["E2"].alignment = CENTER
+    ws["F2"] = f"p-p ≥ 黄しきい値({SHEET_SET}シート C3、既定 1.4 kPa)。条件付き書式で自動"
+    ws["Q2"].fill = RED
+    ws["Q2"] = "赤"
+    ws["Q2"].alignment = CENTER
+    ws["R2"] = f"矩形波的な変動。アプリが{SHEET_RED}シートに「赤」と書いた列(人が訂正するときはそのセルを消す/書く)"
     # 集計行(データ行の上に置く。下に置くと追記で位置が動くため)
     for label, r in SUMMARY_ROWS.items():
-        ws.cell(r, 2, label + "(全行)").font = font(bold=True)
+        ws.cell(r, 3, label + "(全行)").font = font(bold=True)
         for ma in range(MA_MIN, MA_MAX + 1):
             c = col(ma)
             rng = f"{c}${FIRST_DATA_ROW}:{c}${LAST_FORMULA_ROW}"
@@ -107,7 +107,7 @@ def grid_frame(ws, subtitle: str, with_extra: bool):
             cell.border = BOX
             cell.alignment = CENTER
     # 見出し
-    for ci, t in {1: "測定日", 2: "SN", 3: "備忘録"}.items():
+    for ci, t in {1: "測定日", 2: "型式", 3: "SN", 4: "備忘録"}.items():
         ws.cell(HEADER_ROW, ci, t)
     for ma in range(MA_MIN, MA_MAX + 1):
         c = ws.cell(HEADER_ROW, MA_FIRST_COL + ma - MA_MIN, ma)
@@ -135,8 +135,9 @@ def grid_frame(ws, subtitle: str, with_extra: bool):
                 c.alignment = CENTER
     # 列幅・固定・表示
     ws.column_dimensions["A"].width = 11
-    ws.column_dimensions["B"].width = 16
-    ws.column_dimensions["C"].width = 22
+    ws.column_dimensions["B"].width = 12
+    ws.column_dimensions["C"].width = 16
+    ws.column_dimensions["D"].width = 22
     for ma in range(MA_MIN, MA_MAX + 1):
         ws.column_dimensions[col(ma)].width = 6
     ws.freeze_panes = f"{MA_FIRST}{FIRST_DATA_ROW}"
@@ -149,10 +150,10 @@ def grid_frame(ws, subtitle: str, with_extra: bool):
 
 
 def link_keys(ws):
-    """平均値・赤判定の A〜C 列は PP値シートの同じ行に数式で追従させる。"""
+    """平均値・赤判定の A〜D 列は PP値シートの同じ行に数式で追従させる(SN の C 列が空なら空)。"""
     for r in range(FIRST_DATA_ROW, FIRST_DATA_ROW + PREPARED_ROWS):
-        for ci, letter in ((1, "A"), (2, "B"), (3, "C")):
-            ws.cell(r, ci).value = f"=IF('{SHEET_PP}'!$B{r}=\"\",\"\",'{SHEET_PP}'!${letter}{r})"
+        for ci, letter in ((1, "A"), (2, "B"), (3, "C"), (4, "D")):
+            ws.cell(r, ci).value = f"=IF('{SHEET_PP}'!$C{r}=\"\",\"\",'{SHEET_PP}'!${letter}{r})"
 
 
 def build_pp(ws):
@@ -190,7 +191,7 @@ def build_mean(ws):
     grid_frame(ws, "制御圧力 平均値 [kPa](CH3 の mean)", with_extra=False)
     link_keys(ws)
     clear_legend(ws)
-    ws["D2"] = f"測定日・SN・備忘録は {SHEET_PP} シートの同じ行に数式で追従。値はアプリが書く"
+    ws["E2"] = f"測定日・型式・SN・備忘録は {SHEET_PP} シートの同じ行に数式で追従。値はアプリが書く"
     for r in range(FIRST_DATA_ROW, FIRST_DATA_ROW + PREPARED_ROWS):
         for ma in range(MA_MIN, MA_MAX + 1):
             ws[f"{col(ma)}{r}"].number_format = "0.0"
@@ -200,7 +201,7 @@ def build_red(ws):
     grid_frame(ws, "赤判定(アプリが「赤」を書く。空白 = 赤でない)", with_extra=False)
     link_keys(ws)
     clear_legend(ws)
-    ws["D2"] = ("「赤」と書いた列が PP値シートで赤くなる。人が訂正するときはこのシートのセルを消す/「赤」と書く。"
+    ws["E2"] = ("「赤」と書いた列が PP値シートで赤くなる。人が訂正するときはこのシートのセルを消す/「赤」と書く。"
                 "赤の根拠(台地/低周波/段差)は 詳細 シート")
     for r in SUMMARY_ROWS.values():          # 文字の表なので集計行は使わない
         for ma in range(MA_MIN, MA_MAX + 1):
@@ -208,7 +209,7 @@ def build_red(ws):
             c.value = None
             c.fill = PatternFill()
             c.border = Border()
-        ws.cell(r, 2).value = None
+        ws.cell(r, 3).value = None
     for r in range(FIRST_DATA_ROW, FIRST_DATA_ROW + PREPARED_ROWS):
         for ma in range(MA_MIN, MA_MAX + 1):
             ws[f"{col(ma)}{r}"].number_format = "General"
@@ -218,6 +219,7 @@ def build_red(ws):
 
 DETAIL_COLUMNS = [
     ("測定日時", 18, "yyyy/m/d h:mm:ss"),
+    ("型式", 12, None),
     ("SN", 14, None),
     ("備忘録", 20, None),
     ("指令電流 [mA]", 9, "0.0"),
@@ -240,7 +242,7 @@ DETAIL_COLUMNS = [
     ("段差 t 値", 8, "0.0"),
     ("xdt ファイル名", 48, None),
 ]
-DETAIL_JUDGE_COL = 16
+DETAIL_JUDGE_COL = 17
 
 
 def build_detail(ws):
@@ -255,7 +257,7 @@ def build_detail(ws):
             for r in range(2, 2 + 2000):
                 ws.cell(r, i).number_format = nf
     ws.row_dimensions[1].height = 45
-    ws.freeze_panes = "D2"
+    ws.freeze_panes = "E2"
     ws.auto_filter.ref = f"A1:{get_column_letter(len(DETAIL_COLUMNS))}1"
     judge_col = get_column_letter(DETAIL_JUDGE_COL)
     rng = f"{judge_col}2:{judge_col}5000"
@@ -284,7 +286,7 @@ CONDITIONS = [
     ("雛形 xdt", "雛形/AS110ノイズ測定用.xdt"),
 ]
 NOTES = [
-    "・PP値・平均値・赤判定の 3 シートは同じ行 = 同じ測定日・SN・備忘録。アプリは PP値シートの A〜C に書き、他の 2 シートは数式で追従する",
+    "・PP値・平均値・赤判定の 3 シートは同じ行 = 同じ型式・SN・備忘録。アプリは PP値シートの A〜D に書き、他の 2 シートは数式で追従する",
     "・電流の列は 1〜35 mA 固定(見出しは数値、表示だけ \"mA\" 付き)。アプリは見出しの値と一致する列に書く",
     "・新しい測定は、SN 列が空の最初の行に追記する(日をまたいでも同じブックに追記できる)",
     "・黄は条件付き書式で自動(C3 のしきい値)。赤はアプリが赤判定シートに「赤」と書いた列。人が訂正するときは赤判定シートのセルを消す/書く",

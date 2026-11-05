@@ -1,8 +1,8 @@
 using PSCAutomation.Apps.AS110NoiseTest.Control;
 
-namespace PSCAutomation.Apps.AS110NoiseTest.Tools.MeasurementCheck;
+namespace PSCAutomation.Apps.AS110NoiseTest.Simulation;
 
-// WF1973 + 7351E の代わり(Tools/CurrentControlCheck の SimulatedPlant と同じ)。
+// WF1973 + 7351E の代わり(Tools/CurrentControlCheck の SimulatedPlant と同じ。Tools/MeasurementCheck --sim と画面の --sim で使う)。
 // 電圧 × ゲイン + オフセットの電流が流れ、変更直後の 1 回は変更前の値が読める。
 internal sealed class SimulatedPlant(double milliampsPerVolt, double offsetMilliamps, double noiseMilliamps)
     : ICurrentMeter, IOffsetVoltageSource

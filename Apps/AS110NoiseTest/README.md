@@ -9,7 +9,7 @@ AS110 のノイズ測定を自動化するアプリ。WF1973 で電流を段階�
 - 経緯の記録(移植前に書いたもの): `docs/`(仕様確認メモ・赤判定規則メモ・測定シーケンス実機確認・実測比較_SN71363)
 - xdt 形式は `Wrappers/LoggerFiles/docs/xdt形式解析メモ.md`、7351E は `Wrappers/Instruments/docs/7351E実機確認.md`
 
-**状態**: 測定シーケンスまで実装済み。**設定画面(WinForms)は未着手**で、`AS110NoiseTest.exe` は「未実装」と出すだけ。測定は確認ツール `Tools/MeasurementCheck` で行う。現場にはまだ投入していない。使っている人がいないので、修正で動きが変わってもよい(元の動きとの互換より、wrapper に揃えることを優先する。変わった点は記録する)。現場に投入したら、この扱いをやめる。
+**状態**: 測定シーケンスと画面(2026-11-05)まで実装済み。画面は機器なしの模擬(`--sim`)で確認済みで、**実機ではまだ動かしていない**(実機の測定は、これまでどおり確認ツール `Tools/MeasurementCheck` でも行える)。現場にはまだ投入していない。使っている人がいないので、修正で動きが変わってもよい(元の動きとの互換より、wrapper に揃えることを優先する。変わった点は記録する)。現場に投入したら、この扱いをやめる。
 
 ## 開く・ビルドする
 
@@ -29,7 +29,9 @@ NI-VISA が入っていない PC ではビルドできない(`Wrappers/Instrumen
 | `Control/` | 電流フィードバック制御(`CurrentController`、設定 `CurrentControlSettings`)。機器は `ICurrentMeter` / `IOffsetVoltageSource` で受け取り、本番は `InstrumentAdapters.cs` で wrapper の 7351E・WF1973 を包む |
 | `Excel/` | 結果ブックへの書き込み(`NoiseResultWorkbook`、位置は `NoiseWorkbookLayout`、書き先の差し替え用に `INoiseResultWriter`)。Excel の操作は `Wrappers/Excel` の部品 |
 | `Measurement/` | 測定シーケンス(`MeasurementSequence`、設定 `MeasurementSettings`、1 台分の入力 `MeasurementPlan`、LOGGER の操作 `ILoggerDevice` と本番用 `WaveLoggerDevice`) |
-| `雛形/` | 測定用の雛形 xdt と結果 Excel の雛形 |
+| `Ui/` | 画面(`MainForm`)、測定を専用の STA スレッドで動かす部分(`MeasurementRunner`、実機の LOGGER の設定 `DeviceSettings`)、雛形フォルダーの場所と型式の一覧(`TemplateFiles`) |
+| `Simulation/` | 機器なしの模擬(LOGGER `SimulatedLogger`、WF1973 + 7351E `SimulatedPlant`)。画面の `--sim` と `Tools/MeasurementCheck --sim` で使う |
+| `雛形/` | 測定用の雛形 xdt、結果 Excel の雛形、画面の型式の一覧 `型式一覧.txt`(1 行 1 型式。型式が増えたら書き足す) |
 | `Tools/CurrentControlCheck/` | 電流制御の確認(`--sim` は機器なし) |
 | `Tools/NoiseJudgeCheck/` | 判定規則の確認。`Tools/Analysis/` は Python の規則検証スクリプトと照合結果 |
 | `Tools/ExcelWriteCheck/` | Excel 書き込みの確認(機器なしで既存の xdt を雛形 Excel に書く) |
@@ -37,6 +39,19 @@ NI-VISA が入っていない PC ではビルドできない(`Wrappers/Instrumen
 | `Tools/ExcelTemplate/` | 雛形 Excel の生成スクリプト(`python Tools/ExcelTemplate/make_template.py`) |
 
 使う wrapper: `WaveLogger.Automation`(NR-500)、`LoggerFiles`(xdt の読み出し・表示レンジ・測定日時)、`Instruments`(WF1973・7351E)、`Excel`(結果ブック)。
+
+## 画面で測る(2026-11-05)
+
+```
+AS110NoiseTest.exe          # 実機(WF1973・7351E・NR-500。LOGGER は旧 WAVE LOGGER)
+AS110NoiseTest.exe --sim    # 機器を使わずに模擬で測る(記録 2 秒/本、10mA が黄・20mA が赤の波形。Excel は本物に書く)
+```
+開発中は `dotnet run -- --sim`(このフォルダーで)。画面の仕様(入力・測定中・終わったとき・異常時)は [SPEC.md「画面」](../../specs/AS110NoiseTest/SPEC.md)。
+
+- 入れるもの: 型式(一覧から)・SN・備忘録・開始/刻み/終了 mA・xdt 保存先。結果 Excel は xdt 保存先の 1 つ上のフォルダーに置き、「新規」(名前を入れる。初期値は `<型式>_ノイズ測定.xlsx`)か「追記」(そのフォルダーの xlsx から選ぶ)を選ぶ
+- 測定中は状態欄に「12mA 測定中」だけ出し、LOGGER の画面を前に出す。終わったら画面を前に出して「終了しました」と知らせ、結果 Excel を開いたまま渡す
+- 前回の結果 Excel を開いたまま次を始めると「開けません」で止まる(閉じてから開始する)
+- 細かい記録は xdt 保存先の `AS110NoiseTest_<日時>.log`(開始を押すたびに 1 つ)
 
 ## 確認ツールの使い方
 
@@ -59,9 +74,9 @@ python Tools/Analysis/red_rule_eval.py                      # Python 版(規則�
 python Tools/Analysis/compare_cs.py                         # C# 版と Python 版の照合
 ```
 
-Excel 書き込みの確認(出力 xlsx が無ければ雛形から作る。あれば追記。SN・備忘録・mA はファイル名から):
+Excel 書き込みの確認(出力 xlsx が無ければ雛形から作る。あれば追記。型式・SN・備忘録・mA はファイル名から。型式はファイル名の `AS110_035` を `AS110-035` に戻す):
 ```
-dotnet run --project Tools/ExcelWriteCheck -- 出力.xlsx 学習データ/2026.06.12_不具合返却品/SN60226 [--visible] [--leave-open]
+dotnet run --project Tools/ExcelWriteCheck -- 出力.xlsx 学習データ/2026.06.12_不具合返却品/SN60226 [--model AS110-035] [--visible] [--leave-open]
 ```
 
 測定シーケンス。xdt の保存先は既定で `%TEMP%\AS110NoiseTest_MeasurementCheck`、Excel は保存先の `AS110ノイズ測定_確認.xlsx`(`--out` / `--excel` で変更):
@@ -75,10 +90,12 @@ dotnet run --project Tools/MeasurementCheck -- --real --sn SN60226 --memo 実機
 
 ## 実機 PC 用の発行
 
-`Tools\MeasurementCheck\発行.cmd` を実行する(中身は `dotnet publish Tools/MeasurementCheck/MeasurementCheck.csproj -p:PublishProfile=FolderProfile`。Release / win-x64 / 自己完結 / 単一ファイル)。`Tools\MeasurementCheck\bin\publish` に次の 3 つだけが出る。フォルダーごと実機 PC にコピーし、`実機確認 logger` → `実機確認 real <SN>` → `実機確認 full <SN>` の順に流す(`docs/測定シーケンス実機確認.md`)。
+画面のアプリ: `dotnet publish AS110NoiseTest.csproj -p:PublishProfile=FolderProfile`(このフォルダーで)。`bin\Release\publish` に `AS110NoiseTest.exe`(約 110MB、自己完結・単一ファイル)と `雛形\`(雛形 xdt・雛形 Excel・型式一覧)だけが出る。フォルダーごと実機 PC にコピーする。
+
+確認ツール: `Tools\MeasurementCheck\発行.cmd` を実行する(中身は `dotnet publish Tools/MeasurementCheck/MeasurementCheck.csproj -p:PublishProfile=FolderProfile`。Release / win-x64 / 自己完結 / 単一ファイル)。`Tools\MeasurementCheck\bin\publish` に次の 3 つだけが出る。フォルダーごと実機 PC にコピーし、`実機確認 logger` → `実機確認 real <SN>` → `実機確認 full <SN>` の順に流す(`docs/測定シーケンス実機確認.md`)。
 
 - `MeasurementCheck.exe`(約 110MB。.NET の入っていない PC でも動く。`.pdb` は exe に入れてある)
-- `雛形\`(雛形 xdt・雛形 Excel。exe には入れないので、差し替えても発行し直さなくてよい)
+- `雛形\`(雛形 xdt・雛形 Excel・型式一覧。exe には入れないので、差し替えても発行し直さなくてよい)
 - `実機確認.cmd`
 
 実機 PC に要るもの: NI-VISA(`Ivi.Visa.Interop` は exe に入っているが VISA 本体は要る)、WAVE LOGGER(NR-500 は旧 WAVE LOGGER で使う)、Excel。
@@ -115,3 +132,20 @@ dotnet run --project Tools/MeasurementCheck -- --real --sn SN60226 --memo 実機
   - 移植前(2026-11-03、SN60226)と同じ流れ・所要時間(記録 39.6〜39.8 秒、1 電流 約 42.5 秒)で動き、赤も同じ 9mA・28mA に出た
   - 人の目視: 終了時に WF1973 が 0V・出力 OFF(前面パネル)。LOGGER 画面で 9mA・28mA の波形を見て、赤の判定どおりと確認
 - 未確認: 9mA・28mA 以外の 22 本の LOGGER 画面との目視照合、発行した exe を実機 PC・別の PC で動かすこと(今回は `dotnet run`)
+
+### 画面と型式(2026-11-05)
+
+- 変えたこと: 入力に型式を足した(xdt 名の頭が `AS110_035` 固定 → 型式から。結果 Excel の `PP値`・`平均値`・`赤判定`・`詳細` に「型式」列を足し、mA の列が 1 つ右へずれた。行のキーは型式・SN・備忘録)。模擬の 2 クラスを `Tools/MeasurementCheck` から `Simulation/` へ移した。確認ツールに `--model` を足した
+- 確認(機器なし。SDK 9.0、Excel 16 のある PC):
+  - `AS110NoiseTest.slnf` のビルド(警告 0・エラー 0)。wrapper は変えていない
+  - `MeasurementCheck --sim`: すべて OK。xdt 名 `AS110_035_模擬_SIM0001_5mA_…`、Excel の B 列に「AS110-035」、5mA の値が I 列
+  - 画面 `--sim` を UI オートメーションで操作(人は触らずに):
+    - 入力の確認: SN 空・電流空・範囲外(40mA)・小数の刻み・保存先空・ドライブ直下・追記先なし・同名の新規、それぞれ想定どおりのメッセージ
+    - 通し(5〜20mA、新規): 状態欄が「準備中 → 5mA 測定中 → … → 20mA 測定中 → 後始末 → 終了しました」と変わり、16 秒で「終了しました(判定 赤、最大 p-p 1.8 kPa、黄 1、赤 1)」。結果 Excel が画面に出て開いたまま残った
+    - 渡した結果 Excel を開いたまま「追記」で開始 → 「開けません。閉じてから…」で止まり、裏の Excel は残らない
+    - 同じ型式・SN・備忘録で開始 → 「5, 10, 15, 20 mA を測定済み。重なる 15, 20 mA は上書き」の確認。「いいえ」で 3 秒後に待機中(Excel は残らない)、「はい」で測定
+    - 17mA の測定中に中断 → 確認 →「中断しました。続きは 17mA から。15〜16 mA は保存済み」。Excel は残らない
+    - 18mA の測定中に画面を閉じる → 中断の確認 → 後始末のあとアプリが終わる
+    - 結果 Excel の行 8 に 5・10・15・16・17・20mA、赤判定は 20mA、詳細は 7 行
+  - `FolderProfile` で発行し、発行フォルダーが `AS110NoiseTest.exe` と `雛形\` だけになること、発行した exe の `--sim` で 9・10mA が通ること(備忘録が空のときの名前 `AS110_035_P1_9mA_…`)。`MeasurementCheck` の発行も通る(`雛形\` に型式一覧も入る)
+- 未確認: 画面を実機(WF1973・7351E・NR-500)で動かすこと(LOGGER の画面を前に出す動き、機器が見つからないときの知らせを含む)、新規に作った結果 Excel を 1 本も書かずに止まったとき消すこと(模擬では起こせなかった)、別の PC での発行版

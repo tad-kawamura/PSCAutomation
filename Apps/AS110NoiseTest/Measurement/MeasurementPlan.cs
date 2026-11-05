@@ -3,6 +3,7 @@ namespace PSCAutomation.Apps.AS110NoiseTest.Measurement;
 // 1 回の測定(1 台分)の入力。画面で入れる値がそのまま入る。
 // 電流は整数 mA だけ(雛形 Excel の列が 1〜35 の整数。NoiseResultWorkbook は小数の指令を受け付けない)。
 internal sealed record MeasurementPlan(
+    string Model,             // 型式(一覧の表記のまま。例 AS110-035。xdt 名と Excel の行のキーに入る。2026-11-05 追加)
     string SerialNumber,      // SN(Excel の行のキー)
     string Memo,              // 備忘録(空でもよい。Excel の行のキーとファイル名に入る)
     int StartMilliamps,       // 開始 mA
@@ -13,6 +14,7 @@ internal sealed record MeasurementPlan(
 {
     public void Validate(double maxMilliamps)
     {
+        if (string.IsNullOrWhiteSpace(Model)) throw new ArgumentException("型式を選んでください。");
         if (string.IsNullOrWhiteSpace(SerialNumber)) throw new ArgumentException("SN を入れてください。");
         if (StepMilliamps < 1) throw new ArgumentException("刻みは 1mA 以上の整数にしてください。");
         foreach (var (name, value) in new[] { ("開始", StartMilliamps), ("終了", EndMilliamps) })

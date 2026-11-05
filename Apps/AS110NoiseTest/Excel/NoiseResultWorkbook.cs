@@ -11,8 +11,8 @@ namespace PSCAutomation.Apps.AS110NoiseTest.Excel;
 //   using var wb = NoiseResultWorkbook.Open(出力xlsx, 雛形xlsx);   // 無ければ雛形をコピーして作る。あれば追記
 //   wb.WriteSettings(judgeSettings);
 //   wb.Write(record);  ...  wb.Save();
-//   wb.LeaveOpenForUser();  // 終わったあと Excel を開いたままにしたいとき(Dispose で閉じなくなる)
-// 行の決め方: PP値シートで SN・備忘録 が同じ行があればその行、無ければ SN が空の最初の行。
+//   wb.LeaveOpenForUser();  // 終わったあと Excel を開いたままにしたいとき(Dispose で閉じなくなる)。ShowToUser は前にも出す
+// 行の決め方: PP値シートで 型式・SN・備忘録 が同じ行があればその行、無ければ SN が空の最初の行(型式は 2026-11-05 追加)。
 //   (日付はキーにしない。人の Excel でも「SN60260再調整後」は 2 日にまたがって 1 行だった。別の行にしたいときは備忘録を変える。
 //    測定日は行を作ったときの日付を入れ、以後は変えない)
 // 列の決め方: 見出し(名前定義 PP_Header)の値 = 指令 mA の列。1〜35 の整数以外は書けない(例外)。
@@ -25,6 +25,8 @@ internal sealed class NoiseResultWorkbook : INoiseResultWriter, IDisposable
     private bool _disposed;
 
     public string Path { get; }
+    // Open で雛形をコピーして新しく作ったとき true(何も書かずにやめたとき、呼び出し側が消せるように)。
+    public bool CreatedFromTemplate { get; private set; }
 
     private NoiseResultWorkbook(string path) => Path = path;
 
@@ -32,13 +34,15 @@ internal sealed class NoiseResultWorkbook : INoiseResultWriter, IDisposable
     {
         if (string.IsNullOrWhiteSpace(outputPath)) throw new ArgumentException("出力ファイルを指定してください。", nameof(outputPath));
         string full = System.IO.Path.GetFullPath(outputPath);
+        bool created = false;
         if (!File.Exists(full))
         {
             if (!File.Exists(templatePath)) throw new FileNotFoundException("雛形 Excel が見つかりません。", templatePath);
             Directory.CreateDirectory(System.IO.Path.GetDirectoryName(full)!);
             File.Copy(templatePath, full);
+            created = true;
         }
-        var wb = new NoiseResultWorkbook(full);
+        var wb = new NoiseResultWorkbook(full) { CreatedFromTemplate = created };
         try
         {
             wb.Start(visible);
@@ -98,14 +102,16 @@ internal sealed class NoiseResultWorkbook : INoiseResultWriter, IDisposable
         ThrowIfDisposed();
         if (string.IsNullOrWhiteSpace(record.SerialNumber)) throw new ArgumentException("SN が空です。", nameof(record));
         int column = MaColumn(record.CommandMa);
+        string model = record.Model ?? "";
         string memo = record.Memo ?? "";
-        (int row, bool isNew) = FindOrAddRow(record.SerialNumber, memo);
+        (int row, bool isNew) = FindOrAddRow(model, record.SerialNumber, memo);
 
         var a = record.Analysis;
         var m = a.Metrics;
         if (isNew)
         {
             _pp!.SetValue(row, DateColumn, record.MeasuredAt.Date.ToOADate());
+            _pp.SetValue(row, ModelColumn, model);
             _pp.SetValue(row, SerialColumn, record.SerialNumber);
             _pp.SetValue(row, MemoColumn, memo);
         }
@@ -116,6 +122,23 @@ internal sealed class NoiseResultWorkbook : INoiseResultWriter, IDisposable
         else _red!.ClearContents(row, column, column);      // 測り直しで赤でなくなったら消す
         AppendDetail(record);
         return row;
+    }
+
+    // 同じ 型式・SN・備忘録 の行に、もう p-p が書かれている mA の一覧(小さい順)。行が無ければ空。
+    // 開始前に「測定済みの mA を上書きしてよいか」を人に確かめるために使う。
+    public IReadOnlyList<int> FindMeasuredMilliamps(string model, string serial, string memo)
+    {
+        ThrowIfDisposed();
+        int? row = FindRow(model ?? "", serial, memo ?? "");
+        if (row is null) return [];
+        int first = _maColumns!.Values.Min(), last = _maColumns.Values.Max();
+        object?[,] values = _pp!.GetValues(Address(row.Value, first) + ":" + Address(row.Value, last));
+        var measured = new List<int>();
+        foreach ((int ma, int col) in _maColumns.OrderBy(kv => kv.Key))
+        {
+            if (values[0, col - first] is double) measured.Add(ma);
+        }
+        return measured;
     }
 
     // PP値シートの行の数式(最大p-p・黄・赤・判定)を読む。Excel の再計算後の値。
@@ -143,6 +166,15 @@ internal sealed class NoiseResultWorkbook : INoiseResultWriter, IDisposable
         _app!.HandOverToUser();
     }
 
+    // 人に渡し(LeaveOpenForUser と同じ)、PP値シートを表示する。戻り値はブックの窓のハンドル
+    // (Windows の前面に出すときは Wrappers/Common の WindowActivation.TryActivate に渡す)。
+    public IntPtr ShowToUser()
+    {
+        ThrowIfDisposed();
+        _app!.HandOverToUser();
+        return _book!.ShowWindow(PpSheet);
+    }
+
     private int MaColumn(double commandMa)
     {
         if (commandMa != Math.Round(commandMa) || !_maColumns!.TryGetValue((int)Math.Round(commandMa), out int col))
@@ -151,24 +183,36 @@ internal sealed class NoiseResultWorkbook : INoiseResultWriter, IDisposable
         return col;
     }
 
-    private (int Row, bool IsNew) FindOrAddRow(string serial, string memo)
+    private (int Row, bool IsNew) FindOrAddRow(string model, string serial, string memo)
     {
-        object?[,] keys = _pp!.GetValues(Address(FirstDataRow, SerialColumn) + ":" + Address(LastSearchRow, MemoColumn));
-        int count = keys.GetLength(0);
-        for (int i = 0; i < count; i++)
+        (int? found, int? firstEmpty) = SearchRows(model, serial, memo);
+        if (found is int row) return (row, false);
+        if (firstEmpty is int newRow)
         {
-            object? sn = keys[i, 0];
-            if (sn is null || string.IsNullOrWhiteSpace(sn.ToString()))
-            {
-                int newRow = FirstDataRow + i;
-                EnsureRowPrepared(newRow);
-                return (newRow, true);
-            }
-            if (!string.Equals(sn.ToString()!.Trim(), serial.Trim(), StringComparison.Ordinal)) continue;
-            string rowMemo = keys[i, MemoColumn - SerialColumn]?.ToString()?.Trim() ?? "";
-            if (rowMemo == memo.Trim()) return (FirstDataRow + i, false);
+            EnsureRowPrepared(newRow);
+            return (newRow, true);
         }
         throw new InvalidOperationException($"PP値シートの {FirstDataRow}〜{LastSearchRow} 行に空きがありません。");
+    }
+
+    private int? FindRow(string model, string serial, string memo) => SearchRows(model, serial, memo).Found;
+
+    // 上から見て、型式・SN・備忘録が同じ行(Found)か、SN が空の最初の行(FirstEmpty)で止まる。
+    // 空の行より下は見ない(追記は上から詰めて書くため)。
+    private (int? Found, int? FirstEmpty) SearchRows(string model, string serial, string memo)
+    {
+        object?[,] keys = _pp!.GetValues(Address(FirstDataRow, ModelColumn) + ":" + Address(LastSearchRow, MemoColumn));
+        int count = keys.GetLength(0);
+        static string Text(object? value) => value?.ToString()?.Trim() ?? "";
+        for (int i = 0; i < count; i++)
+        {
+            string sn = Text(keys[i, SerialColumn - ModelColumn]);
+            if (sn.Length == 0) return (null, FirstDataRow + i);
+            if (!string.Equals(sn, serial.Trim(), StringComparison.Ordinal)) continue;
+            if (Text(keys[i, 0]) != model.Trim()) continue;
+            if (Text(keys[i, MemoColumn - ModelColumn]) == memo.Trim()) return (FirstDataRow + i, null);
+        }
+        return (null, null);
     }
 
     // 雛形で用意した行(罫線・数式入り)を超えたら、上の行をコピーして同じ形にする。
@@ -198,7 +242,7 @@ internal sealed class NoiseResultWorkbook : INoiseResultWriter, IDisposable
         if (m.StepHit) reasons.Add("C");
         object?[] values =
         [
-            r.MeasuredAt.ToOADate(), r.SerialNumber, r.Memo ?? "", r.CommandMa, r.MeasuredMa,
+            r.MeasuredAt.ToOADate(), r.Model ?? "", r.SerialNumber, r.Memo ?? "", r.CommandMa, r.MeasuredMa,
             a.Current.Mean, a.Current.PeakToPeak,
             a.SupplyPressure.Mean, a.SupplyPressure.PeakToPeak,
             a.ControlPressure.Mean, m.PeakToPeakKpa, a.ControlPressure.Min, a.ControlPressure.Max,

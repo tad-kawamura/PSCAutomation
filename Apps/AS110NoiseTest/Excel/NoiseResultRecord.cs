@@ -4,7 +4,8 @@ namespace PSCAutomation.Apps.AS110NoiseTest.Excel;
 
 // 1 回の記録(1 つの電流)の結果。NoiseResultWorkbook.Write に渡す。
 internal sealed record NoiseResultRecord(
-    DateTime MeasuredAt,           // 記録日時(PP値シートの行は日付で分ける)
+    DateTime MeasuredAt,           // 記録日時(新しい行を作ったときの測定日になる。行は日付では分けない)
+    string Model,                  // 型式(一覧の表記のまま。例 AS110-035。2026-11-05 追加)
     string SerialNumber,           // SN
     string Memo,                   // 備忘録(空でもよい)
     double CommandMa,              // 指令電流 [mA]。雛形の列(1〜35 の整数)に一致する必要がある
