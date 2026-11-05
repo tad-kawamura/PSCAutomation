@@ -30,10 +30,12 @@
 - 参照波形の読み込み、横軸拡大、LOGGER 画面の復元・前面表示
 - 終了処理: × 検知、停止・Quit・COM 解放、対象プロセスだけを終了(別プロセスは守る)
 - 終了の扱いを選べる(`Lifecycle`): 既定は上の終了処理(`ManagedShutdown`)。`ReferenceOnly` は LOGGER を止めず COM 参照だけ解放する(AS100201SwitchController の使い方。移植後に NR-500・旧 WAVE LOGGER で実機確認)
+- LOGGER 本体ソフトの起動だけを先に始めておける(`BeginServerStartup` → `WaitForServerStartupAsync` → `Initialize`)。旧 WAVE LOGGER の起動は 7〜8 秒かかるので、画面を作る前に始めて画面準備・他の機器の確認と重ねる。`Initialize` は起動済みの参照を受け取るだけになる。使わないアプリは何も変わらない(AS110AllCheck で NR-500・旧 WAVE LOGGER を実機確認、2026-11-05)
 - 機器なしの模擬に差し替えるための薄い interface の例: AS110NoiseTest `Measurement/ILoggerDevice.cs`
 
 **制約**
-- WinForms の UI スレッド(STA)から使う。`Task.Run` や並列呼び出しは不可。非同期操作中はアプリ側で操作を排他する
+- WinForms の UI スレッド(STA)から使う。`Task.Run` や並列呼び出しは不可。非同期操作中はアプリ側で操作を排他する(事前起動だけは内部で別スレッドを使うが、受け取った後の操作は従来どおり UI スレッド)
+- 事前起動を使うアプリは、`Initialize` せずに終わる経路(接続確認前に閉じる、LOGGER の種類を切り替える)で `CancelServerStartup()` を呼ぶ(`Release()` / `ShutdownAsync` からも破棄される)
 - 終了・再接続の前に必ず `await ShutdownAsync(log)`。失敗したら新しいセッションに置き換えず、同じものを保持して再試行
 - LOGGER を人が手で操作すると状態が変わり COM 例外になる。成功扱いせず画面に出す
 - 実行 PC に WAVE LOGGER 本体ソフトとドライバが必要。NR-500 は旧 WAVE LOGGER(4.03.00)で測る(X 2.00.10 が入っていても)

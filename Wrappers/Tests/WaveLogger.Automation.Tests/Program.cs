@@ -32,6 +32,7 @@ await Run("already disconnected COM releases stale reference", new() { Disconnec
 await ProcessLifetimeTests.RunAsync(assembly, control, session);
 await SessionContractTests.RunAsync(assembly, control);
 await MergedApiTests.RunAsync(control);
+await PrestartTests.RunAsync(control);
 Console.WriteLine("WaveLogger.Automation: all checks passed.");
 public class FakeLogger
 {

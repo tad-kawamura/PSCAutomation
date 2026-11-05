@@ -33,6 +33,8 @@ internal sealed partial class MainForm
             RunShutdownStep("発振器の出力停止", StopLeakOutput);
             _hardwareDetected = false;
             RunShutdownStep("測定状態の解除", ResetTemplate);
+            // 接続確認の前に閉じたときは、先に起動した LOGGER の参照を手放す(受け取り済みなら何もしない)。
+            RunShutdownStep("LOGGER事前起動の破棄", _logger.CancelServerStartup);
             await RunShutdownStepAsync("LOGGERの停止・終了確認", () => _logger.ShutdownAsync(ShutdownLog));
             if (_nrXConnection.WifiRestoreRequired)
                 await RunShutdownStepAsync("Wi-Fi復帰", () => _nrXConnection.RestorePreviousWifiAsync());

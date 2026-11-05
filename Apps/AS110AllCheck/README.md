@@ -19,7 +19,7 @@ dotnet run --project Apps/AS110AllCheck/Tests/Verification/AS110AllCheck.Verific
 
 | 配置 | 役割 |
 | --- | --- |
-| `Program.cs` | 起動入口。異常ログの設定（`As110/As110Application.cs`）のあと MainForm を開く |
+| `Program.cs` | 起動入口。異常ログの設定（`As110/As110Application.cs`）のあと MainForm を開く。MainForm は画面を作る前に LOGGER 本体ソフトの起動だけ先に始め（`BeginLoggerStartup`）、画面準備・発振器確認と重ねる |
 | `UI/` | MainForm、画面配置、接続・測定・保存の操作、校正画面 |
 | `As110/` | AS110の設定、測定定義、M5Stack通信、スタンド選択、校正、NR-X の Wi-Fi プロファイル一覧（`As110ConnectionSettings.cs`） |
 | `Production/` | 工程状態、保存・漏れチェック・完了S/Nの保護 |
@@ -64,6 +64,7 @@ GitHubへのpushは運用PCへの配布ではありません。オフライン�
 詳細は [ver3の適用・操作手順](docs/operation.md) を参照してください。元資料は [00_ver3_適用方法.txt](docs/legacy/00_ver3_適用方法.txt) に保存しています。
 
 - 動き検査、データ調整、データ取りの3モードを使います。
+- 起動すると接続確認（M5Stack・発振器・LOGGER／NR本体）が自動で走り、終わるまでボタンは押せません。LOGGER 本体ソフトの起動（旧 WAVE LOGGER で 7〜8 秒）は画面を作る前に始めて画面準備と重ねているので、起動から操作できるまでは LOGGER の起動時間とほぼ同じです。ログ欄の「起動時間：プロセス起動から接続確認終了まで」で確かめられます。
 - 起動後はモード→スタンド→型式（参照波形）の順に選択します。モードを選ぶとスタンド選択が表示されます。
 - NR-X は USB と Wi-Fi のどちらでもつなげます。Wi-Fi のプロファイル（SSID・IP）は `As110/As110ConnectionSettings.cs` の `NrWifiProfiles` にあります。機器を増やすときは1行足します。パスワードは Windows の Wi-Fi プロファイルが持つので、ここには書きません。
 - NR-500のXDTでは、スタンド選択時に「電流・圧力の2点校正」が開きます。CH1電流（mA）・CH2圧力（kPa）の低点／高点それぞれに入力電圧（V）と対応する実測値の8項目を入力し、「適用」を押すと、その値を作業用XDTへ反映してLOGGERへ読み込みます（元の雛形は保持）。ゼロ付近も両方編集できます。例：圧力の高点に `5.503 V＝539.5 kPa`、別の日には `5.498 V＝540.5 kPa`。初回値は電流がスタンド公称値、圧力がそのモードの雛形の値です。機器名などの入力や前回値の呼び出しはありません。
@@ -153,4 +154,5 @@ dotnet $e $d "<dir>/雛形/雛形.xlsx" --optimization
 
 - この PC（SDK 10.0.401、NI-VISA・Excel あり、機器なし）で: `AS110AllCheck.slnf` の Release ビルド（エラー 0。警告は `Wrappers/Instruments` の VISA 参照の MSB3270 だけで、移植前から同じ）、Verification（照合を含む）、AppShutdown 11 件、SaveAvailability（`--no-dialogs --with-excel`）21 件、ExcelHeader（ヘッダ 7・`--optimization` 54・`--session` 9・`--transfer` 6・`--reuse` 16・`--prepare` 7）。件数は移植前と同じ（`--session` は切断とみなすエラーを 1 つ足した分だけ多い）
 - 未確認: **実機での動作すべて**（M5Stack、NR-500 / NR-X の USB・Wi-Fi、WF1973 / SDG1032X、LOGGER の測定・保存、漏れチェック、正式保存）、SaveAvailability のダイアログありの実行、発行した exe を別の PC で動かすこと
+- 2026-11-05 LOGGER の事前起動（起動を画面準備と重ねる）: この PC に M5Stack・WF1973・NR-500（旧 WAVE LOGGER、USB）をつないだ状態で Debug ビルドの exe を起動し、接続確認が正常終了（本体=NR-500）して、閉じると LOGGER も終了することを確認。接続確認のログで「COMオブジェクト生成（事前起動を使用）」と「LOGGER事前起動の完了待ち = 0.000 秒」が出て、プロセス起動から接続確認終了までが 3.0 秒（変更前の同日のログでは 11.2〜13.4 秒。ただしこの回は LOGGER 本体の起動自体が 0.6 秒と速く、7〜8 秒かかる回での短縮幅は未確認）。未確認: NR-X・WAVE LOGGER X・Wi-Fi での事前起動、両方の LOGGER が入った PC で種類を切り替えたときの破棄
 - M5Stack スケッチ: 2026-11-05 に人が Arduino IDE（esp32 3.3.12、ボード M5Core、M5Unified 0.2.29）で M5Stack Basic V2.7 へ書き込めた（手順は [Arduino IDE の準備](docs/m5stack-arduino-ide-setup.md)）。書き込み後の表示・ボタン・G26 接点・PC アプリとの通信は未確認。スケッチは変えていない

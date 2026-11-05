@@ -56,6 +56,24 @@ internal sealed partial class MainForm : Form
                 "接続するNR-XのWi-Fiプロファイルを選択してください。");
     }
 
+    // 画面を作る前に LOGGER 本体ソフトの起動だけ先に始める。
+    // 種類は ConfigureLoggerSelection の既定と同じ(1 つならそれ、両方入っていれば旧 WAVE LOGGER)。
+    // 失敗しても何もしない(接続確認で従来どおり起動し、エラーもそこで出る)。
+    private void BeginLoggerStartup()
+    {
+        try
+        {
+            IReadOnlyList<WaveLoggerEdition> installed = WaveLoggerSession.GetInstalledEditions();
+            if (installed.Count == 0) return;
+            WaveLoggerEdition edition = installed.Count == 1 ? installed[0] : WaveLoggerEdition.Legacy;
+            _logger.BeginServerStartup(edition);
+        }
+        catch (Exception ex)
+        {
+            Trace.WriteLine("LOGGERの事前起動を始められません: " + ex);
+        }
+    }
+
     private void ConfigureLoggerSelection()
     {
         WaveLoggerEdition previousChoice = _loggerComboBox.SelectedItem is WaveLoggerEdition existing
@@ -259,6 +277,15 @@ internal sealed partial class MainForm : Form
                 {
                     throw new InvalidOperationException(
                         "NR-XのWi-Fi接続にはWAVE LOGGER Xが必要です。");
+                }
+
+                // 起動時に先に始めた LOGGER の起動が終わるまで待つ(UI スレッドは止めない)。
+                // Initialize はこの後、起動済みの参照を受け取るだけになる。
+                if (!_logger.IsInitialized && _logger.HasPendingServerStartup)
+                {
+                    var prestartTimer = Stopwatch.StartNew();
+                    await _logger.WaitForServerStartupAsync();
+                    AppendLog($"処理時間：LOGGER事前起動の完了待ち = {prestartTimer.Elapsed.TotalSeconds:F3} 秒（画面準備と重なった分は含まない）");
                 }
 
                 WaveLoggerSession.HardwareCheckResult check;

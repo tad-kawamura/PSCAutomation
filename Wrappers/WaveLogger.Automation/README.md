@@ -14,6 +14,7 @@ Arduino・VISA・Excel・検査画面・保存先の設定には依存しない�
 | `WaveLoggerSession.Files.cs` | ファイル開閉、データ数取得、既存の LOGGER 形式・CSV 保存 API |
 | `WaveLoggerSession.Reference.cs` | 参照読み込み前の停止待ち、版別の読み込み、横軸拡大 |
 | `WaveLoggerSession.Window.cs` | LOGGER 画面の復元・前面表示 |
+| `WaveLoggerSession.Prestart.cs` | LOGGER 本体ソフトの事前起動(別 STA スレッドで COM 生成し、UI スレッドへ参照を渡す) |
 | `LoggerProcessLifetime.cs` | 制御対象 PID の識別、条件付き終了、別プロセスの保護 |
 | `LoggerReferenceLoader.cs` / `LoggerFileDrop.cs` / `LoggerHorizontalZoom.cs` | 内部の Windows 画面操作。呼び出し元から直接使用しない |
 | `LoggerMeasurementState.cs` | 測定状態の判定・表示、開始直後の古い停止情報の抑止 |
@@ -42,6 +43,24 @@ var result = _logger.DetectNrX(0, NrXConnectionMethod.Usb);
 // 終了または再接続前(失敗時はアプリ終了を保留し、このインスタンスを保持)
 await _logger.ShutdownAsync(AppendLog);
 ```
+
+### 起動を画面準備と重ねる(事前起動)
+
+旧 WAVE LOGGER の起動(COM サーバーの生成)は 7〜8 秒かかる。`Initialize` を UI スレッドで呼ぶとその間は画面が固まるので、画面を作る前に起動だけ始めておける。
+
+```csharp
+// フォームのコンストラクターの先頭(画面を作る前)
+_logger.BeginServerStartup(WaveLoggerEdition.Legacy);   // 失敗しても例外にならない
+
+// 接続確認(UI スレッドの async 処理の中)
+await _logger.WaitForServerStartupAsync();              // 残りの起動待ち。UI スレッドは止めない
+_logger.Initialize(WaveLoggerEdition.Legacy, AppendLog); // 起動済みの参照を受け取るだけ(同じ種類のとき)
+```
+
+- 事前起動は専用の STA スレッドで `CreateInstance` し、できた参照を COM のスレッド間マーシャリングで `Initialize` を呼ぶスレッドへ渡す。受け取った後の使い方は従来と同じ(UI スレッドで直列)
+- `Initialize` の種類が事前起動と違うときは事前起動分を破棄して従来どおり起動する。事前起動が失敗していたときも従来どおり起動する(エラーは従来と同じ場所で出る)
+- `Initialize` せずに終わる経路では `CancelServerStartup()` で破棄する(`Release()` / `ShutdownAsync` からも破棄される)。`HasPendingServerStartup` で未受け取りかどうかを見られる
+- 事前起動を使わないアプリは何も変わらない
 
 `IsInitialized` は COM 参照の有無で、本体との通信や画面が開いていることの保証ではない。定期監視では `IsSessionClosed()` を確認し、閉じられた場合も `ShutdownAsync` を通す。`HasPendingShutdown` の間は旧プロセス終了が未確認。`Release()` は初期化・接続失敗時などの参照解放用で、停止・終了成功を保証しない。
 
@@ -74,4 +93,4 @@ await _logger.ShutdownAsync(AppendLog);
 
 ## 確認
 
-`Wrappers/Tests/WaveLogger.Automation.Tests` は実機を操作せず、終了順序・終了失敗時の保持・プロセス隔離・セッション状態分離・測定開始(3 方式)・参照読み込みの停止通知・既存保存 API のエラー伝播・`Lifecycle` の既定値・状態 10 の表示を確認する。COM 参照の実際の解放、画面操作、本体との通信は実機での確認が必要。
+`Wrappers/Tests/WaveLogger.Automation.Tests` は実機を操作せず、終了順序・終了失敗時の保持・プロセス隔離・セッション状態分離・測定開始(3 方式)・参照読み込みの停止通知・既存保存 API のエラー伝播・`Lifecycle` の既定値・状態 10 の表示・事前起動(参照の受け渡しが 1 回だけ成功すること、破棄・失敗時に止まらないこと。Excel がある PC では別プロセスの COM サーバーを受け取った後に呼べること)を確認する。COM 参照の実際の解放、画面操作、本体との通信は実機での確認が必要。

@@ -391,13 +391,19 @@ namespace PSCAutomation.Wrappers.WaveLogger.Automation
             object? instance = null;
             try
             {
-                stepTimer.Restart();
-                using (ObserveOperation?.Invoke("LOGGER.Activator.CreateInstance"))
-                    instance = Activator.CreateInstance(type)
-                        ?? throw new InvalidOperationException(
-                            "WAVE LOGGERのCOMオブジェクトを生成できませんでした。");
+                // 事前起動(BeginServerStartup)があり同じ種類なら、その参照を受け取る。無ければ従来どおりここで起動する。
+                if (TryTakePrestartedServer(selectedEdition, timingLog, out instance, out var prestartedProcesses))
+                    existingProcesses = prestartedProcesses;
+                if (instance is null)
+                {
+                    stepTimer.Restart();
+                    using (ObserveOperation?.Invoke("LOGGER.Activator.CreateInstance"))
+                        instance = Activator.CreateInstance(type)
+                            ?? throw new InvalidOperationException(
+                                "WAVE LOGGERのCOMオブジェクトを生成できませんでした。");
 
-                timingLog?.Invoke($"LOGGER内訳：COMオブジェクト生成（サーバー起動） = {stepTimer.Elapsed.TotalSeconds:F3} 秒");
+                    timingLog?.Invoke($"LOGGER内訳：COMオブジェクト生成（サーバー起動） = {stepTimer.Elapsed.TotalSeconds:F3} 秒");
+                }
                 dynamic app = instance;
                 stepTimer.Restart();
                 using (ObserveOperation?.Invoke("LOGGER.Initialize.COM"))
@@ -443,6 +449,8 @@ namespace PSCAutomation.Wrappers.WaveLogger.Automation
         {
             using var observation = ObserveOperation?.Invoke("LOGGER.WaveLog_Close");
             _waveLoggerXStartCompleted = false;
+            // 受け取っていない事前起動分があれば、ここで破棄する(事前起動を使わないアプリでは何もしない)。
+            CancelServerStartup();
             object? instance = _application;
             if (instance is null)
             {
