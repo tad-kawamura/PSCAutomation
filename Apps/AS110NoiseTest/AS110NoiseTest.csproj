@@ -48,7 +48,5 @@
     <None Update="雛形\AS110ノイズ測定用.xdt" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" ExcludeFromSingleFile="true" />
     <None Update="雛形\AS110ノイズ測定_雛形.xlsx" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" ExcludeFromSingleFile="true" />
     <None Update="雛形\型式一覧.txt" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" ExcludeFromSingleFile="true" />
-    <!-- 試し取り用(記録 0.5 秒)。無くても動く(2026-11-05) -->
-    <None Update="雛形\AS110ノイズ試し取り用.xdt" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" ExcludeFromSingleFile="true" />
   </ItemGroup>
 </Project>

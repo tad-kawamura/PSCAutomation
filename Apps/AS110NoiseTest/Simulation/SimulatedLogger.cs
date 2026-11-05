@@ -31,17 +31,13 @@ internal sealed class SimulatedLogger(
     // 故障の模擬: Start の戻り値、保存の失敗。
     public long StartReturnValue { get; set; }
     public bool FailSave { get; set; }
-    // 試し取り用の雛形(MeasurementSettings.PreviewTemplateXdtPath と同じもの)。これを開いて記録したときは PreviewDuration だけ記録する
-    // (実機の試し取りは 0.5 秒。状態を読む前に終わる場合の流れを確かめられる)。
-    public string? PreviewTemplatePath { get; set; }
-    public TimeSpan PreviewDuration { get; set; } = TimeSpan.FromSeconds(0.5);
     // 制御圧力の平均 [kPa] を電流ごとに変える(試し取りで表示レンジが動くことを確かめる用)。null なら雛形の平均のまま。
     public Func<int, double>? ControlKpaOf { get; set; }
-    // 書いたファイルとその波形(確認用。試し取りは入れない)。
+    // 書いたファイルとその波形(確認用。記録の途中で Stop したもの = 試し取りは入れない)。
     public List<(string Path, int Milliamps, WaveProfile Profile)> Saved { get; } = [];
 
-    private bool IsPreview => PreviewTemplatePath is not null && _openFile is not null &&
-        string.Equals(Path.GetFullPath(_openFile), Path.GetFullPath(PreviewTemplatePath), StringComparison.OrdinalIgnoreCase);
+    // 直前の記録を測定中に Stop した(試し取り)。
+    private bool _stoppedEarly;
 
     public long OpenFile(string path)
     {
@@ -64,30 +60,31 @@ internal sealed class SimulatedLogger(
         if (_openFile is null) return -1;
         if (StartReturnValue != 0) return StartReturnValue;
         _startedAt = DateTime.UtcNow;
-        _recordFor = IsPreview ? PreviewDuration : duration;
+        _stoppedEarly = false;
         return 0;
     }
 
-    private TimeSpan _recordFor;
-
     public long GetState()
     {
-        if (_startedAt is DateTime t && DateTime.UtcNow - t < _recordFor) return 4;
+        if (_startedAt is DateTime t && DateTime.UtcNow - t < duration) return 4;
         return LoggerState.Stopped;
     }
 
-    public void Stop() => _startedAt = null;
+    public void Stop()
+    {
+        if (GetState() != LoggerState.Stopped) _stoppedEarly = true;
+        _startedAt = null;
+    }
 
     public long SaveXdt(string path)
     {
         if (_openFile is null || FailSave) return -1;
         int milliamps = (int)Math.Round(currentMilliamps());
         WaveProfile profile = profileOf(milliamps);
-        bool preview = IsPreview;
         WriteXdt(_openFile, path, milliamps, profile);
-        if (!preview) Saved.Add((path, milliamps, profile));
+        if (!_stoppedEarly) Saved.Add((path, milliamps, profile));
         _saved++;
-        log?.Invoke($"  [模擬LOGGER] SaveXdt {Path.GetFileName(path)}({(preview ? "試し取り" : profile.ToString())})");
+        log?.Invoke($"  [模擬LOGGER] SaveXdt {Path.GetFileName(path)}({(_stoppedEarly ? "途中で停止" : profile.ToString())})");
         return 0;
     }
 

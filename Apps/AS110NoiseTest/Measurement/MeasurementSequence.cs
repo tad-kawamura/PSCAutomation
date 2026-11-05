@@ -119,9 +119,8 @@ internal sealed class MeasurementSequence
     {
         var stopwatch = Stopwatch.StartNew();
 
-        // 1. 雛形を開く(記録設定を読み込む)。試し取りするなら、先に試し取り用の雛形を開く
-        string? previewTemplate = _settings.PreviewTemplateXdtPath;
-        OpenLoggerFile(previewTemplate ?? _settings.TemplateXdtPath, previewTemplate is null ? "雛形" : "試し取り用の雛形");
+        // 1. 雛形を開く(記録設定を読み込む)
+        OpenLoggerFile(_settings.TemplateXdtPath);
 
         // 2. 電流を合わせる
         CurrentControlResult current = _controller.Regulate(milliamps, cancellationToken);
@@ -133,8 +132,8 @@ internal sealed class MeasurementSequence
             Wait(TimeSpan.FromSeconds(_settings.SettleSeconds), cancellationToken);
         }
 
-        // 3b. 試し取り → 表示レンジを直した本番雛形の写しを開く(測定中の画面でも制御圧力の線が真ん中に来るように)
-        if (previewTemplate is not null) PreviewAndOpenTemplate(previewTemplate, milliamps, cancellationToken);
+        // 3b. 試し取り → 表示レンジを直した雛形の写しを開く(測定中の画面でも制御圧力の線が真ん中に来るように)
+        if (_settings.PreviewSeconds > 0) PreviewAndOpenTemplate(milliamps, cancellationToken);
 
         // 4. 記録開始 → 停止待ち
         DateTime startedAt = DateTime.Now;
@@ -180,12 +179,12 @@ internal sealed class MeasurementSequence
         return new MeasurementStepResult(milliamps, current, xdtPath, measuredAt, analysis, row, stopwatch.Elapsed);
     }
 
-    private void OpenLoggerFile(string path, string label)
+    private void OpenLoggerFile(string path)
     {
         long open = _logger.OpenFile(path);
         if (open != 0)
-            throw new MeasurementException($"LOGGER が{label} xdt を開けませんでした(戻り値 {open})。{path}");
-        WriteLog($"  {label}を開きました");
+            throw new MeasurementException($"LOGGER が雛形 xdt を開けませんでした(戻り値 {open})。{path}");
+        WriteLog("  雛形を開きました");
     }
 
     private void StartAcquisition(string label)
@@ -198,30 +197,28 @@ internal sealed class MeasurementSequence
         WriteLog($"  {label}開始");
     }
 
-    // 試し取り用の雛形(開いてある)で短く記録し、制御圧力の平均を出す。本番の雛形を作業フォルダーに写して
-    // 制御圧力の表示レンジを「幅そのまま、平均が真ん中」に直し、LOGGER で開く。
+    // 試し取り: 開いてある雛形で記録を始め、測定中になってから PreviewSeconds で止めて保存し、制御圧力の平均を出す
+    // (途中で止めても、そこまでの点で正しく保存される。2026-11-05 の実機で 1403 点の xdt を確認)。
+    // 雛形を作業フォルダーに写して制御圧力の表示レンジを「幅そのまま、平均が真ん中」に直し、LOGGER で開き直す。
     // LOGGER の操作の失敗は例外(本番の記録も同じ操作なので続けない)。表示レンジの写しが作れないときは
     // 見た目だけの問題なので、警告を出して元の雛形で記録する。試し取りの xdt は平均を出したら消す。
-    private void PreviewAndOpenTemplate(string previewTemplate, int milliamps, CancellationToken cancellationToken)
+    private void PreviewAndOpenTemplate(int milliamps, CancellationToken cancellationToken)
     {
-        XdtInfo templateInfo;
-        try { templateInfo = XdtReader.Inspect(previewTemplate); }
-        catch (Exception ex) when (ex is IOException or InvalidDataException or ArgumentException)
-        {
-            throw new MeasurementException($"試し取り用の雛形 xdt を読めません({ex.Message})。{previewTemplate}", ex);
-        }
-        DateTime? templateStamp = XdtTimestamp.TryRead(previewTemplate);
-        double length = templateInfo.Timing.RecordLength?.TotalSeconds ?? 1.0;
-
+        string template = _settings.TemplateXdtPath;
+        DateTime? templateStamp = XdtTimestamp.TryRead(template);
         Directory.CreateDirectory(_settings.WorkFolder);
         string previewPath = Path.Combine(_settings.WorkFolder,
             $"試し取り_{milliamps.ToString(CultureInfo.InvariantCulture)}mA_{DateTime.Now:HHmmssfff}.xdt");
 
         StartAcquisition("試し取り");
-        WaitForAcquisition(cancellationToken, "試し取り", assumeDoneAfterSeconds: length + _settings.PreviewMarginSeconds);
+        WaitForAcquisition(cancellationToken, "試し取り", stopAfterSeconds: _settings.PreviewSeconds);
         _acquiring = false;
 
-        double mean;
+        // LOGGER の保存・閉じるの失敗は例外。中身(記録されたか・読めるか)の問題は見た目だけなので警告にして雛形のまま記録する
+        // (WAVE LOGGER X では途中で止めた記録が保存されず、測定日時が雛形のままになった。2026-11-05 実機)。
+        double mean = double.NaN;
+        int samples = 0;
+        string? problem = null;
         try
         {
             long save = _logger.SaveXdt(previewPath);
@@ -232,14 +229,21 @@ internal sealed class MeasurementSequence
             // 記録されずに保存だけ通ったなら、中身は雛形のまま(測定日時が雛形と同じ)
             DateTime? stamp = XdtTimestamp.TryRead(previewPath);
             if (stamp is null || stamp == templateStamp)
-                throw new MeasurementException("試し取りが記録されていません(保存した xdt の測定日時が雛形のまま)。LOGGER 画面と本体を確認してください。");
-            double[] values = XdtReader.Read(previewPath, [_channels.ControlPressure]).Values[_channels.ControlPressure];
-            if (values.Length == 0) throw new MeasurementException("試し取りの xdt にデータがありません。");
-            mean = values.Average();
+                problem = "試し取りが記録されていません(保存した xdt の測定日時が雛形のまま)";
+            else
+            {
+                double[] values = XdtReader.Read(previewPath, [_channels.ControlPressure]).Values[_channels.ControlPressure];
+                if (values.Length == 0) problem = "試し取りの xdt にデータがありません";
+                else
+                {
+                    mean = values.Average();
+                    samples = values.Length;
+                }
+            }
         }
         catch (Exception ex) when (ex is IOException or InvalidDataException or ArgumentException or KeyNotFoundException)
         {
-            throw new MeasurementException($"試し取りの xdt を読めません({ex.Message})。{previewPath}", ex);
+            problem = $"試し取りの xdt を読めません({ex.Message})";
         }
         finally
         {
@@ -247,38 +251,41 @@ internal sealed class MeasurementSequence
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
         }
 
-        string template = _settings.TemplateXdtPath;
+        string toOpen = template;
         string centered = Path.Combine(_settings.WorkFolder, Path.GetFileName(template));   // LOGGER の題名が雛形と同じになるよう同じ名前
         try
         {
+            if (problem is not null) throw new InvalidDataException(problem);
             File.Copy(template, centered, overwrite: true);
             XdtDisplayRange.Center(centered, _channels.ControlPressure, mean, _settings.DisplayCenterStepKpa);
             XdtDisplayRange.Range range = XdtDisplayRange.Read(centered, _channels.ControlPressure);
-            WriteLog($"  試し取り: 制御圧力 平均 {mean:F1} kPa → 表示レンジ {range.Lower:0.#}〜{range.Upper:0.#} kPa で記録します");
-            template = centered;
+            WriteLog($"  試し取り: {samples} 点、制御圧力 平均 {mean:F1} kPa → 表示レンジ {range.Lower:0.#}〜{range.Upper:0.#} kPa で記録します");
+            toOpen = centered;
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException or ArgumentException)
         {
             WriteLog($"  警告: 試し取りの結果で表示レンジを直せませんでした({ex.Message})。雛形のまま記録します(測定中は制御圧力の線が画面の外に出ることがあります)。");
         }
-        OpenLoggerFile(template, "雛形");
+        OpenLoggerFile(toOpen);
     }
 
     // Start の後、停止(1)から抜けたことを確かめ、停止(1)に戻るまで待つ。
-    // assumeDoneAfterSeconds: 記録が短く、停止から抜けたのが見えないまま終わることがある試し取り用。
-    // この秒数たっても停止のままなら終わったとみなす(本当に記録されたかは呼び出し側が xdt で確かめる)。
-    private void WaitForAcquisition(CancellationToken cancellationToken, string label, double? assumeDoneAfterSeconds = null)
+    // stopAfterSeconds: 試し取り用。停止から抜けたのを見てからこの秒数で Stop を送り、停止に戻るまで待つ。
+    private void WaitForAcquisition(CancellationToken cancellationToken, string label, double? stopAfterSeconds = null)
     {
         Wait(TimeSpan.FromMilliseconds(_settings.StateReadDelayMilliseconds), cancellationToken);
         var stopwatch = Stopwatch.StartNew();
         bool started = false;
+        double startedSeconds = 0;
+        double? stopSentSeconds = null;
         long? lastState = null;
         while (true)
         {
             long state = _logger.GetState();
+            double now = stopwatch.Elapsed.TotalSeconds;
             if (state != lastState)
             {
-                WriteLog($"  LOGGER: {LoggerState.Describe(state)}({stopwatch.Elapsed.TotalSeconds:F1} 秒)");
+                WriteLog($"  LOGGER: {LoggerState.Describe(state)}({now:F1} 秒)");
                 lastState = state;
             }
             if (state <= 0)
@@ -287,22 +294,29 @@ internal sealed class MeasurementSequence
                 throw new MeasurementException("LOGGER がエラー停止しました(GetState=11)。LOGGER 画面のエラー内容を確認してください。");
             if (!started)
             {
-                if (state != LoggerState.Stopped) started = true;
-                else if (assumeDoneAfterSeconds is double done && stopwatch.Elapsed.TotalSeconds >= done)
+                if (state != LoggerState.Stopped)
                 {
-                    WriteLog($"  {label}終了とみなします({stopwatch.Elapsed.TotalSeconds:F1} 秒。記録が短く、測定中の状態は見えませんでした)");
-                    return;
+                    started = true;
+                    startedSeconds = now;
                 }
-                else if (assumeDoneAfterSeconds is null && stopwatch.Elapsed.TotalSeconds >= _settings.StartTimeoutSeconds)
+                else if (now >= _settings.StartTimeoutSeconds)
                     throw new MeasurementException(
                         $"{label}が始まりません({_settings.StartTimeoutSeconds:0.#} 秒待っても停止のまま)。LOGGER 画面と本体を確認してください。");
             }
             else if (state == LoggerState.Stopped)
             {
-                WriteLog($"  {label}終了({stopwatch.Elapsed.TotalSeconds:F1} 秒)");
+                WriteLog($"  {label}終了({now:F1} 秒)");
                 return;
             }
-            if (stopwatch.Elapsed.TotalSeconds >= _settings.AcquisitionTimeoutSeconds)
+            if (started && stopAfterSeconds is double stopAfter && stopSentSeconds is null && now - startedSeconds >= stopAfter)
+            {
+                _logger.Stop();
+                stopSentSeconds = now;
+                WriteLog($"  {label}を止めます({now:F1} 秒)");
+            }
+            if (stopSentSeconds is double sent && now - sent >= _settings.StopTimeoutSeconds)
+                throw new MeasurementException($"{label}を止めても {_settings.StopTimeoutSeconds:0.#} 秒たって停止になりません(状態: {LoggerState.Describe(state)})。");
+            if (now >= _settings.AcquisitionTimeoutSeconds)
                 throw new MeasurementException(
                     $"{label}が {_settings.AcquisitionTimeoutSeconds:0.#} 秒たっても終わりません(状態: {LoggerState.Describe(state)})。雛形の記録時間・トリガ設定を確認してください。");
             Wait(TimeSpan.FromMilliseconds(_settings.StatePollIntervalMilliseconds), cancellationToken);

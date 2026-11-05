@@ -21,14 +21,13 @@ namespace PSCAutomation.Apps.AS110NoiseTest.Tools.MeasurementCheck;
 //   --settle 1           電流を合わせてから記録開始までの待ち [s]
 //   --final 10           終了時に合わせる電流 [mA](省略で 0V・出力 OFF)
 //   --visible / --leave-open   Excel を表示 / 終了後も開いたままにする
-//   --preview <xdt>      試し取り用の雛形(既定 雛形\AS110ノイズ試し取り用.xdt があればそれ。測定中の画面で制御圧力を真ん中に出す)
+//   --preview 0.5        試し取りの秒数(既定 0.5。記録を始めてこの秒数で止め、制御圧力の平均で測定中の画面の表示レンジを直す)
 //   --no-preview         試し取りしない(雛形の表示レンジのまま記録)
 // 模擬のオプション(--sim、--logger-only の電流):
 //   --duration 2         模擬 LOGGER の記録時間 [s](1 秒以上。実機の雛形は 40 秒)
 //   --yellow 10,20       この mA の制御圧力を黄になる波形にする(既定 10)
 //   --red 20             この mA を赤になる波形にする(既定 20)
 //   --cancel-after 3     開始 3 秒後に中断して、後始末(LOGGER 停止・出力 OFF)を確かめる
-//   --preview-duration 0.5   模擬 LOGGER の試し取りの記録時間 [s]
 // LOGGER のオプション(--logger-only、--real):
 //   --logger auto|x|legacy   WAVE LOGGER X / 旧 WAVE LOGGER(既定 auto = X を優先)
 //   --usb-id 0               NR-500 の USB 機器 ID(0〜3)
@@ -49,9 +48,7 @@ internal static class Program
         public WaveLoggerEdition Edition = WaveLoggerEdition.Auto;
         public int UsbId;
         public string? FixDisplayPath;   // --fix-display: 既存 xdt の制御圧力の表示レンジを平均値中心に直す(ファイルか フォルダ)
-        public string? Preview;          // --preview: 試し取り用の雛形 xdt
-        public bool NoPreview;           // --no-preview: 試し取りしない
-        public double PreviewDuration = 0.5;   // --preview-duration: 模擬 LOGGER の試し取りの記録時間 [s]
+        public double? PreviewSeconds;   // --preview 0.5: 試し取りの秒数(0 で試し取りしない。省略で既定)
     }
 
     [STAThread]
@@ -106,13 +103,8 @@ internal static class Program
             SettleSeconds = opts.Settle,
             FinalMilliamps = opts.Final,
         };
-        if (!opts.NoPreview)
-        {
-            string defaultPreview = Path.Combine(templateFolder, "AS110ノイズ試し取り用.xdt");
-            string? preview = opts.Preview is not null ? Path.GetFullPath(opts.Preview) : File.Exists(defaultPreview) ? defaultPreview : null;
-            settings = settings with { PreviewTemplateXdtPath = preview };
-        }
-        Console.WriteLine(settings.PreviewTemplateXdtPath is null ? "試し取り: しない" : $"試し取り: {settings.PreviewTemplateXdtPath}");
+        if (opts.PreviewSeconds is double previewSeconds) settings = settings with { PreviewSeconds = previewSeconds };
+        Console.WriteLine(settings.PreviewSeconds > 0 ? $"試し取り: {settings.PreviewSeconds:0.##} 秒" : "試し取り: しない");
         if (opts.Mode == Mode.Sim)
         {
             // Start 直後は StateReadDelayMilliseconds の間 GetState を読まないので、それより短い記録は「始まらない」扱いになる。
@@ -165,8 +157,6 @@ internal static class Program
                 WaveProfile ProfileOf(int ma) => opts.Red.Contains(ma) ? WaveProfile.Red : opts.Yellow.Contains(ma) ? WaveProfile.Yellow : WaveProfile.Normal;
                 simLogger = new SimulatedLogger(TimeSpan.FromSeconds(opts.Duration), () => plant!.TrueMilliamps, ProfileOf, Console.WriteLine)
                 {
-                    PreviewTemplatePath = settings.PreviewTemplateXdtPath,
-                    PreviewDuration = TimeSpan.FromSeconds(opts.PreviewDuration),
                     ControlKpaOf = SimulatedPlant.TypicalControlKpa,
                 };
                 logger = simLogger;
@@ -303,9 +293,8 @@ internal static class Program
                 case "--leave-open": o.LeaveOpen = o.Visible = true; break;
                 case "--no-excel": o.NoExcel = true; break;
                 case "--no-meter-config": o.NoMeterConfig = true; break;
-                case "--preview": o.Preview = Next(); break;
-                case "--no-preview": o.NoPreview = true; break;
-                case "--preview-duration": o.PreviewDuration = ParseDouble(Next()); break;
+                case "--preview": o.PreviewSeconds = ParseDouble(Next()); break;
+                case "--no-preview": o.PreviewSeconds = 0; break;
                 case "--usb-id": o.UsbId = ParseInt(Next()); break;
                 case "--logger":
                     o.Edition = Next().ToLowerInvariant() switch
@@ -362,8 +351,8 @@ internal static class Program
     private static void Usage()
     {
         Console.WriteLine("使い方: MeasurementCheck --sim | --logger-only | --real [--model 型式] [--sn SN] [--memo 備忘録] [--start 5 --step 5 --end 20]");
-        Console.WriteLine("        [--out フォルダ] [--excel xlsx] [--settle 1] [--final mA] [--visible] [--leave-open] [--no-excel] [--preview xdt] [--no-preview]");
-        Console.WriteLine("        模擬: [--duration 2] [--yellow 10,20] [--red 20] [--cancel-after 3] [--preview-duration 0.5]   LOGGER: [--logger auto|x|legacy] [--usb-id 0]");
+        Console.WriteLine("        [--out フォルダ] [--excel xlsx] [--settle 1] [--final mA] [--visible] [--leave-open] [--no-excel] [--preview 0.5] [--no-preview]");
+        Console.WriteLine("        模擬: [--duration 2] [--yellow 10,20] [--red 20] [--cancel-after 3]   LOGGER: [--logger auto|x|legacy] [--usb-id 0]");
         Console.WriteLine("        MeasurementCheck --fix-display <xdt かフォルダ>   既存 xdt の制御圧力の表示レンジを平均値中心に直す");
     }
 
