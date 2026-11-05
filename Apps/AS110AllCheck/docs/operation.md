@@ -14,7 +14,8 @@ AS110 ver3 / 2026-10-19
    LOGGER雛形は拡張子ごとに1件です。データ取りは2ms・6500点に設定してください。
    同梱の雛形.xlsxは、添付AS110-035のExcelです。
 5. firmware/AS110M5Stack/AS110M5Stack.inoをM5Stack Basic V2.7へ書き込みます。
-   Arduino IDEの場合：ボードM5Stack-Core-ESP32、ライブラリM5Unifiedを選びます。
+   Arduino IDEの場合：ボードM5Core（esp32 3.x。古い版ではM5Stack-Core-ESP32）、ライブラリM5Unifiedを選びます。
+   準備の詳しい手順は m5stack-arduino-ide-setup.md を参照してください。
    PlatformIOの場合：firmwareフォルダのplatformio.iniを使用します。
 6. 外部通電確認の無電圧接点をG26-GND間へ接続します。
    G26はコード冒頭のNF_PINで変更できます。外部電源は接続しません。

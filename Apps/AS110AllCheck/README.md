@@ -102,7 +102,7 @@ YDT一時保存失敗の推定原因、当面の単発収集への変更と検�
 
 ## M5Stack
 
-書込元は `firmware/AS110M5Stack/AS110M5Stack.ino`。Arduino IDEではM5Stack-Core-ESP32とM5Unifiedを使用します。PlatformIOでは次を実行します（リポジトリ直下から）。
+書込元は `firmware/AS110M5Stack/AS110M5Stack.ino`。Arduino IDEではボードM5Core（esp32 3.x。古い版ではM5Stack-Core-ESP32）とM5Unifiedを使用します。準備から書き込みまでの手順は [Arduino IDE の準備](docs/m5stack-arduino-ide-setup.md) を参照してください。PlatformIOでは次を実行します（リポジトリ直下から）。
 
 ```powershell
 pio run -d Apps/AS110AllCheck/firmware
@@ -152,4 +152,5 @@ dotnet $e $d "<dir>/雛形/雛形.xlsx" --optimization
 ## 確認（2026-11-05、移植後）
 
 - この PC（SDK 10.0.401、NI-VISA・Excel あり、機器なし）で: `AS110AllCheck.slnf` の Release ビルド（エラー 0。警告は `Wrappers/Instruments` の VISA 参照の MSB3270 だけで、移植前から同じ）、Verification（照合を含む）、AppShutdown 11 件、SaveAvailability（`--no-dialogs --with-excel`）21 件、ExcelHeader（ヘッダ 7・`--optimization` 54・`--session` 9・`--transfer` 6・`--reuse` 16・`--prepare` 7）。件数は移植前と同じ（`--session` は切断とみなすエラーを 1 つ足した分だけ多い）
-- 未確認: **実機での動作すべて**（M5Stack、NR-500 / NR-X の USB・Wi-Fi、WF1973 / SDG1032X、LOGGER の測定・保存、漏れチェック、正式保存）、SaveAvailability のダイアログありの実行、M5Stack スケッチのビルド・書き込み（この PC に PlatformIO・Arduino CLI が無い。スケッチは変えていない）、発行した exe を別の PC で動かすこと
+- 未確認: **実機での動作すべて**（M5Stack、NR-500 / NR-X の USB・Wi-Fi、WF1973 / SDG1032X、LOGGER の測定・保存、漏れチェック、正式保存）、SaveAvailability のダイアログありの実行、発行した exe を別の PC で動かすこと
+- M5Stack スケッチ: 2026-11-05 に人が Arduino IDE（esp32 3.3.12、ボード M5Core、M5Unified 0.2.29）で M5Stack Basic V2.7 へ書き込めた（手順は [Arduino IDE の準備](docs/m5stack-arduino-ide-setup.md)）。書き込み後の表示・ボタン・G26 接点・PC アプリとの通信は未確認。スケッチは変えていない
