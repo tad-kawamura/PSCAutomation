@@ -30,7 +30,7 @@ internal static class JudgmentNoticeTests
             SendKeys.SendWait("{ENTER}");
             Application.DoEvents();
             if (Notice() is not null) throw new Exception("Enter did not dismiss judgment notice");
-            // データ調整は約1秒で自動的に閉じ、データ取りはOKを押すまで残る。
+            // データ調整・データ取りとも約1秒で自動的に閉じる。
             Call("ShowJudgmentNotice");
             var waiting = Notice() ?? throw new Exception("Judgment notice missing before auto close check");
             var watch = System.Diagnostics.Stopwatch.StartNew();
@@ -38,7 +38,7 @@ internal static class JudgmentNoticeTests
             if (Notice() is null) throw new Exception("Judgment notice closed too early");
             while (watch.ElapsedMilliseconds < 1500) { Application.DoEvents(); Thread.Sleep(10); }
             bool autoClosed = Notice() is null && waiting.IsDisposed;
-            if (autoClosed != (mode == "Adjustment"))
+            if (!autoClosed)
                 throw new Exception($"Wrong auto close: mode={mode}, closed={autoClosed}");
             Call("CloseJudgmentNotice");
             foreach (string action in new[] { "データ調整", "Excel転送" })
