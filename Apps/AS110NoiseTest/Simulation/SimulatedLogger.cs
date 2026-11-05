@@ -31,8 +31,17 @@ internal sealed class SimulatedLogger(
     // 故障の模擬: Start の戻り値、保存の失敗。
     public long StartReturnValue { get; set; }
     public bool FailSave { get; set; }
-    // 書いたファイルとその波形(確認用)。
+    // 試し取り用の雛形(MeasurementSettings.PreviewTemplateXdtPath と同じもの)。これを開いて記録したときは PreviewDuration だけ記録する
+    // (実機の試し取りは 0.5 秒。状態を読む前に終わる場合の流れを確かめられる)。
+    public string? PreviewTemplatePath { get; set; }
+    public TimeSpan PreviewDuration { get; set; } = TimeSpan.FromSeconds(0.5);
+    // 制御圧力の平均 [kPa] を電流ごとに変える(試し取りで表示レンジが動くことを確かめる用)。null なら雛形の平均のまま。
+    public Func<int, double>? ControlKpaOf { get; set; }
+    // 書いたファイルとその波形(確認用。試し取りは入れない)。
     public List<(string Path, int Milliamps, WaveProfile Profile)> Saved { get; } = [];
+
+    private bool IsPreview => PreviewTemplatePath is not null && _openFile is not null &&
+        string.Equals(Path.GetFullPath(_openFile), Path.GetFullPath(PreviewTemplatePath), StringComparison.OrdinalIgnoreCase);
 
     public long OpenFile(string path)
     {
@@ -55,12 +64,15 @@ internal sealed class SimulatedLogger(
         if (_openFile is null) return -1;
         if (StartReturnValue != 0) return StartReturnValue;
         _startedAt = DateTime.UtcNow;
+        _recordFor = IsPreview ? PreviewDuration : duration;
         return 0;
     }
 
+    private TimeSpan _recordFor;
+
     public long GetState()
     {
-        if (_startedAt is DateTime t && DateTime.UtcNow - t < duration) return 4;
+        if (_startedAt is DateTime t && DateTime.UtcNow - t < _recordFor) return 4;
         return LoggerState.Stopped;
     }
 
@@ -71,10 +83,11 @@ internal sealed class SimulatedLogger(
         if (_openFile is null || FailSave) return -1;
         int milliamps = (int)Math.Round(currentMilliamps());
         WaveProfile profile = profileOf(milliamps);
+        bool preview = IsPreview;
         WriteXdt(_openFile, path, milliamps, profile);
-        Saved.Add((path, milliamps, profile));
+        if (!preview) Saved.Add((path, milliamps, profile));
         _saved++;
-        log?.Invoke($"  [模擬LOGGER] SaveXdt {Path.GetFileName(path)}({profile})");
+        log?.Invoke($"  [模擬LOGGER] SaveXdt {Path.GetFileName(path)}({(preview ? "試し取り" : profile.ToString())})");
         return 0;
     }
 
@@ -84,7 +97,7 @@ internal sealed class SimulatedLogger(
         XdtInfo info = XdtReader.Inspect(template);
         int channelCount = info.ChannelCount;
         var baseline = XdtReader.Read(template, [3]).Values[3];   // 雛形の制御圧力 [kPa]
-        double baseKpa = baseline.Average();
+        double baseKpa = ControlKpaOf?.Invoke(milliamps) ?? baseline.Average();
         double dt = 0.02;
 
         ChannelInfo? chI = info.Channels.FirstOrDefault(c => c.Number == 1);

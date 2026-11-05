@@ -122,7 +122,10 @@ internal sealed class MeasurementRunner
             {
                 TemplateXdtPath = request.Templates.Xdt,
                 TemplateExcelPath = request.Templates.Excel,
+                PreviewTemplateXdtPath = request.Templates.PreviewXdtIfExists,
             };
+            if (settings.PreviewTemplateXdtPath is null)
+                Log($"試し取り用の雛形 {TemplateFiles.PreviewXdtName} が無いので試し取りしません(測定中の画面の制御圧力は雛形の表示レンジのまま)");
             ICurrentMeter currentMeter;
             IOffsetVoltageSource voltageSource;
             ILoggerDevice logger;
@@ -133,7 +136,11 @@ internal sealed class MeasurementRunner
                 currentMeter = plant;
                 voltageSource = plant;
                 logger = new SimulatedLogger(TimeSpan.FromSeconds(SimulatedRecordSeconds), () => plant.TrueMilliamps,
-                    ma => ma == 20 ? WaveProfile.Red : ma == 10 ? WaveProfile.Yellow : WaveProfile.Normal, Log);
+                    ma => ma == 20 ? WaveProfile.Red : ma == 10 ? WaveProfile.Yellow : WaveProfile.Normal, Log)
+                {
+                    PreviewTemplatePath = settings.PreviewTemplateXdtPath,
+                    ControlKpaOf = SimulatedPlant.TypicalControlKpa,
+                };
                 settings = settings with { AcquisitionTimeoutSeconds = SimulatedRecordSeconds * 2 + 5 };
                 Log("機器: 模擬(WF1973・7351E・LOGGER)");
             }

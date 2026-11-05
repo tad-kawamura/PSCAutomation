@@ -43,6 +43,17 @@ internal sealed record MeasurementSettings
     public bool CenterControlPressureDisplay { get; init; } = true;
     public double DisplayCenterStepKpa { get; init; } = 0.5;
 
+    // 試し取り(2026-11-05): 測定中の LOGGER 画面でも制御圧力の線が真ん中に来るように、電流を合わせたあと
+    // この雛形(記録 0.5 秒)で短く記録して制御圧力の平均を出し、本番の雛形の写しの表示レンジを
+    // 「幅はそのまま、平均が真ん中」に直してから本番を記録する。null なら試し取りしない(雛形の表示レンジのまま記録)。
+    // 試し取りの xdt は平均を出したら消す(判定・Excel には使わない)。
+    public string? PreviewTemplateXdtPath { get; init; }
+    // 表示レンジを直した本番雛形の写しと、試し取りの xdt を置くフォルダー。
+    public string WorkFolder { get; init; } = Path.Combine(Path.GetTempPath(), "AS110NoiseTest");
+    // 試し取りで、状態が「停止」から抜けたのが見えなかったとき(記録が短く、状態を読む前に終わったとき)に
+    // 終わったとみなすまでの、雛形の記録時間に足す余裕 [s]。本当に記録されたかは xdt の測定日時で確かめる。
+    public double PreviewMarginSeconds { get; init; } = 1.5;
+
     // 1 電流ごとに Excel を保存する(途中で止まっても結果が残る)。false なら最後に 1 回。
     public bool SaveExcelAfterEachStep { get; init; } = true;
 
@@ -66,6 +77,11 @@ internal sealed record MeasurementSettings
             throw new ArgumentException("XdtFileNamePattern には {sn} と {ma} を含めてください。");
         if (ExpectedSamples < 0) throw new ArgumentException("ExpectedSamples は 0 以上にしてください。");
         if (!Positive(DisplayCenterStepKpa)) throw new ArgumentException("DisplayCenterStepKpa は正の値にしてください。");
+        if (PreviewTemplateXdtPath is not null && !File.Exists(PreviewTemplateXdtPath))
+            throw new FileNotFoundException("試し取り用の雛形 xdt が見つかりません。", PreviewTemplateXdtPath);
+        if (PreviewTemplateXdtPath is not null && string.IsNullOrWhiteSpace(WorkFolder))
+            throw new ArgumentException("WorkFolder を指定してください。");
+        if (!double.IsFinite(PreviewMarginSeconds) || PreviewMarginSeconds < 0) throw new ArgumentException("PreviewMarginSeconds は 0 以上にしてください。");
         if (FinalMilliamps is double f && (!double.IsFinite(f) || f < 0)) throw new ArgumentException("FinalMilliamps は 0 以上にしてください。");
     }
 
