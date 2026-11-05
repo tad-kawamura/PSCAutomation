@@ -46,6 +46,27 @@ internal sealed partial class MainForm : Form
         ShowTransferredExcel();
         notice.Update();
         AppendLog($"Excel転送時間：合否ポップアップ表示処理（Excel前面表示を含む）={displayTimer.Elapsed.TotalMilliseconds:F0}ms");
+        // データ調整では合否を見せるだけなので、OKを押さなくても閉じてExcelの判定シートへ戻す。
+        // データ取りは「保存」の案内を読ませるため、従来どおりOK・Enter・操作ボタンで閉じる。
+        if (_flow.Mode == TestMode.Adjustment) StartJudgmentNoticeAutoClose(notice);
+    }
+
+    // データ調整で合否ポップアップを表示しておく時間。
+    private const int AdjustmentNoticeDisplayMilliseconds = 1000;
+
+    private void StartJudgmentNoticeAutoClose(Form notice)
+    {
+        var timer = new System.Windows.Forms.Timer { Interval = AdjustmentNoticeDisplayMilliseconds };
+        timer.Tick += (_, _) =>
+        {
+            timer.Stop();
+            // OK・操作ボタンで先に閉じた、または別の表示に置き換わった場合は何もしない。
+            if (notice.IsDisposed || !ReferenceEquals(_saveNotice, notice)) return;
+            notice.Close();
+            ShowTransferredExcel();
+        };
+        notice.FormClosed += (_, _) => timer.Dispose();
+        timer.Start();
     }
 
     private void ActivateJudgmentNotice(Form notice, Control input)
