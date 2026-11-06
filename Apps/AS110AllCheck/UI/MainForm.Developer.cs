@@ -2,7 +2,7 @@ namespace PSCAutomation.Apps.AS110AllCheck;
 
 internal sealed partial class MainForm : Form
 {
-    private readonly CheckBox _developerMode = new() { Text = "開発者モード（接点模擬）", AutoSize = true };
+    private readonly CheckBox _developerMode = new() { Text = "開発者モード（接点模擬）", AutoSize = true, Margin = new Padding(24, 5, 0, 0) };
     private readonly Button _developerContact = new() { AutoSize = true };
     private bool _simulatedContactEnergized;
     private bool MotionContactEnergized => _flow.Mode == TestMode.Motion && _developerMode.Checked ? _simulatedContactEnergized : _arduino.NfEnergized;

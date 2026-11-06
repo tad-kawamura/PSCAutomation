@@ -36,15 +36,15 @@ internal sealed partial class MainForm : Form
         _standSelectionPanel.Controls.Add(_standStatusLabel);
         _standButtonsPanel.AutoSize = true;
         _standButtonsPanel.Dock = DockStyle.Fill;
-        _standButtonsPanel.FlowDirection = FlowDirection.TopDown;
-        _standButtonsPanel.WrapContents = false;
+        // 3 つのスタンドを横に並べ、操作欄の高さを抑える(縦並びだと下の型式・保存先の行がログ欄の下に隠れる)。
+        _standButtonsPanel.FlowDirection = FlowDirection.LeftToRight;
+        _standButtonsPanel.WrapContents = true;
         foreach (As110StandSettings stand in As110StandSettings.All)
         {
             var button = new Button();
             ConfigureButton(button, $"{stand.Name}（{stand.InputVoltage:g} V＝{stand.CurrentMilliAmps:g} mA）",
-                (_, _) => SelectStand(stand));
-            button.MinimumSize = new Size(350, 42);
-            button.Margin = new Padding(0, 0, 0, 6);
+                (_, _) => SelectStand(stand), new Size(240, 36));
+            button.Margin = new Padding(0, 0, 8, 6);
             _standButtons.Add(button);
             _standButtonsPanel.Controls.Add(button);
         }

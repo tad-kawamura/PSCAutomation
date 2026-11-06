@@ -141,6 +141,8 @@ internal sealed partial class MainForm : Form
         _wifiProfileComboBox.DropDownStyle = ComboBoxStyle.DropDownList;
         _wifiProfileComboBox.Width = 180;
         connectionPanel.Controls.Add(_wifiProfileComboBox);
+        // 開発者モードは上段のボタン列を圧迫しないよう、接続方式の右隣に置く。
+        BuildDeveloperContactControls(connectionPanel);
 
         var buttons = new FlowLayoutPanel
         {
@@ -150,18 +152,15 @@ internal sealed partial class MainForm : Form
             Margin = new Padding(0, 0, 0, 12)
         };
 
-        ConfigureButton(_initializeButton, "確認", InitializeClicked);
-        ConfigureButton(_startButton, "測定開始（確認用）", StartClicked);
-        ConfigureButton(_deleteTemplateButton, "雛形を削除", DeleteTemplateClicked);
-        _deleteTemplateButton.Visible = ShowTemplateDebugControls;
-        ConfigureButton(_getStateButton, "状態確認", GetStateClicked);
-        ConfigureButton(_restoreWifiButton, "元のWi-Fiへ戻す", RestoreWifiClicked);
-        ConfigureButton(_exitButton, "アプリ終了", (_, _) => Close());
         // 上段の操作ボタンは、下の型式・S/N・保存先の入力欄より目立たないよう一回り小さくする。
-        foreach (var button in new[] { _initializeButton, _startButton, _deleteTemplateButton, _getStateButton, _restoreWifiButton, _exitButton })
-            button.MinimumSize = new Size(120, 34);
-
-        BuildDeveloperContactControls(buttons);
+        var topButtonSize = new Size(110, 30);
+        ConfigureButton(_initializeButton, "確認", InitializeClicked, topButtonSize);
+        ConfigureButton(_startButton, "測定開始（確認用）", StartClicked, topButtonSize);
+        ConfigureButton(_deleteTemplateButton, "雛形を削除", DeleteTemplateClicked, topButtonSize);
+        _deleteTemplateButton.Visible = ShowTemplateDebugControls;
+        ConfigureButton(_getStateButton, "状態確認", GetStateClicked, topButtonSize);
+        ConfigureButton(_restoreWifiButton, "元のWi-Fiへ戻す", RestoreWifiClicked, topButtonSize);
+        ConfigureButton(_exitButton, "アプリ終了", (_, _) => Close(), topButtonSize);
 
         buttons.Controls.AddRange(
         [
@@ -305,10 +304,11 @@ internal sealed partial class MainForm : Form
         panel.Controls.Add(valueLabel, 1, row);
     }
 
-    private static void ConfigureButton(Button button, string text, EventHandler handler)
+    // ボタンは AutoSize(GrowOnly)なので、あとから MinimumSize を小さくしても縮まない。大きさは最初にここで決める。
+    private static void ConfigureButton(Button button, string text, EventHandler handler, Size? minimumSize = null)
     {
         button.AutoSize = true;
-        button.MinimumSize = new Size(140, 42);
+        button.MinimumSize = minimumSize ?? new Size(140, 42);
         button.Text = text;
         button.Margin = new Padding(0, 0, 10, 0);
         button.Click += handler;

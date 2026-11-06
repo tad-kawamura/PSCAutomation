@@ -12,7 +12,7 @@ internal sealed partial class MainForm : Form
         var panel = new FlowLayoutPanel
         {
             AutoSize=true, Dock=DockStyle.Fill, BackColor=Color.AliceBlue,
-            Padding=new Padding(12), Margin=new Padding(0, 4, 0, 12)
+            Padding=new Padding(12, 6, 12, 6), Margin=new Padding(0, 4, 0, 8)
         };
         var modeFont = new Font(Font.FontFamily, 16, FontStyle.Bold);
         _modeBox.Font=modeFont;

@@ -1,4 +1,4 @@
-using System.Reflection;
+﻿using System.Reflection;
 using System.Windows.Forms;
 
 internal static class Program
@@ -60,7 +60,11 @@ internal static class Program
             productionPanel.DrawToBitmap(bitmap,new Rectangle(Point.Empty,bitmap.Size));
             bitmap.Save(productionImage);
         }
-        Console.WriteLine("PASS production rows are model/serial, save root, release, buttons, status; layout image: "+productionImage);
+        // フォーム全体(データ取り選択後)の画像。操作欄がログ欄の上に収まっているかを目で確かめる用。
+        string formImage=Path.Combine(AppContext.BaseDirectory,"main-form.png");
+        CreateHandles(form);form.PerformLayout();
+        using(var bitmap=new Bitmap(form.Width,form.Height)){ form.DrawToBitmap(bitmap,new Rectangle(Point.Empty,bitmap.Size)); bitmap.Save(formImage); }
+        Console.WriteLine("PASS production rows are model/serial, save root, release, buttons, status; layout images: "+productionImage+" / "+formImage);
         var flow=Field("_flow");
         var flowType=flow.GetType();
         flowType.GetProperty("Mode")!.SetValue(flow,Enum.Parse(assembly.GetType("PSCAutomation.Apps.AS110AllCheck.TestMode")!,"Production"));

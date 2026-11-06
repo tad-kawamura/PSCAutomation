@@ -33,7 +33,8 @@ internal sealed partial class MainForm : Form
         _statusHeartbeat.Start();
 
         Text = Application.ProductName + " / 通電確認・測定アプリ";
-        ClientSize = new Size(850, 650);
+        // 操作欄(型式・S/N・保存先の行まで)がログ欄の上に収まる高さにする。足りないときは操作欄だけがスクロールする。
+        ClientSize = new Size(850, 800);
         MinimumSize = new Size(680, 570);
         StartPosition = FormStartPosition.CenterScreen;
 
