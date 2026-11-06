@@ -210,8 +210,8 @@ internal sealed partial class MainForm : Form
         _referenceStatusLabel.Margin = new Padding(8, 6, 0, 0);
         _referenceSelectionPanel.Controls.Add(_referenceStatusLabel);
 
-        BuildStandSelection();
-        // モードを選んでからスタンドを選び、次に参照波形を選択する。
+        BuildCalibrationPanel();
+        // モードを選ぶと校正画面が開き、適用後に参照波形(型式)を選択する。
         var connectionOrReferencePanel = new TableLayoutPanel
         {
             AutoSize = true,
@@ -227,7 +227,7 @@ internal sealed partial class MainForm : Form
         connectionOrReferencePanel.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         connectionOrReferencePanel.Controls.Add(BuildModeSelectionPanel(), 0, 1);
         connectionOrReferencePanel.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        connectionOrReferencePanel.Controls.Add(_standSelectionPanel, 0, 2);
+        connectionOrReferencePanel.Controls.Add(_calibrationPanel, 0, 2);
         connectionOrReferencePanel.Controls.Add(_referenceSelectionPanel, 0, 3);
 
         _dropPanel.Visible = ShowTemplateDebugControls;
@@ -345,10 +345,10 @@ internal sealed partial class MainForm : Form
         bool nfOk = _arduino.MeasurementInputReady && _arduino.NfEnergized;
         bool showReferenceSelection = ConnectionsReady && !_checkingConnections && !_measurementState.ErrorLogged;
         _connectionStatusPanel.Visible = !showReferenceSelection;
-        UpdateStandControls(showReferenceSelection);
-        _referenceSelectionPanel.Visible = showReferenceSelection && _standScalingApplied && _templateLoaded;
+        UpdateCalibrationControls(showReferenceSelection);
+        _referenceSelectionPanel.Visible = showReferenceSelection && _calibrationApplied && _templateLoaded;
         _referenceComboBox.Enabled = !_operationInProgress && ConnectionsReady &&
-            _templateLoaded && _standScalingApplied && LoggerReadyToStart;
+            _templateLoaded && _calibrationApplied && LoggerReadyToStart;
         _referenceStatusLabel.Text = _selectedReferencePath is not null
             ? "読み込み操作済み（LOGGER画面で確認）"
             : _referenceComboBox.Items.Count <= 1 ? "候補なし（雛形フォルダへ.xybを追加）" : "未選択";
@@ -367,7 +367,7 @@ internal sealed partial class MainForm : Form
         _initializeButton.Enabled =
             !_operationInProgress &&
             wifiAvailable;
-        _startButton.Enabled = !_operationInProgress && nfOk && ConnectionsReady && _templateLoaded && _standScalingApplied && LoggerReadyToStart;
+        _startButton.Enabled = !_operationInProgress && nfOk && ConnectionsReady && _templateLoaded && _calibrationApplied && LoggerReadyToStart;
         _deleteTemplateButton.Enabled = !_operationInProgress && _templateLoaded;
         _getStateButton.Enabled = !_operationInProgress && initialized;
         _restoreWifiButton.Enabled =

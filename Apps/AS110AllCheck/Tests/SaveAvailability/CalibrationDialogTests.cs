@@ -12,7 +12,7 @@ internal static class CalibrationDialogTests
         var current = new ScalingPoints(-0.002f, 0.01f, 0.998f, 30.02f);
         var pressure = new ScalingPoints(-0.001f, 0.2f, 5.503f, 539.5f);
         object initial = Activator.CreateInstance(calibrationType, current, pressure)!;
-        Form Dialog() => (Form)Activator.CreateInstance(dialogType, "門馬さんの隣のスタンド", "NR-500", initial)!;
+        Form Dialog() => (Form)Activator.CreateInstance(dialogType, "NR-500", "AS110データ調整・データ取り用.xdt", initial)!;
         object Field(Form form, string name) => dialogType.GetField(name, BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(form)!;
         void Show(Form dialog)
         {

@@ -36,12 +36,12 @@ internal static class Program
         if(!DrawsRed(-1,"mode-unset.png"))throw new Exception("Unset mode box did not draw the red '未設定' text");
         if(DrawsRed(2,"mode-selected.png"))throw new Exception("Selected mode must not be drawn in red");
         Console.WriteLine("PASS unset mode box shows red text, selected mode does not");
-        var standPanel=(Control)Field("_standSelectionPanel");
-        type.GetMethod("UpdateStandControls",Private)!.Invoke(form,[true]);
+        var standPanel=(Control)Field("_calibrationPanel");
+        type.GetMethod("UpdateCalibrationControls",Private)!.Invoke(form,[true]);
         // 非表示の親Formに影響されないよう、Visibleのローカル状態を調べる。
         var getState=typeof(Control).GetMethod("GetState",Private)!;
         bool StandVisible()=>(bool)getState.Invoke(standPanel,[2])!;
-        if(StandVisible())throw new Exception("Stand selection appeared before mode selection");
+        if(StandVisible())throw new Exception("Calibration panel appeared before mode selection");
         var productionPanel=(Control)Field("_productionPanel");
         var rootBox=(Control)Field("_rootBox");
         bool LocalVisible(Control control)=>(bool)getState.Invoke(control,[2])!;
@@ -51,15 +51,15 @@ internal static class Program
         {
             modeBox.SelectedIndex=mode;
             Call("ChangeTestMode");
-            type.GetMethod("UpdateStandControls",Private)!.Invoke(form,[true]);
+            type.GetMethod("UpdateCalibrationControls",Private)!.Invoke(form,[true]);
             if(!(bool)Field("_modeSelected") || !StandVisible())
-                throw new Exception("Stand selection did not appear after mode selection: "+mode);
+                throw new Exception("Calibration panel did not appear after mode selection: "+mode);
             if(!LocalVisible(productionPanel))throw new Exception("Operation panel did not appear after mode selection: "+mode);
             // 保存先・S/N はデータ取り(2)だけに表示する。
             if(LocalVisible(rootBox)!=(mode==2) || LocalVisible((Control)Field("_serialBox"))!=(mode==2))
                 throw new Exception("Save root / serial visibility did not follow mode: "+mode);
         }
-        Console.WriteLine("PASS startup waits for mode; all three modes reveal stand selection; save root and serial only in production");
+        Console.WriteLine("PASS startup waits for mode; all three modes reveal the calibration panel; save root and serial only in production");
         // データ取りの操作欄の並び: 型式 → 保存先 → 開始S/N・最後S/N(フォルダー名から) → 測定開始S/N → 保護解除・転送設定 → ボタン → 状態。最後に選んだモードはデータ取り(2)。
         _=form.Handle;form.PerformLayout();
         Control[] orderedRows=[(Control)Field("_setupPanel"),(Control)Field("_savePathPanel"),(Control)Field("_rangePanel"),(Control)Field("_serialPanel"),(Control)Field("_protectionPanel"),(Control)Field("_actionPanel"),(Control)Field("_flowLabel")];
@@ -138,6 +138,8 @@ internal static class Program
         var rangeFinished=flowType.GetProperty("SerialRangeFinished")!;
         var setLast=flowType.GetMethod("SetLastSerial")!;
         var flowLabel=(Label)Field("_flowLabel");
+        // 起動時に読んだ転送設定の保存先に「SN開始-最後」が入っていると最後 S/N が残るので、ここで空にしてから確かめる(PC の設定に依らないようにする)。
+        setLast.Invoke(flow,[""]);
         if((bool)rangeFinished.GetValue(flow)!)throw new Exception("Empty last serial must not finish the range");
         setLast.Invoke(flow,["123"]);Call("UpdateProductionControls");
         if((bool)rangeFinished.GetValue(flow)! || !flowLabel.Text.Contains("最後 123"))throw new Exception("Serial equal to last serial must stay in range: "+flowLabel.Text);

@@ -4,7 +4,7 @@ using PSCAutomation.Apps.AS110AllCheck;
 static void Check(bool b,string name){if(!b)throw new Exception(name);Console.WriteLine("PASS "+name);}
 await LeakCheckTests.RunAsync();
 CalibrationTests.Run();
-CalibrationHistoryTests.Run();
+CalibrationRecordTests.Run();
 foreach (var isMotion in new[] { true, false })
 {
     double oldFrequency = isMotion ? 0.2 : 0.04;

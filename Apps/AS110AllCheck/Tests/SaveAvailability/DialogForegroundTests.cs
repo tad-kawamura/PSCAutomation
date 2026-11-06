@@ -22,7 +22,7 @@ internal static class DialogForegroundTests
         var pressure = new PSCAutomation.Wrappers.LoggerFiles.ScalingPoints(0, 0, 5, 539);
         object initial = Activator.CreateInstance(calibrationType, current, pressure)!;
         using var dialog = (Form)Activator.CreateInstance(assembly.GetType("PSCAutomation.Apps.AS110AllCheck.CalibrationDialog")!,
-            "テストスタンド", "NR-500", initial)!;
+            "NR-500", "AS110データ調整・データ取り用.xdt", initial)!;
         dialog.ShowDialog(owner);
     }
 
@@ -123,7 +123,7 @@ internal static class DialogForegroundTests
                     }
                 };
                 timer.Start();
-                // スタンド選択時と同じく、MainFormを所有者として校正画面をモーダル表示する。
+                // 校正の適用時と同じく、MainFormを所有者として校正画面をモーダル表示する。
                 if (method == "CalibrationDialog") ShowCalibration(owner);
                 else Call(method);
                 if (failure is not null) throw new Exception(method + " foreground regression", failure);

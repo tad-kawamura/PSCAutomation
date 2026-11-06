@@ -1,6 +1,6 @@
 namespace PSCAutomation.Apps.AS110AllCheck;
 
-// 接続確認・スタンド選択まではアプリを最前面に保つ。
+// 接続確認・校正値の適用まではアプリを最前面に保つ。
 // 参照波形の読み込み操作後は固定を解除し、使用中のLOGGERへ前面を渡す。
 internal sealed partial class MainForm : Form
 {
@@ -57,7 +57,7 @@ internal sealed partial class MainForm : Form
 
     private void ShowLoggerAfterReferenceLoaded()
     {
-        if (IsDisposed || OwnedForms.Any(form => form.Visible) || _selectedReferencePath is null || !_templateLoaded || !_standScalingApplied ||
+        if (IsDisposed || OwnedForms.Any(form => form.Visible) || _selectedReferencePath is null || !_templateLoaded || !_calibrationApplied ||
             !_logger.IsInitialized) return;
 
         ShowLoggerInFront("参照波形読み込み操作完了");

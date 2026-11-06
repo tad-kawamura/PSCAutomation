@@ -5,8 +5,9 @@ namespace PSCAutomation.Apps.AS110AllCheck;
 // AS110の実測による2点校正。ゼロ点の電圧・換算値も固定しない。
 internal sealed record As110Calibration(ScalingPoints Current, ScalingPoints Pressure)
 {
-    public static As110Calibration FromTemplate(As110StandSettings stand, XdtScalingEditor editor) =>
-        new(new(0, 0, stand.InputVoltage, stand.CurrentMilliAmps), editor.GetScaling(2));
+    // 校正画面の初期値。雛形(xdt)に入っている CH1 電流・CH2 圧力の値をそのまま出す(前回の適用値は呼び出さない。2026-11-06、人の判断)。
+    public static As110Calibration FromTemplate(XdtScalingEditor editor) =>
+        new(editor.GetScaling(1), editor.GetScaling(2));
 
     public void Validate()
     {

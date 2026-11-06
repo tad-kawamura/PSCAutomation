@@ -359,10 +359,10 @@ internal sealed partial class MainForm : Form
                 KeepPreparationInFront();
                 AppendLog("接続確認：正常終了 / 本体=" + _detectedHardwareName);
                 AppendLog("雛形フォルダ：" + TemplateFolderPath);
-                // 雛形の所在のみ確認。選択したスタンドの設定を適用してから開く。
+                // 雛形の所在のみ確認。校正値を適用してから開く。
                 if (_modeSelected) GetDetectedTemplatePath();
                 RefreshReferenceCandidates();
-                return $"正常終了 / 本体={_detectedHardwareName} / {(_modeSelected ? "スタンド" : "モード")}の選択待ち";
+                return $"正常終了 / 本体={_detectedHardwareName} / {(_modeSelected ? "校正値の入力" : "モードの選択")}待ち";
             });
         }
         finally
@@ -370,6 +370,8 @@ internal sealed partial class MainForm : Form
             _checkingConnections = false;
             UpdateControls();
         }
+        // モードを先に選んでいたときは、接続確認が済んだここで校正画面を開く。
+        OpenCalibrationIfPending();
     }
 
     // 選択したLOGGERで確認し、旧LOGGERで見つからなければLOGGER Xを試す。

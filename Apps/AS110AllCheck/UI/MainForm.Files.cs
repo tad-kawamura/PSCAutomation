@@ -18,7 +18,6 @@ internal sealed partial class MainForm : Form
     private bool _templateStateErrorLogged;
     private bool _templateLoaded;
     private string? _selectedReferencePath;
-    private int _horizontalZoomStepsApplied;
 
     private void TemplateDragEnter(object? sender, DragEventArgs e)
     {
@@ -27,7 +26,7 @@ internal sealed partial class MainForm : Form
 
     private void TemplateDragDrop(object? sender, DragEventArgs e)
     {
-        AppendLog("雛形はスタンド選択時に読み込みます。スタンドを選択してください。");
+        AppendLog("雛形は校正値の適用時に読み込みます。校正値を入力してください。");
     }
 
     private string GetAutomaticTemplatePath(string extension)
@@ -125,7 +124,7 @@ internal sealed partial class MainForm : Form
 
     private async void ReferenceSelectionCommitted(object? sender, EventArgs e)
     {
-        if (!ConnectionsReady || !_standScalingApplied || _operationInProgress ||
+        if (!ConnectionsReady || !_calibrationApplied || _operationInProgress ||
             _referenceComboBox.SelectedItem is not ReferenceWaveform reference)
         {
             // 未選択の項目を選んでも、LOGGER内の波形削除は行わない。
@@ -144,19 +143,12 @@ internal sealed partial class MainForm : Form
                 throw new FileNotFoundException("参照波形が見つかりません。", reference.FilePath);
             await LoadReferenceFileAsync(reference.FilePath);
             _selectedReferencePath = reference.FilePath;
-            int requiredSteps = _selectedStand?.HorizontalZoomSteps ?? 0;
-            if (_horizontalZoomStepsApplied < requiredSteps)
-            {
-                // 同じ雛形で参照波形を選び直しても、拡大を重ねない。
-                await _logger.ZoomHorizontalAsync(
-                    requiredSteps - _horizontalZoomStepsApplied, AppendLog,
-                    () => _horizontalZoomStepsApplied++);
-            }
+            // 横軸の拡大はしない(2026-11-06 にスタンドごとの拡大を廃止。必要なら人が LOGGER の画面で拡大する)。
             return reference.DisplayName + " / 読み込み操作済み（LOGGER画面で確認）";
         });
         // エラー時は、読み込み前の選択に戻す。
         RestoreReferenceSelection();
-        // 拡大操作だけが失敗した場合もLOGGERを手動操作できるよう固定を解除する。
+        // 読み込み後はLOGGERを手動操作できるよう固定を解除する。
         if (_selectedReferencePath is not null) CompletePreparationDisplay();
     }
 
@@ -220,12 +212,10 @@ internal sealed partial class MainForm : Form
         _measurementState.ErrorLogged = false;
         _logger.ResetMeasurementStart();
         _templateLoaded = false;
-        _standScalingApplied = false;
+        _calibrationApplied = false;
         _appliedCalibration = null;
         _appliedCalibrationRecord = null;
-        _calibrationSupported = false;
-        _horizontalZoomStepsApplied = 0;
-        _selectedStand = null;
+        _calibrationRecordedRoot = null;
         KeepPreparationInFront();
         _selectedReferencePath = null;
         if (_referenceComboBox.Items.Count > 0) RestoreReferenceSelection();

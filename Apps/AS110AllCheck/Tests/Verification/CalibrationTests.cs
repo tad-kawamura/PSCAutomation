@@ -22,12 +22,11 @@ internal static class CalibrationTests
                 int first = signature == 0x00030003 ? 820 : 1140;
                 int stride = signature == 0x00030003 ? 68 : 92;
                 var initialEditor = new XdtScalingEditor(fixture);
-                foreach (var stand in As110StandSettings.All)
-                {
-                    var initial = As110Calibration.FromTemplate(stand, initialEditor);
-                    Check(initial.Current == new ScalingPoints(0, 0, stand.InputVoltage, stand.CurrentMilliAmps) &&
-                        initial.Pressure == initialEditor.GetScaling(2), "stand nominal current and template pressure defaults");
-                }
+                // 校正画面の初期値は雛形の値そのまま(スタンド公称値は 2026-11-06 に廃止)。
+                var initial = As110Calibration.FromTemplate(initialEditor);
+                Check(initial.Current == initialEditor.GetScaling(1) && initial.Pressure == initialEditor.GetScaling(2),
+                    "calibration defaults are the template's own CH1/CH2 scaling");
+                Console.WriteLine($"  template {Path.GetFileName(fixture)}: CH1 {initial.Current} / CH2 {initial.Pressure}");
                 foreach (var pressure in new[] { new ScalingPoints(-0.001f, 0.2f, 5.503f, 539.5f),
                     new ScalingPoints(0.002f, -0.1f, 5.498f, 540.5f) })
                 {

@@ -96,9 +96,9 @@ internal sealed partial class MainForm : Form
             // LOGGER画面でのファイル変更も押下時に確認する。
             RefreshTemplateState();
             long templateCheckedAt = Stopwatch.GetTimestamp();
-            if (!_templateLoaded || !_standScalingApplied)
+            if (!_templateLoaded || !_calibrationApplied)
             {
-                AppendLog("スタンドを選択し、設定済みの雛形を読み込んでください。");
+                AppendLog("校正値を入力し、設定済みの雛形を読み込んでください。");
                 return;
             }
             RefreshLoggerState();

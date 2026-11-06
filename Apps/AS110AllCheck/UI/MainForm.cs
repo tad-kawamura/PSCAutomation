@@ -34,7 +34,7 @@ internal sealed partial class MainForm : Form
 
         Text = Application.ProductName + " / 通電確認・測定アプリ";
         // 操作欄(型式・S/N・保存先の行まで)がログ欄の上に収まる高さにする。足りないときは操作欄だけがスクロールする。
-        // 幅はスタンド選択の 3 つのボタン(220×3)が 1 行に並ぶ最小に近い値。
+        // 幅 760 は人が決めた値(2026-11-06)。
         ClientSize = new Size(760, 800);
         MinimumSize = new Size(680, 570);
         StartPosition = FormStartPosition.CenterScreen;

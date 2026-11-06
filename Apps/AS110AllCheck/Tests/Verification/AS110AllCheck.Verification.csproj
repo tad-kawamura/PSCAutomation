@@ -9,8 +9,7 @@
   <ItemGroup>
     <!-- アプリのうち Windows に依存しない部分だけを直接取り込む -->
     <Compile Include="../../As110/As110Calibration.cs" Link="App/As110Calibration.cs" />
-    <Compile Include="../../As110/CalibrationHistory.cs" Link="App/CalibrationHistory.cs" />
-    <Compile Include="../../As110/As110StandSettings.cs" Link="App/As110StandSettings.cs" />
+    <Compile Include="../../As110/CalibrationRecord.cs" Link="App/CalibrationRecord.cs" />
     <Compile Include="../../As110/As110MotionTest.cs" Link="App/As110MotionTest.cs" />
     <Compile Include="../../Production/ProductionWorkflow.cs" Link="App/ProductionWorkflow.cs" />
     <Compile Include="../../Production/LeakCheckSequence.cs" Link="App/LeakCheckSequence.cs" />

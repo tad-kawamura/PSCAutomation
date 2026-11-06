@@ -131,7 +131,18 @@ internal sealed partial class MainForm : Form
             if(_operationInProgress || _flow.Measuring || _flow.SaveFailed || _leakRunning || _flow.HasSaved) return;
             using var dialog=new FolderBrowserDialog();
             if(dialog.ShowDialog(this)!=DialogResult.OK) return;
-            _rootBox.Text=dialog.SelectedPath;_transferSettings.SaveRoot=dialog.SelectedPath;_transferSettings.Save();
+            string previousRoot=_rootBox.Text;
+            _rootBox.Text=dialog.SelectedPath;
+            // 校正を適用済みなら、選んだ保存先へ校正記録を書く。書けない保存先は受け付けず、選ぶ前の保存先に戻す。
+            try { WriteCalibrationRecordIfReady(); }
+            catch(Exception ex) when(ex is IOException or UnauthorizedAccessException or ArgumentException)
+            {
+                _rootBox.Text=previousRoot;
+                AppendLog($"保存先選択：校正記録を書けません / {ex.Message}");
+                ErrorNotification.Show(this,"この保存先には校正記録を書けません。別の保存先を選んでください。\n"+CalibrationRecordFile.FolderPath(dialog.SelectedPath)+"\n"+ex.Message,"保存先の選択",MessageBoxButtons.OK,MessageBoxIcon.Error);
+                return;
+            }
+            _transferSettings.SaveRoot=dialog.SelectedPath;_transferSettings.Save();
             ApplySaveRootRange();
             if(_flow.Mode==TestMode.Production && CanChangeSetup) RunOperation("保存先選択",()=>{ConfigureProduct(requireSaveRoot:false);return _rootBox.Text;});
             UpdateControls();
@@ -213,8 +224,12 @@ internal sealed partial class MainForm : Form
         _flow.Mode=next;
         _modeSelected=true;
         if (templatePurposeChanged) ResetTemplate();
-        RunOperation("モード選択",()=> { ConfigureProduct(requireSaveRoot:false); StopLeakOutput();_generator?.PrepareBurst(CurrentBurstSettings);return _modeBox.Text; });
+        RunOperation("モード選択",()=> { ConfigureProduct(requireSaveRoot:false); StopLeakOutput();_generator?.PrepareBurst(CurrentBurstSettings);
+            // データ調整で校正を済ませてからデータ取りへ移ったときは、前回の保存先が残っていればここで校正記録を書く。
+            WriteCalibrationRecordIfReady();return _modeBox.Text; });
         UpdateControls();
+        // 接続確認が済んでいれば、モードを選んだ流れで校正画面を開く(まだなら接続確認の終わりで開く)。
+        OpenCalibrationIfPending();
     }
     private GeneratorBurstSettings CurrentBurstSettings => As110MotionTest.GetSettings(
         isSdg1032X: _generator is Sdg1032XSession, isMotion: _flow.Mode == TestMode.Motion);
@@ -223,23 +238,21 @@ internal sealed partial class MainForm : Form
         if(!CanChangeSetup) { _modelBox.SelectedItem=_flow.Model;return; }
         await RunOperationAsync("型式選択",async ()=> {
             ConfigureProduct(requireSaveRoot:false);
-            if(!_standScalingApplied)return "スタンドを先に選択してください。";
+            if(!_calibrationApplied)return "校正値を先に適用してください。";
             string[] candidates=Directory.GetFiles(TemplateFolderPath,"*.xyb").Where(p=>
                 System.Text.RegularExpressions.Regex.IsMatch(Path.GetFileNameWithoutExtension(p),System.Text.RegularExpressions.Regex.Escape(SelectedModel.Name)+@"(?![A-Za-z0-9])",System.Text.RegularExpressions.RegexOptions.IgnoreCase)).ToArray();
             if(candidates.Length!=1) throw new InvalidOperationException($"{SelectedModel.Name}の参照波形が{candidates.Length}件です。対応する.xybを1件置いてください。");
             RefreshLoggerState();if(!LoggerReadyToStart)throw new InvalidOperationException("LOGGERの停止を待ってください。");
             await LoadReferenceFileAsync(candidates[0]);_selectedReferencePath=candidates[0];
-            int steps=(_selectedStand?.HorizontalZoomSteps??0)-_horizontalZoomStepsApplied;
-            if(steps>0)await _logger.ZoomHorizontalAsync(steps,AppendLog,()=>_horizontalZoomStepsApplied++);
             RestoreReferenceSelection(); CompletePreparationDisplay();return SelectedModel.ToString();
         });
     }
     private void UpdateProductionControls()
     {
         bool idle=!_operationInProgress && !_leakRunning && !_flow.Measuring;
-        bool ready=idle && ConnectionsReady && _standScalingApplied && _templateLoaded && LoggerReadyToStart && _arduino.MeasurementInputReady;
+        bool ready=idle && ConnectionsReady && _calibrationApplied && _templateLoaded && LoggerReadyToStart && _arduino.MeasurementInputReady;
         _modeBox.Enabled=idle && !_flow.SaveFailed && !_flow.CaptureFailed && !_flow.HasSaved;
-        _modelBox.Enabled=CanChangeSetup && _standScalingApplied && _flow.Mode!=TestMode.Motion;
+        _modelBox.Enabled=CanChangeSetup && _calibrationApplied && _flow.Mode!=TestMode.Motion;
         bool production=_flow.Mode==TestMode.Production;
         bool excelMode=_modeSelected && _flow.Mode!=TestMode.Motion;
         _productionPanel.Visible=_modeSelected;
