@@ -512,13 +512,40 @@ internal sealed partial class MainForm : Form
     private void ReleaseCompletedSerial()
     {
         if(_operationInProgress || _flow.Measuring || _leakRunning)return;
-        using var dialog=new Form {Text="保護解除するS/N",ClientSize=new Size(330,100),StartPosition=FormStartPosition.CenterParent,TopMost=true};
-        var input=new TextBox{Left=15,Top=15,Width=180};var ok=new Button{Text="解除",Left=210,Top=15,DialogResult=DialogResult.OK};dialog.Controls.AddRange([input,ok]);dialog.AcceptButton=ok;
+        // 完了記録は保存先の「完了記録.txt」にあるので、保存先が無いと一覧を出せない。
+        if(_rootBox.Text.Length==0)
+        {
+            ErrorNotification.Show(this,"保存先を選択してください。\n完了番号の保護は保存先の「完了記録.txt」で管理しています。","完了番号の保護解除",MessageBoxButtons.OK,MessageBoxIcon.Warning);
+            return;
+        }
+        string[] completed;
+        try { var store=Store;using var held=store.Lock();completed=store.CompletedSerials(); }
+        catch(Exception ex) { AppendLog($"保護解除：エラー / {ex.Message}");ErrorNotification.Show(this,ex.Message,"完了番号の保護解除",MessageBoxButtons.OK,MessageBoxIcon.Error);return; }
+        if(completed.Length==0)
+        {
+            ErrorNotification.Show(this,$"保護されているS/Nはありません。\n保存先: {_rootBox.Text}","完了番号の保護解除",MessageBoxButtons.OK,MessageBoxIcon.Information);
+            return;
+        }
+        // 保護中の S/N を全部チェック付きで並べ、チェックを外した番号を「解除」で解除する。
+        using var dialog=new Form {Text="完了番号の保護解除",ClientSize=new Size(420,360),StartPosition=FormStartPosition.CenterParent,TopMost=true,MinimizeBox=false,MaximizeBox=false};
+        var guide=new Label{Left=12,Top=10,Width=396,Height=48,Text=$"保存先: {_rootBox.Text}\n保護を解除するS/Nのチェックを外して「解除」を押してください。既存ファイルは残します。"};
+        var list=new CheckedListBox{Left=12,Top=62,Width=396,Height=240,CheckOnClick=true,Font=new Font(Font.FontFamily,12)};
+        foreach(string serial in completed) list.Items.Add("S/N "+serial,true);
+        var ok=new Button{Text="解除",Left=208,Top=312,Width=96,Height=36,DialogResult=DialogResult.OK};
+        var cancel=new Button{Text="キャンセル",Left=312,Top=312,Width=96,Height=36,DialogResult=DialogResult.Cancel};
+        dialog.Controls.AddRange([guide,list,ok,cancel]);dialog.AcceptButton=ok;dialog.CancelButton=cancel;
         if(dialog.ShowDialog(this)!=DialogResult.OK)return;
+        string[] release=completed.Where((_,i)=>!list.GetItemChecked(i)).ToArray();
+        if(release.Length==0){AppendLog("保護解除：チェックを外した S/N が無いので何もしていません。");return;}
         RunOperation("保護解除",()=> {
-            if(!long.TryParse(input.Text,out long n)||n<0)throw new ArgumentException("S/Nを数字で入力してください。");
-            var store=Store;using var held=store.Lock();string serial=n.ToString();if(!store.IsComplete(serial))throw new InvalidOperationException("このS/Nは完了記録がありません。");
-            store.Append("RELEASE",serial,"-","-");return $"S/N{serial}の保護を解除しました。既存ファイルは残しています。";
+            var store=Store;using var held=store.Lock();
+            var released=new List<string>();
+            foreach(string serial in release)
+            {
+                if(!store.IsComplete(serial)) continue; // 画面を開いている間にほかで解除された番号は飛ばす
+                store.Append("RELEASE",serial,"-","-");released.Add(serial);
+            }
+            return released.Count==0?"選んだS/Nはすでに解除されていました。":$"S/N {string.Join(", ",released)} の保護を解除しました。既存ファイルは残しています。";
         });
     }
     private void EditTransferSettings()

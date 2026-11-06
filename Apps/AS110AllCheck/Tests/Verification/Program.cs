@@ -43,6 +43,7 @@ f.CaptureError();Check(f.CaptureFailed&&!f.Measuring,"capture failure allows ret
 var root=Path.Combine(Path.GetTempPath(),Guid.NewGuid().ToString());var store=new CompletionStore(root);
 using(store.Lock()){store.Append("COMPLETE","00012","AS110-035","a");Check(store.IsComplete("12"),"serial protection ignores model date and leading zeros");store.Append("RELEASE","12","-","-");Check(!store.IsComplete("00012")&&store.WasReleased("12"),"release persisted");}
 var reopened=new CompletionStore(root);Check(reopened.WasReleased("12"),"journal survives restart");
+using(store.Lock()){store.Append("COMPLETE","0100","AS110-035","c");store.Append("COMPLETE","7","AS110-035","d");Check(store.CompletedSerials().SequenceEqual(["7","100"]),"completed serials exclude released and sort by number");}
 using(var held=store.Lock()){bool locked=false;try{using var other=store.Lock();}catch(IOException){locked=true;}Check(locked,"shared store lock excludes second process");}
 File.AppendAllText(Path.Combine(root,"完了記録.txt"),"COMPLETE\tbroken");bool failed=false;try{store.Read();}catch(InvalidDataException){failed=true;}Check(failed,"corrupt journal fails closed");Directory.Delete(root,true);
 Check(TransferSettings.Compress([1,2,3,4,5,6,7,8,9,10],5).SequenceEqual([3.0,8.0]),"compression is block average");

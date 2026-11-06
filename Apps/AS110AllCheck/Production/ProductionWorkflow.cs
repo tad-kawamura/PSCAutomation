@@ -98,6 +98,9 @@ internal sealed class CompletionStore
     }
     public bool IsComplete(string serial) => Read().GetValueOrDefault(Key(serial)) == "COMPLETE";
     public bool WasReleased(string serial) => Read().GetValueOrDefault(Key(serial)) == "RELEASE";
+    // 今も保護されている(完了済みで解除していない)S/N を番号順に返す。保護解除の一覧に使う。
+    public string[] CompletedSerials() => Read().Where(p => p.Value == "COMPLETE").Select(p => p.Key)
+        .OrderBy(s => long.Parse(s, CultureInfo.InvariantCulture)).ToArray();
     public void Append(string action,string serial,string model,string baseName)
     {
         if (action is not ("COMPLETE" or "RELEASE")) throw new ArgumentException(nameof(action));
