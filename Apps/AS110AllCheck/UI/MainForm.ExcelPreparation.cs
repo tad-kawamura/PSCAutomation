@@ -33,7 +33,8 @@ internal sealed partial class MainForm : Form
     private async Task PrepareExcelWhenIdleAsync()
     {
         // 測定結果がある間は、その転送・確認用のブックを閉じない。
-        if (_closeRequested || IsDisposed || _flow.Mode == TestMode.Motion || _flow.HasCapture || _reviewStage)
+        // 測定開始S/N が空のまま準備すると見出しの「S/N 数字」が空になり、後で置き換えられない。入るまで待つ(入力後に再要求する)。
+        if (_closeRequested || IsDisposed || _flow.Mode == TestMode.Motion || _flow.HasCapture || _reviewStage || _flow.SerialMissing)
         {
             _excelPreparationTimer?.Stop();
             return;

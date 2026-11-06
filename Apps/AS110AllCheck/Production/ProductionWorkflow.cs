@@ -48,12 +48,15 @@ internal sealed class ProductionWorkflow
             throw new ArgumentException("最後のシリアル番号を数字で入力してください（空は上限なし）。");
         LastSerial = lastSerial;
     }
-    public void ConfigureAdjustment(ProductModel model)
+    public void ConfigureAdjustment(ProductModel model) => ConfigureWithoutSerial(model);
+    // データ取りで測定開始S/N がまだ入っていないとき。S/N を空にして型式だけ持つ(測定開始はできない)。
+    public void ConfigureWithoutSerial(ProductModel model)
     {
         if (Measuring) throw new InvalidOperationException("測定中です。");
         if (Serial.Length == 0 && Model == model) return;
         Serial = ""; Model = model; Invalidate();
     }
+    public bool SerialMissing => Mode == TestMode.Production && Serial.Length == 0;
     public void Invalidate()
     {
         Revision++; CapturedRevision = TransferredRevision = SavedRevision = -1;

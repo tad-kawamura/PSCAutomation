@@ -3,7 +3,7 @@ using System.Text.RegularExpressions;
 namespace PSCAutomation.Apps.AS110AllCheck;
 
 // 保存先フォルダーの決まりごと。
-// - フォルダー名は「SN開始-最後」(例: SN71360-71460)を含む。今の S/N がその範囲内で、最後S/N がフォルダーの最後と同じなら一致
+// - フォルダー名は「SN開始-最後」(例: SN71360-71460)を含む。開始S/N・最後S/N はここから決め、測定開始S/N(今の S/N)がその範囲内なら一致
 // - 中身は Excel/PDF/LOGGER の「型式_SN番号_日付_6500.拡張子」。ここから S/N を拾い、完了記録に無いものを見つける
 internal static class SaveFolder
 {
@@ -24,20 +24,20 @@ internal static class SaveFolder
     }
 
     // フォルダー名と S/N の照合。問題が無ければ ""。あれば人に見せる文(保存先フォルダーを確認してください、で終わる)。
-    public static string CheckRange(string root, string currentSerial, string lastSerial)
+    // 範囲の開始・最後はフォルダー名から決めるので、照合するのは測定開始S/N(今の S/N)が範囲内かだけ。
+    public static string CheckRange(string root, string currentSerial)
     {
         if (root.Length == 0) return "";
         string name = FolderName(root);
         var range = ParseRange(root);
         if (range is null) return $"保存先フォルダー名「{name}」に SN開始-最後 がありません。保存先フォルダーを確認してください。";
         var (start, end) = range.Value;
-        var problems = new List<string>();
-        if (!long.TryParse(currentSerial, NumberStyles.None, CultureInfo.InvariantCulture, out long current)) problems.Add("S/N が数字ではありません");
-        else if (current < Number(start) || current > Number(end)) problems.Add($"S/N {currentSerial} が範囲 {start}〜{end} の外です");
-        if (lastSerial.Length == 0) problems.Add($"最後S/N が空です（フォルダーは {end}）");
-        else if (!long.TryParse(lastSerial, NumberStyles.None, CultureInfo.InvariantCulture, out long last)) problems.Add("最後S/N が数字ではありません");
-        else if (last != Number(end)) problems.Add($"最後S/N {lastSerial} がフォルダーの {end} と違います");
-        return problems.Count == 0 ? "" : $"保存先フォルダー名「{name}」と合いません（{string.Join("、", problems)}）。保存先フォルダーを確認してください。";
+        string problem;
+        if (currentSerial.Length == 0) problem = "測定開始S/N が空です";
+        else if (!long.TryParse(currentSerial, NumberStyles.None, CultureInfo.InvariantCulture, out long current)) problem = "測定開始S/N が数字ではありません";
+        else if (current < Number(start) || current > Number(end)) problem = $"測定開始S/N {currentSerial} が範囲 {start}〜{end} の外です";
+        else return "";
+        return $"保存先フォルダー名「{name}」と合いません（{problem}）。保存先フォルダーを確認してください。";
     }
 
     // Excel/PDF/LOGGER のファイル名から S/N を拾う。同じ S/N は最初に見つけた 1 件にまとめる。形式が読めないファイルは件数だけ数える。

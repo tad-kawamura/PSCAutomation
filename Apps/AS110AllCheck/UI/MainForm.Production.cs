@@ -45,8 +45,11 @@ internal sealed partial class MainForm : Form
         return panel;
     }
     private readonly ComboBox _modelBox = new() { DropDownStyle=ComboBoxStyle.DropDownList,Width=225 };
-    private readonly TextBox _serialBox = new() { Width=110,Text="1" };
-    private readonly Label _serialLabel = new() { Text="開始S/N", AutoSize=true };
+    // 測定開始S/N(今の S/N)。人が入れる唯一の S/N。空のまま始める(起動時・範囲を終えた後)。
+    private readonly TextBox _serialBox = new() { Width=110 };
+    private readonly Label _serialLabel = new() { Text="測定開始S/N", AutoSize=true };
+    // 測定開始S/N が空のときの赤字。欄の右に出す。
+    private readonly Label _serialMissingLabel = new() { Text="入力してください", AutoSize=true, ForeColor=Color.Red, Visible=false };
     private readonly TextBox _rootBox = new() { Width=280,ReadOnly=true };
     private readonly Label _flowLabel = new() { AutoSize=true,MaximumSize=new Size(680,0) };
     private readonly Button _transferButton=new(),_saveButton=new(),_leakOutputButton=new(),_leakButton=new(),_completeButton=new(),_remeasureButton=new(),_retryCaptureButton=new();
@@ -68,24 +71,25 @@ internal sealed partial class MainForm : Form
     private readonly string _sessionFolder=Path.Combine(Path.GetTempPath(),"AS110BoltCheck","ver3-"+Guid.NewGuid().ToString("N"));
 
     // モードを選ぶまで全体を非表示にする。型式・Excel転送はデータ調整とデータ取りで、保存先・S/N・保存・漏れ試験・合格はデータ取りを選んだときだけ表示する。
-    // 並びは上から 型式 → 開始S/N・最後S/N → 保存先 → 保護解除・転送設定 → ボタン → 状態。表示/非表示を切り替えても並びが変わらないよう、行も列も TableLayoutPanel で位置を固定する。
+    // 並びは上から 型式 → 保存先 → 開始S/N・最後S/N(フォルダー名から) → 測定開始S/N → 保護解除・転送設定 → ボタン → 状態。表示/非表示を切り替えても並びが変わらないよう、行も列も TableLayoutPanel で位置を固定する。
     private readonly TableLayoutPanel _productionPanel=new() { AutoSize=true,AutoSizeMode=AutoSizeMode.GrowAndShrink,Dock=DockStyle.Fill,ColumnCount=1,Visible=false };
-    private TableLayoutPanel _setupPanel=null!,_serialPanel=null!,_savePathPanel=null!,_protectionPanel=null!,_actionPanel=null!;
+    private TableLayoutPanel _setupPanel=null!,_rangePanel=null!,_serialPanel=null!,_savePathPanel=null!,_protectionPanel=null!,_actionPanel=null!;
     private readonly Button _chooseSaveRootButton=new() { Text="保存先選択",AutoSize=true };
     private readonly Button _releaseSerialButton=new() { Text="完了番号の保護解除",AutoSize=true };
     private readonly Button _transferSettingsButton=new() { Text="転送設定",AutoSize=true };
-    private readonly TextBox _lastSerialBox = new() { Width=110 };
+    // 開始S/N・最後S/N は保存先フォルダー名「SN開始-最後」から入れる表示専用の欄(人は入力しない)。入ったら緑字。
+    private readonly TextBox _rangeStartBox = new() { Width=100,ReadOnly=true,TabStop=false };
+    private readonly Label _rangeStartLabel = new() { Text="開始S/N", AutoSize=true };
+    private readonly TextBox _lastSerialBox = new() { Width=100,ReadOnly=true,TabStop=false };
     private readonly Label _lastSerialLabel = new() { Text="最後S/N", AutoSize=true };
     // 保存先フォルダー名「SN開始-最後」と S/N が合わないときの赤字。保存先の行の下に出す。
     private readonly Label _saveRootWarningLabel = new() { AutoSize=true,ForeColor=Color.Red,MaximumSize=new Size(680,0),Visible=false };
-    // 保存先フォルダー名から開始S/N・最後S/N を入れる。開始S/N は空か「1」(初期値)のとき、最後S/N は空のときだけ。
+    // 保存先フォルダー名から開始S/N・最後S/N を入れる(選び直したら毎回入れ替える。範囲が無ければ空)。測定開始S/N は触らない。
     private void ApplySaveRootRange()
     {
         var range=SaveFolder.ParseRange(_rootBox.Text);
-        if(range is null) return;
-        string start=_serialBox.Text.Trim();
-        if(start.Length==0 || start=="1") _serialBox.Text=range.Value.Start;
-        if(_lastSerialBox.Text.Trim().Length==0) _lastSerialBox.Text=range.Value.End;
+        _rangeStartBox.Text=range?.Start??"";_lastSerialBox.Text=range?.End??"";
+        _rangeStartBox.ForeColor=_lastSerialBox.ForeColor=range is null?SystemColors.WindowText:Color.Green;
     }
     // 保存先の Excel/PDF/LOGGER にある、完了記録に無い S/N のデータを知らせる(保護は「完了番号の保護解除」の画面で付ける)。
     private void ReportUnrecordedData()
@@ -151,32 +155,38 @@ internal sealed partial class MainForm : Form
             _reviewStage=false;UpdateControls();
         });
         ConfigureButton(_retryCaptureButton,"一時保存を再試行",(_,_)=>RetryCapture());
-        // 型式と S/N を 1 行に並べると横長になるので、開始S/N・最後S/N は型式の下の行にする。
+        // 型式 → 保存先 → (フォルダー名から)開始S/N・最後S/N → 測定開始S/N の順。保存先を先に選ぶと範囲が決まるので、その下に範囲と測定開始S/N を置く。
         _setupPanel=Row(_modelBox,applyModel);
-        _serialPanel=Row(_serialLabel,_serialBox,_lastSerialLabel,_lastSerialBox);
         _savePathPanel=Row(_chooseSaveRootButton,_rootBox);
         _saveRootWarningLabel.Margin=new Padding(0,0,0,6);
+        _rangePanel=Row(_rangeStartLabel,_rangeStartBox,_lastSerialLabel,_lastSerialBox);
+        _serialPanel=Row(_serialLabel,_serialBox,_serialMissingLabel);
         _protectionPanel=Row(_releaseSerialButton,_transferSettingsButton);
-        // 型式・S/N・保存先の入力欄は、上段のボタンより目立つよう大きい文字にする。
+        // 型式・測定開始S/N・保存先の入力欄は、上段のボタンより目立つよう大きい文字にする。開始S/N・最後S/N は人が入力しないので小さいまま。
         var inputFont=new Font(Font.FontFamily,12);
         foreach(var row in new[]{_setupPanel,_serialPanel,_savePathPanel,_protectionPanel})
             foreach(Control control in row.Controls) control.Font=inputFont;
-        _modelBox.Width=270;_serialBox.Width=_lastSerialBox.Width=140;_rootBox.Width=420;
+        _modelBox.Width=270;_serialBox.Width=140;_rootBox.Width=420;
+        _lastSerialLabel.Margin=new Padding(12,_lastSerialLabel.Margin.Top,_lastSerialLabel.Margin.Right,_lastSerialLabel.Margin.Bottom);
+        _serialMissingLabel.Margin=new Padding(8,_serialMissingLabel.Margin.Top,_serialMissingLabel.Margin.Right,_serialMissingLabel.Margin.Bottom);
         foreach(var button in new[]{applyModel,_chooseSaveRootButton,_releaseSerialButton,_transferSettingsButton}) button.MinimumSize=new Size(0,40);
         // 合格は下段の左に置き、上段を 4 つにして横幅を抑える。
         var mainActions=Row(_transferButton,_saveButton,_leakOutputButton,_leakButton);
         var subActions=Row(_completeButton,_remeasureButton,_retryCaptureButton);
         _actionPanel=new TableLayoutPanel { AutoSize=true,AutoSizeMode=AutoSizeMode.GrowAndShrink,ColumnCount=1,RowCount=2,Margin=Padding.Empty };
         _actionPanel.Controls.Add(mainActions,0,0);_actionPanel.Controls.Add(subActions,0,1);
-        Control[] rows=[_setupPanel,_serialPanel,_savePathPanel,_saveRootWarningLabel,_protectionPanel,_actionPanel,_flowLabel];
+        Control[] rows=[_setupPanel,_savePathPanel,_saveRootWarningLabel,_rangePanel,_serialPanel,_protectionPanel,_actionPanel,_flowLabel];
         _productionPanel.RowCount=rows.Length;
         for(int i=0;i<rows.Length;i++){ _productionPanel.RowStyles.Add(new RowStyle(SizeType.AutoSize)); _productionPanel.Controls.Add(rows[i],0,i); }
         _modelBox.SelectionChangeCommitted+=async (_,_)=>await SelectProductModelAsync();
-        // 入力中もフォルダー名との照合(赤字)を更新する。
+        // 入力中もフォルダー名との照合(赤字)と「入力してください」を更新する。
         _serialBox.TextChanged+=(_,_)=>UpdateControls();
-        _lastSerialBox.TextChanged+=(_,_)=>UpdateControls();
-        _serialBox.Leave+=(_,_)=>{if(!CanChangeSetup || _flow.Mode!=TestMode.Production)return;RunOperation("S/N設定",()=>{ConfigureProduct(requireSaveRoot:false);return "設定しました";});};
-        _lastSerialBox.Leave+=(_,_)=>{if(!CanChangeSetup || _flow.Mode!=TestMode.Production)return;RunOperation("最後S/N設定",()=>{ConfigureProduct(requireSaveRoot:false);return _flow.LastSerial.Length>0?$"最後のS/N {_flow.LastSerial} まで":"最後のS/Nなし（上限なし）";});};
+        _serialBox.Leave+=(_,_)=>{
+            if(!CanChangeSetup || _flow.Mode!=TestMode.Production)return;
+            RunOperation("測定開始S/N設定",()=>{ConfigureProduct(requireSaveRoot:false);return _flow.Serial.Length>0?$"S/N {_flow.Serial} から":"測定開始S/N を入力してください";});
+            // 測定開始S/N が入るまで Excel の事前準備を待たせているので、入ったらここで始める。
+            if(_flow.Serial.Length>0 && _excel is null && _templateLoaded)RequestExcelPreparation();
+        };
         return _productionPanel;
     }
     private bool CanChangeSetup => !_operationInProgress && !_flow.Measuring && !_flow.SaveFailed && !_flow.CaptureFailed && !_leakRunning && !_flow.HasCapture;
@@ -187,6 +197,8 @@ internal sealed partial class MainForm : Form
         if (_flow.Mode == TestMode.Motion) return;
         if (_flow.Mode == TestMode.Adjustment) { _flow.ConfigureAdjustment(SelectedModel); return; }
         _flow.SetLastSerial(_lastSerialBox.Text.Trim());
+        // 測定開始S/N が空のときは型式だけ持ち、測定開始はできない(赤字「入力してください」で案内)。
+        if(_serialBox.Text.Trim().Length==0) { _flow.ConfigureWithoutSerial(SelectedModel); return; }
         _flow.Configure(_serialBox.Text.Trim(),SelectedModel);
         if(_flow.Mode==TestMode.Production && (requireSaveRoot || _rootBox.Text.Length>0)) { var store=Store;using var held=store.Lock();if(store.IsComplete(_flow.Serial))throw new InvalidOperationException("このS/Nは完了済みです。保護解除が必要です。"); }
     }
@@ -234,12 +246,14 @@ internal sealed partial class MainForm : Form
         _setupPanel.Visible=_protectionPanel.Visible=_actionPanel.Visible=excelMode;
         _savePathPanel.Visible=_chooseSaveRootButton.Visible=_rootBox.Visible=_releaseSerialButton.Visible=production;
         _saveButton.Visible=_leakOutputButton.Visible=_leakButton.Visible=_completeButton.Visible=production;
-        _serialPanel.Visible=_serialLabel.Visible=_serialBox.Visible=_lastSerialLabel.Visible=_lastSerialBox.Visible=production;
-        _saveRootWarningLabel.Text=production?SaveFolder.CheckRange(_rootBox.Text,_serialBox.Text.Trim(),_lastSerialBox.Text.Trim()):"";
+        _rangePanel.Visible=_rangeStartLabel.Visible=_rangeStartBox.Visible=_lastSerialLabel.Visible=_lastSerialBox.Visible=production;
+        _serialPanel.Visible=_serialLabel.Visible=_serialBox.Visible=production;
+        _saveRootWarningLabel.Text=production?SaveFolder.CheckRange(_rootBox.Text,_serialBox.Text.Trim()):"";
         _saveRootWarningLabel.Visible=_saveRootWarningLabel.Text.Length>0;
-        _serialBox.Enabled=_lastSerialBox.Enabled=CanChangeSetup && production;
+        _serialMissingLabel.Visible=production && _serialBox.Text.Trim().Length==0;
+        _serialBox.Enabled=CanChangeSetup && production;
         _startButton.Text=_flow.Mode==TestMode.Motion?"測定開始":"データ調整";
-        _startButton.Enabled=ready && !_flow.SaveFailed && !_flow.CaptureFailed && (!_reviewStage) && (_flow.Mode!=TestMode.Motion || MotionContactEnergized) && !_flow.SerialRangeFinished;
+        _startButton.Enabled=ready && !_flow.SaveFailed && !_flow.CaptureFailed && (!_reviewStage) && (_flow.Mode!=TestMode.Motion || MotionContactEnergized) && !_flow.SerialRangeFinished && !_flow.SerialMissing;
         _transferButton.Enabled=idle && _flow.HasCapture && !_flow.CaptureFailed && !_reviewStage;
         string saveBlockReason=GetSaveBlockReason();
         _saveButton.Enabled=saveBlockReason.Length==0;
@@ -255,11 +269,13 @@ internal sealed partial class MainForm : Form
         _remeasureButton.Text=_flow.HasSaved?"再測定へ戻る":"設定変更（測定を破棄）";
         _remeasureButton.Enabled=idle && (_reviewStage || _flow.HasCapture) && !_flow.SaveFailed;
         _retryCaptureButton.Visible=_flow.CaptureFailed;_retryCaptureButton.Enabled=idle && _flow.CaptureFailed && ConnectionsReady;
-        string identity = _flow.Mode == TestMode.Adjustment ? "データ調整（保存・S/N設定なし）" : _flow.LastSerial.Length > 0 ? $"S/N {_flow.Serial}（最後 {_flow.LastSerial}）" : $"S/N {_flow.Serial}";
+        string identity = _flow.Mode == TestMode.Adjustment ? "データ調整（保存・S/N設定なし）" : _flow.SerialMissing ? "測定開始S/N 未入力" : _flow.LastSerial.Length > 0 ? $"S/N {_flow.Serial}（最後 {_flow.LastSerial}）" : $"S/N {_flow.Serial}";
         _flowLabel.Text=$"{identity}　{(_leakRunning?"漏れチェック中":_flow.Measuring?"測定中":_flow.CaptureFailed?"一時保存失敗：再試行してください":_flow.SaveFailed?"保存失敗：同じ番号で再保存してください":_flow.HasSaved?$"一式保存済み／漏れチェック {_flow.LeakChecks}回":_flow.HasTransfer?$"Excel転送済み：{_excelJudgmentStatus}":_flow.HasCapture?"一時保存済み：Excel転送できます":_excelPreparing?"測定待ち（Excel準備中）":"測定待ち")}";
         if (_flow.Mode == TestMode.Motion) _flowLabel.Text = _flow.Measuring ? "動き検査中" : "動き検査：保存・S/N設定なし";
         if (_flow.SerialRangeFinished && !_flow.Measuring && !_flow.HasCapture)
-            _flowLabel.Text = $"{identity}　最後のS/N {_flow.LastSerial} を超えています：開始S/Nと最後S/Nを確認してください（測定開始できません）";
+            _flowLabel.Text = $"{identity}　最後のS/N {_flow.LastSerial} を超えています：保存先と測定開始S/Nを確認してください（測定開始できません）";
+        if (_flow.SerialMissing && !_flow.Measuring && !_flow.HasCapture)
+            _flowLabel.Text = $"{identity}　測定開始S/Nを入力してください（測定開始できません）";
         if(_leakOutputReady && !_leakRunning && !_generatorOutputUnknown)_flowLabel.Text+="／+30mA出力中：漏れ試験実施を押してください";
         if(_generatorOutputUnknown)_flowLabel.Text+="／発振器の出力状態不明：本体で出力OFFを確認し「確認」で再接続してください";
         if(_flow.Mode==TestMode.Production && _flow.HasTransfer && !_reviewStage && saveBlockReason.Length>0)
@@ -409,7 +425,7 @@ internal sealed partial class MainForm : Form
             if(_excel is null || !_flow.HasTransfer || _capturePath is null)throw new InvalidOperationException("最新結果をExcelへ転送してください。");
             if(!_excel.IsPass()) { _lastExcelPass=false; _flow.SaveFailed=false;throw new InvalidOperationException("E21・L21の両方がOKではありません。"); }
             // 保存先フォルダー名「SN開始-最後」と合わないときは書き込まずに止める(何も書いていないので再保存の扱いにはしない)。
-            string rangeProblem=SaveFolder.CheckRange(_rootBox.Text,_flow.Serial,_flow.LastSerial);
+            string rangeProblem=SaveFolder.CheckRange(_rootBox.Text,_flow.Serial);
             if(rangeProblem.Length>0) { _flow.SaveFailed=false;throw new InvalidOperationException(rangeProblem); }
             var store=Store;using var held=store.Lock();
             if(store.IsComplete(_flow.Serial))throw new InvalidOperationException("完了済みのS/Nは上書きできません。");
@@ -548,7 +564,7 @@ internal sealed partial class MainForm : Form
             store.Append("COMPLETE",_flow.Serial,_flow.Model.Name,_flow.BaseName);
             string previous=_flow.Serial;_flow.Advance();_serialBox.Text=_flow.Serial;_reviewStage=false;_ownedSaveBase=null;
             _excel.Dispose();_excel=null;_capturePath=null;
-            return _flow.SerialRangeFinished ? $"S/N{previous}完了。最後のS/N {_flow.LastSerial} まで終わりました。次の範囲は開始S/Nと最後S/Nを入力してください。" : $"S/N{previous}完了。次はS/N{_flow.Serial}です。";
+            return _flow.SerialRangeFinished ? $"S/N{previous}完了。最後のS/N {_flow.LastSerial} まで終わりました。次の範囲は保存先を選び直し、測定開始S/Nを入力してください。" : $"S/N{previous}完了。次はS/N{_flow.Serial}です。";
         });
         // 製品の付け替え中に、次のS/N用のExcelを準備する。
         if(_excel is null)RequestExcelPreparation();

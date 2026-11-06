@@ -56,12 +56,11 @@ Check(SaveFolder.ParseRange(Path.Combine(root,"SN71360-71460"))==("71360","71460
 Check(SaveFolder.ParseRange(Path.Combine(root,"AS110-035 SN00010-00020 試作"))==("00010","00020"),"folder range parsed inside other words");
 Check(SaveFolder.ParseRange(Path.Combine(root,"SN20-10")) is null && SaveFolder.ParseRange(Path.Combine(root,"測定データ")) is null && SaveFolder.ParseRange("") is null,"folder without a valid range has none");
 string rangeRoot=Path.Combine(root,"SN71360-71460");
-Check(SaveFolder.CheckRange(rangeRoot,"71360","71460")=="" && SaveFolder.CheckRange(rangeRoot,"71460","71460")=="","serial inside range with matching last is accepted");
-Check(SaveFolder.CheckRange(rangeRoot,"71500","71460").Contains("範囲 71360〜71460 の外") && SaveFolder.CheckRange(rangeRoot,"71359","71460").Contains("の外"),"serial outside range is reported");
-Check(SaveFolder.CheckRange(rangeRoot,"71400","71470").Contains("71470 がフォルダーの 71460 と違います"),"last serial differing from folder end is reported");
-Check(SaveFolder.CheckRange(rangeRoot,"71400","").Contains("最後S/N が空です"),"empty last serial is reported");
-Check(SaveFolder.CheckRange(Path.Combine(root,"測定データ"),"1","2").Contains("SN開始-最後 がありません") && SaveFolder.CheckRange("","1","")=="","folder without range is reported; no folder is not checked");
-Check(SaveFolder.CheckRange(rangeRoot,"71500","71470").EndsWith("保存先フォルダーを確認してください。"),"range problems end with the folder reminder");
+Check(SaveFolder.CheckRange(rangeRoot,"71360")=="" && SaveFolder.CheckRange(rangeRoot,"71460")=="","measurement serial inside range is accepted");
+Check(SaveFolder.CheckRange(rangeRoot,"71500").Contains("範囲 71360〜71460 の外") && SaveFolder.CheckRange(rangeRoot,"71359").Contains("の外"),"measurement serial outside range is reported");
+Check(SaveFolder.CheckRange(rangeRoot,"").Contains("測定開始S/N が空です") && SaveFolder.CheckRange(rangeRoot,"abc").Contains("数字ではありません"),"empty or non-numeric measurement serial is reported");
+Check(SaveFolder.CheckRange(Path.Combine(root,"測定データ"),"1").Contains("SN開始-最後 がありません") && SaveFolder.CheckRange("","1")=="","folder without range is reported; no folder is not checked");
+Check(SaveFolder.CheckRange(rangeRoot,"71500").EndsWith("保存先フォルダーを確認してください。"),"range problems end with the folder reminder");
 // 保存先の走査: Excel/PDF/LOGGER のファイル名から S/N を拾い、完了記録に無いものを返す。形式外は件数だけ。
 Directory.CreateDirectory(Path.Combine(rangeRoot,"Excel"));Directory.CreateDirectory(Path.Combine(rangeRoot,"LOGGER"));
 File.WriteAllText(Path.Combine(rangeRoot,"Excel","AS110-035_SN71362_20261106_6500.xlsx"),"");

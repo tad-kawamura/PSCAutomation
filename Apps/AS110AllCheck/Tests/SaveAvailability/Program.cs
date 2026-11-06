@@ -60,35 +60,44 @@ internal static class Program
                 throw new Exception("Save root / serial visibility did not follow mode: "+mode);
         }
         Console.WriteLine("PASS startup waits for mode; all three modes reveal stand selection; save root and serial only in production");
-        // データ取りの操作欄の並び: 型式 → 開始S/N・最後S/N → 保存先 → 保護解除・転送設定 → ボタン → 状態。最後に選んだモードはデータ取り(2)。
+        // データ取りの操作欄の並び: 型式 → 保存先 → 開始S/N・最後S/N(フォルダー名から) → 測定開始S/N → 保護解除・転送設定 → ボタン → 状態。最後に選んだモードはデータ取り(2)。
         _=form.Handle;form.PerformLayout();
-        Control[] orderedRows=[(Control)Field("_setupPanel"),(Control)Field("_serialPanel"),(Control)Field("_savePathPanel"),(Control)Field("_protectionPanel"),(Control)Field("_actionPanel"),(Control)Field("_flowLabel")];
+        Control[] orderedRows=[(Control)Field("_setupPanel"),(Control)Field("_savePathPanel"),(Control)Field("_rangePanel"),(Control)Field("_serialPanel"),(Control)Field("_protectionPanel"),(Control)Field("_actionPanel"),(Control)Field("_flowLabel")];
         for(int i=1;i<orderedRows.Length;i++)
             if(orderedRows[i].Top<=orderedRows[i-1].Top)throw new Exception($"Production rows out of order at {i}: {string.Join(",",orderedRows.Select(r=>r.Top))}");
-        var serialBox=(TextBox)Field("_serialBox");var lastSerialBox=(TextBox)Field("_lastSerialBox");
-        if(serialBox.Left>=lastSerialBox.Left)throw new Exception("Start serial and last serial are not left to right");
-        // 保存先フォルダー名「SN開始-最後」から開始S/N(空か 1 のとき)・最後S/N(空のとき)を入れ、合わないときは保存先の行の下に赤字を出す。
-        var warning=(Label)Field("_saveRootWarningLabel");
+        var serialBox=(TextBox)Field("_serialBox");var rangeStartBox=(TextBox)Field("_rangeStartBox");var lastSerialBox=(TextBox)Field("_lastSerialBox");
+        if(rangeStartBox.Left>=lastSerialBox.Left)throw new Exception("Range start and last serial are not left to right");
+        if(!rangeStartBox.ReadOnly || !lastSerialBox.ReadOnly || serialBox.ReadOnly)throw new Exception("Range boxes must be read-only and the measurement serial editable");
+        if(rangeStartBox.Font.Size>=serialBox.Font.Size)throw new Exception("Range boxes should be smaller than the measurement serial box");
+        // 保存先フォルダー名「SN開始-最後」から開始S/N・最後S/N を緑字で入れ(選び直すたびに入れ替え)、測定開始S/N が範囲外なら保存先の行の下に赤字を出す。
+        // 測定開始S/N は人が入れる。空のあいだは欄の右に赤字「入力してください」。
+        var warning=(Label)Field("_saveRootWarningLabel");var missing=(Label)Field("_serialMissingLabel");
         string rangeRoot=Path.Combine(Path.GetTempPath(),"AS110AllCheck-range-"+Guid.NewGuid().ToString("N"),"SN71360-71460");
         Directory.CreateDirectory(rangeRoot);
         try
         {
-            ((TextBox)Field("_rootBox")).Text=rangeRoot;serialBox.Text="1";lastSerialBox.Text="";
+            ((TextBox)Field("_rootBox")).Text="";serialBox.Text="";Call("ApplySaveRootRange");Call("UpdateControls");
+            if(!LocalVisible(missing) || missing.Text!="入力してください" || missing.ForeColor!=Color.Red)throw new Exception("Empty measurement serial must show the red prompt");
+            if(missing.Left<=serialBox.Left)throw new Exception("The red prompt must be to the right of the measurement serial box");
+            ((TextBox)Field("_rootBox")).Text=rangeRoot;
             Call("ApplySaveRootRange");Call("UpdateControls");
-            if(serialBox.Text!="71360" || lastSerialBox.Text!="71460")throw new Exception($"Save root range was not applied: {serialBox.Text}/{lastSerialBox.Text}");
-            if(LocalVisible(warning) || warning.Text.Length>0)throw new Exception("Range warning shown although serials match the folder: "+warning.Text);
+            if(rangeStartBox.Text!="71360" || lastSerialBox.Text!="71460")throw new Exception($"Save root range was not applied: {rangeStartBox.Text}/{lastSerialBox.Text}");
+            if(rangeStartBox.ForeColor!=Color.Green || lastSerialBox.ForeColor!=Color.Green)throw new Exception("Range filled from the folder must be green");
+            if(serialBox.Text.Length!=0 || !LocalVisible(missing))throw new Exception("Selecting a folder must not fill the measurement serial");
+            if(!LocalVisible(warning) || !warning.Text.Contains("測定開始S/N が空です"))throw new Exception("Empty measurement serial must be reported against the folder: "+warning.Text);
             serialBox.Text="71500";Call("UpdateControls");
+            if(LocalVisible(missing))throw new Exception("Red prompt remained after typing a serial");
             if(!LocalVisible(warning) || !warning.Text.Contains("範囲 71360〜71460 の外") || warning.ForeColor!=Color.Red)throw new Exception("Range warning not shown in red for a serial outside the folder: "+warning.Text);
-            if(warning.Top<=((Control)Field("_savePathPanel")).Top || warning.Top>=((Control)Field("_protectionPanel")).Top)throw new Exception("Range warning is not between the save root row and the release row");
-            serialBox.Text="71400";lastSerialBox.Text="71470";Call("UpdateControls");
-            if(!warning.Text.Contains("71470 がフォルダーの 71460 と違います"))throw new Exception("Last serial mismatch not reported: "+warning.Text);
-            serialBox.Text="71400";Call("ApplySaveRootRange");
-            if(serialBox.Text!="71400" || lastSerialBox.Text!="71470")throw new Exception("Applying the folder range overwrote values the user typed");
-            lastSerialBox.Text="71460";Call("UpdateControls");
-            if(LocalVisible(warning))throw new Exception("Range warning remained after correcting: "+warning.Text);
-            Console.WriteLine("PASS save root range fills start/last serial and warns in red on mismatch");
+            if(warning.Top<=((Control)Field("_savePathPanel")).Top || warning.Top>=((Control)Field("_rangePanel")).Top)throw new Exception("Range warning is not between the save root row and the range row");
+            serialBox.Text="71400";Call("UpdateControls");
+            if(LocalVisible(warning))throw new Exception("Range warning remained for a serial inside the folder: "+warning.Text);
+            string plainRoot=Path.Combine(Path.GetDirectoryName(rangeRoot)!,"測定データ");Directory.CreateDirectory(plainRoot);
+            ((TextBox)Field("_rootBox")).Text=plainRoot;Call("ApplySaveRootRange");Call("UpdateControls");
+            if(rangeStartBox.Text.Length!=0 || lastSerialBox.Text.Length!=0 || rangeStartBox.ForeColor==Color.Green)throw new Exception("Folder without a range must clear the range boxes");
+            if(!warning.Text.Contains("SN開始-最後 がありません"))throw new Exception("Folder without a range not reported: "+warning.Text);
+            Console.WriteLine("PASS save root fills start/last serial in green, measurement serial is typed, red prompt when empty, red warning when outside");
         }
-        finally { ((TextBox)Field("_rootBox")).Text="";serialBox.Text="1";lastSerialBox.Text="";Call("UpdateControls");try{Directory.Delete(Path.GetDirectoryName(rangeRoot)!,true);}catch(IOException){} }
+        finally { ((TextBox)Field("_rootBox")).Text="";serialBox.Text="";Call("ApplySaveRootRange");Call("UpdateControls");try{Directory.Delete(Path.GetDirectoryName(rangeRoot)!,true);}catch(IOException){} }
         if(((Control)Field("_transferButton")).Left>=((Control)Field("_saveButton")).Left)throw new Exception("Excel transfer button is not first in the action row");
         string productionImage=Path.Combine(AppContext.BaseDirectory,"production-panel.png");
         // 非表示フォームの子はハンドルが無く描かれないので、先に作る。
@@ -103,7 +112,7 @@ internal static class Program
         string formImage=Path.Combine(AppContext.BaseDirectory,"main-form.png");
         CreateHandles(form);form.PerformLayout();
         using(var bitmap=new Bitmap(form.Width,form.Height)){ form.DrawToBitmap(bitmap,new Rectangle(Point.Empty,bitmap.Size)); bitmap.Save(formImage); }
-        Console.WriteLine("PASS production rows are model, serial, save root, release, buttons, status; layout images: "+productionImage+" / "+formImage);
+        Console.WriteLine("PASS production rows are model, save root, range, measurement serial, release, buttons, status; layout images: "+productionImage+" / "+formImage);
         var flow=Field("_flow");
         var flowType=flow.GetType();
         flowType.GetProperty("Mode")!.SetValue(flow,Enum.Parse(assembly.GetType("PSCAutomation.Apps.AS110AllCheck.TestMode")!,"Production"));
@@ -115,6 +124,16 @@ internal static class Program
         if (!args.Contains("--no-dialogs")) JudgmentNoticeTests.Run(form, type, flow, flowType, assembly);
         if (args.Contains("--with-excel")) ExcelJudgmentFocusTests.Run(form, type);
         if (args.Contains("--with-excel")) ExcelPreparationTests.Run(assembly);
+        // 測定開始S/N が空のときは SerialMissing で測定開始を止め、状態欄に入力の案内を出す。
+        var serialMissing=flowType.GetProperty("SerialMissing")!;
+        flowType.GetMethod("ConfigureWithoutSerial")!.Invoke(flow,[product]);Call("UpdateProductionControls");
+        if(!(bool)serialMissing.GetValue(flow)! || !((Label)Field("_flowLabel")).Text.Contains("測定開始S/Nを入力してください") || ((Button)Field("_startButton")).Enabled)throw new Exception("Missing serial must block measurement and prompt for input: "+((Label)Field("_flowLabel")).Text);
+        flowType.GetMethod("Configure")!.Invoke(flow,["123",product]);
+        flowType.GetMethod("BeginMeasurement")!.Invoke(flow,[DateTime.Now]);
+        flowType.GetMethod("CaptureSucceeded")!.Invoke(flow,null);
+        flowType.GetMethod("TransferSucceeded")!.Invoke(flow,null);
+        if((bool)serialMissing.GetValue(flow)!)throw new Exception("Serial set must clear SerialMissing");
+        Console.WriteLine("PASS missing measurement serial blocks start and prompts");
         // 最後 S/N: 空は上限なし、開始 S/N が最後 S/N を超えたら範囲終了と判定し、状態欄に案内を出す。
         var rangeFinished=flowType.GetProperty("SerialRangeFinished")!;
         var setLast=flowType.GetMethod("SetLastSerial")!;
