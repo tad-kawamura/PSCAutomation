@@ -206,6 +206,21 @@ internal sealed class ExcelWorkSession : IDisposable
         _book.Close(false);
         Closed=true;_book=null;
     }
+    // 合格確定用。作業ブックがまだ開いていれば閉じて false を返す。人がブックや Excel を先に閉じていた(ブック一覧に無い・Excel が切断)なら、
+    // 閉じる操作をせずに閉じた扱いにして true を返す(2026-11-06、人の判断: 保存できたから Excel を閉じるのは自然な操作で、合格を止めない)。
+    // Excel 自体が切断されていれば参照も返す(次の番号は新しい Excel を起動する)。編集中・応答待ちのエラーは例外のまま返す(切断とは区別する)。
+    public bool CloseVerifiedOrAlreadyClosed()
+    {
+        if(Closed) return false;
+        if(_book is null) throw new InvalidOperationException("対象Excelを確認できません。");
+        if(_book.IsStillOpen()) { _book.Close(false); Closed=true;_book=null; return false; }
+        _book=null;Closed=true;_source=null;_header=null;
+        bool connected;
+        try { connected=_app?.IsConnected() ?? false; }
+        catch { connected=true; }
+        if(!connected) ReleaseApplication();
+        return true;
+    }
     // 自分で起動したExcelだけを再利用し、他のExcelには接続しない。
     public void PrepareForTransfer()
     {

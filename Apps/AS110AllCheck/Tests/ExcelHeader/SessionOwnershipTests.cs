@@ -48,6 +48,39 @@ internal static class SessionOwnershipTests
             ((IDisposable)session).Dispose();
             Console.WriteLine($"PASS closed workbook versus disconnected server: 0x{error:X8}");
         }
+        // 合格確定の閉じ方(CloseVerifiedOrAlreadyClosed): ブックが開いていれば閉じて false。人がブックを閉じていれば閉じずに true(Excel は残す)。
+        // Excel ごと閉じられて切断していれば閉じずに true で Excel の参照も返す。編集中・応答待ち(呼び出し拒否)は例外のまま(切断と区別する)。
+        var closeOrGone=type.GetMethod("CloseVerifiedOrAlreadyClosed")!;
+        {
+            object session=Activator.CreateInstance(type,nonPublic:true)!;
+            var app=new BusyExcel();
+            SessionAccess.Attach(session,app,app.Workbooks,app.Workbooks.Book);
+            bool gone=(bool)closeOrGone.Invoke(session,null)!;
+            if(gone || app.CloseAttempts!=1 || SessionAccess.Workbook(session) is not null)throw new Exception("Open workbook must be closed normally at completion");
+            ((IDisposable)session).Dispose();
+        }
+        foreach(int error in new[]{0,unchecked((int)0x80010108),unchecked((int)0x800706BA)})
+        {
+            object session=Activator.CreateInstance(type,nonPublic:true)!;
+            var app=new BusyExcel { Error=error };
+            app.Workbooks.Present=false;
+            SessionAccess.Attach(session,app,app.Workbooks,app.Workbooks.Book);
+            bool gone=(bool)closeOrGone.Invoke(session,null)!;
+            if(!gone || app.CloseAttempts!=0 || SessionAccess.Workbook(session) is not null || (SessionAccess.Application(session) is null)!=(error!=0))
+                throw new Exception($"Workbook closed by hand / Excel gone must count as closed at completion: 0x{error:X8}");
+            ((IDisposable)session).Dispose();
+        }
+        {
+            object session=Activator.CreateInstance(type,nonPublic:true)!;
+            var app=new BusyExcel { Error=unchecked((int)0x80010001) };
+            SessionAccess.Attach(session,app,app.Workbooks,app.Workbooks.Book);
+            bool rejected=false;
+            try { closeOrGone.Invoke(session,null); }
+            catch(TargetInvocationException ex) when(ex.InnerException is COMException com && com.ErrorCode==unchecked((int)0x80010001)) { rejected=true; }
+            if(!rejected || app.CloseAttempts!=0 || SessionAccess.Workbook(session) is null)throw new Exception("Busy Excel at completion must be reported, not treated as closed");
+            ((IDisposable)session).Dispose();
+        }
+        Console.WriteLine("PASS completion closes an open workbook, treats a hand-closed workbook or gone Excel as closed, and reports busy Excel");
     }
 }
 
@@ -77,5 +110,7 @@ public sealed class BusyBook
     {
         _app.CloseAttempts++;
         if(_app.Error!=0 || _app.CloseError!=0)throw new COMException("Excel busy",_app.Error!=0 ? _app.Error : _app.CloseError);
+        // 閉じられたらブック一覧から消える(本物の Excel と同じ。閉じたことの確認に使う)。
+        _app.Workbooks.Present=false;
     }
 }

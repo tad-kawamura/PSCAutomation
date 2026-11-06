@@ -698,7 +698,9 @@ internal sealed partial class MainForm : Form
         RunOperation("合格確定",()=> {
             if(!_flow.CanComplete || _excel is null)throw new InvalidOperationException("最新結果の保存と漏れチェックが必要です。");
             var store=Store;using var held=store.Lock();if(store.IsComplete(_flow.Serial))throw new IOException("このS/Nは完了済みです。");
-            _excel.CloseVerified(); // 閉じる処理が失敗したら記録・加算しない。
+            // 閉じる処理が失敗したら記録・加算しない。人が Excel(またはブック)を先に閉じていたときは閉じた扱いで進める(2026-11-06。以前は COM の切断エラーで合格が止まっていた)。
+            bool excelAlreadyClosed=_excel.CloseVerifiedOrAlreadyClosed();
+            if(excelAlreadyClosed)AppendLog("合格確定：Excel は先に閉じられていました（閉じた扱いで記録します）。");
             store.Append("COMPLETE",_flow.Serial,_flow.Model.Name,_flow.BaseName);
             string previous=_flow.Serial;_flow.Advance();_serialBox.Text=_flow.Serial;_reviewStage=false;_ownedSaveBase=null;
             // 次の番号がすでに完了済み(測り直しの途中など)なら、押す前に分かるようにしておく。
