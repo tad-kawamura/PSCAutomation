@@ -60,6 +60,13 @@ internal static class Program
                 throw new Exception("Save root / serial visibility did not follow mode: "+mode);
         }
         Console.WriteLine("PASS startup waits for mode; all three modes reveal the calibration panel; save root and serial only in production");
+        // 「次にすること」: データ調整ボタンが押せない間は、理由と次の操作を赤字で出す(機器なしなので未接続の案内になる)。押せない理由が空のままボタンが押せない状態を作らない。
+        var nextStep=(Label)Field("_nextStepLabel");var startButton=(Button)Field("_startButton");
+        string startBlockReason=(string)type.GetMethod("GetStartBlockReason",Private)!.Invoke(form,null)!;
+        if(startButton.Enabled || startBlockReason.Length==0)throw new Exception("Start must be blocked with a reason when devices are missing: "+startBlockReason);
+        if(!nextStep.Text.StartsWith("次にすること：") || !nextStep.Text.Contains("未接続") || !nextStep.Text.Contains("「確認」") || nextStep.ForeColor!=Color.Red)throw new Exception("Next-step guide must explain the missing devices in red: "+nextStep.Text);
+        if(nextStep.Parent!=startButton.Parent || nextStep.Top<=startButton.Top)throw new Exception("Next-step guide must be under the top button row");
+        Console.WriteLine("PASS next-step guide shows the red block reason under the buttons: "+nextStep.Text);
         // データ取りの操作欄の並び: 保存先 → 開始S/N・最後S/N(フォルダー名から) → 測定開始S/N → 保護解除・転送設定 → ボタン → 状態(型式の行は無い。参照波形で決まる)。最後に選んだモードはデータ取り(2)。
         _=form.Handle;form.PerformLayout();
         // 「設定変更（測定を破棄）」は操作欄ではなく校正欄の「校正値を変更」の右隣。

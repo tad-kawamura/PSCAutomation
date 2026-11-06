@@ -251,7 +251,9 @@ internal sealed partial class MainForm : Form
         _serialMissingLabel.Visible=production && _serialBox.Text.Trim().Length==0;
         _serialBox.Enabled=CanChangeSetup && production;
         _startButton.Text=_flow.Mode==TestMode.Motion?"測定開始":"データ調整";
-        _startButton.Enabled=ready && !_flow.SaveFailed && !_flow.CaptureFailed && (!_reviewStage) && (_flow.Mode!=TestMode.Motion || MotionContactEnergized) && !_flow.SerialRangeFinished && !_flow.SerialMissing;
+        // 型式(参照波形)未選択・データ取りの保存先未選択は、押してからエラーにせず押せない状態にして「次にすること」で案内する(2026-11-06)。
+        _startButton.Enabled=ready && !_flow.SaveFailed && !_flow.CaptureFailed && (!_reviewStage) && (_flow.Mode!=TestMode.Motion || MotionContactEnergized) && !_flow.SerialRangeFinished && !_flow.SerialMissing
+            && (_flow.Mode==TestMode.Motion || _selectedReferencePath is not null) && (_flow.Mode!=TestMode.Production || _rootBox.Text.Length>0);
         _transferButton.Enabled=idle && _flow.HasCapture && !_flow.CaptureFailed && !_reviewStage;
         string saveBlockReason=GetSaveBlockReason();
         _saveButton.Enabled=saveBlockReason.Length==0;
@@ -278,8 +280,68 @@ internal sealed partial class MainForm : Form
         if(_generatorOutputUnknown)_flowLabel.Text+="／発振器の出力状態不明：本体で出力OFFを確認し「確認」で再接続してください";
         if(_flow.Mode==TestMode.Production && _flow.HasTransfer && !_reviewStage && saveBlockReason.Length>0)
             _flowLabel.Text+=$"／保存待機：{saveBlockReason}";
+        UpdateNextStepGuide(saveBlockReason);
         UpdateDeveloperContactControls();
         SendBoardDisplay();
+    }
+    // 「次にすること」の表示。データ調整(測定開始)ボタンが押せないときはその理由と次の操作を赤字で、押せるときは次の操作を緑字で出す。
+    private void UpdateNextStepGuide(string saveBlockReason)
+    {
+        string blocked=GetStartBlockReason();
+        if(blocked.Length>0)
+        {
+            _nextStepLabel.ForeColor=Color.Red;
+            _nextStepLabel.Text=$"次にすること：{blocked}（「{_startButton.Text}」は押せません）";
+            return;
+        }
+        _nextStepLabel.ForeColor=Color.Green;
+        string next;
+        if(_flow.HasCapture && !_flow.HasTransfer) next="測定済みです。「Excel転送」を押してください（測り直すなら「"+_startButton.Text+"」）";
+        else if(_flow.HasTransfer && _flow.Mode==TestMode.Production && saveBlockReason.Length==0) next="Excel転送済みです。「保存」を押してください（測り直すなら「"+_startButton.Text+"」）";
+        else if(_flow.HasTransfer && _flow.Mode==TestMode.Production) next=$"Excel転送済み（{_excelJudgmentStatus}）。保存できません：{saveBlockReason}。測り直すなら「{_startButton.Text}」";
+        else if(_flow.HasTransfer) next="Excel転送済みです。結果を確認し、測り直すなら「"+_startButton.Text+"」を押してください";
+        else next=$"「{_startButton.Text}」を押してください（M5Stack の A ボタンでも始められます）";
+        _nextStepLabel.Text="次にすること："+next;
+    }
+    // データ調整(測定開始)ボタンが押せない理由。空ならボタンは押せる。_startButton.Enabled の条件と同じ順で、最初に引っかかったものを返す。
+    private string GetStartBlockReason()
+    {
+        if(_checkingConnections)return "接続確認中です。終わるまで待ってください";
+        if(!ConnectionsReady)
+        {
+            var missing=new List<string>();
+            if(!_arduino.IsConnected)missing.Add("M5Stack");
+            if(_generator is null)missing.Add("発振器");
+            else if(_generatorOutputUnknown)missing.Add("発振器の出力状態（本体で出力OFFを確認）");
+            if(!_logger.IsInitialized || !_hardwareDetected)missing.Add("LOGGER／NR本体");
+            return $"{string.Join("・",missing)} が未接続です。機器をつないで「確認」を押してください";
+        }
+        if(!_modeSelected)return "モードを選んでください";
+        if(_excelPreparing)return "Excel を準備中です。終わるまで待ってください";
+        if(_operationInProgress)return "処理中です。終わるまで待ってください";
+        if(_flow.Measuring)return "測定中です";
+        if(_leakRunning)return "漏れチェック中です";
+        if(!_calibrationApplied)return CalibrationSupported?"校正値を入力してください（「校正値を入力」）":"雛形を読み込んでください（「雛形を読み込む」）";
+        if(!_templateLoaded)return "LOGGER で雛形が開かれていません。「校正値を入力」で読み込み直してください";
+        if(!LoggerReadyToStart)return $"LOGGER が{GetLoggerStateText()}です。LOGGER を停止してから「状態確認」を押してください";
+        if(_flow.Mode!=TestMode.Motion && _selectedReferencePath is null)return "型式（参照波形）を選んでください";
+        if(_flow.Mode==TestMode.Production)
+        {
+            if(_rootBox.Text.Length==0)return "「保存先選択」で保存先を選んでください";
+            if(_flow.SerialMissing)return "測定開始S/N を入力してください";
+            if(_flow.SerialRangeFinished)return $"最後の S/N {_flow.LastSerial} を超えています。保存先を選び直し、測定開始S/N を入力してください";
+        }
+        if(_flow.CaptureFailed)return "一時保存に失敗しています。「一時保存を再試行」を押してください";
+        if(_flow.SaveFailed)return "保存に失敗しています。「保存」で同じ番号を再保存してください";
+        if(_reviewStage)
+        {
+            if(_leakOutputReady)return "+30mA 出力中です。「漏れ試験実施」を押してください";
+            if(_flow.CanComplete)return "漏れ試験が済みました。「合格」を押してください（もう一度なら「+30mA」）";
+            return "一式保存済みです。「+30mA」→「漏れ試験実施」→「合格」の順に進めてください（やり直すなら「再測定へ戻る」）";
+        }
+        if(!_arduino.MeasurementInputReady)return "M5Stack からの状態通知が途切れています。M5Stack の表示とケーブルを確認してください";
+        if(_flow.Mode==TestMode.Motion && !MotionContactEnergized)return "外部接点が ON になっていません";
+        return "";
     }
     private string GetSaveBlockReason()
     {

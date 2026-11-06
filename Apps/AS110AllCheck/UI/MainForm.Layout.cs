@@ -23,6 +23,7 @@ internal sealed partial class MainForm : Form
     private readonly Label _dropTextLabel = new();
     private readonly Button _initializeButton = new();
     private readonly Button _startButton = new();
+    private readonly Label _nextStepLabel = new();
     private readonly Button _getStateButton = new();
     private readonly Button _restoreWifiButton = new();
     private readonly Button _exitButton = new();
@@ -171,6 +172,14 @@ internal sealed partial class MainForm : Form
             _restoreWifiButton,
             _exitButton
         ]);
+        // 「次にすること」: データ調整(測定開始)ボタンが押せない理由と次の操作を、ボタンのすぐ下に 1 行で出す(2026-11-06、人の要望。
+        // 立ち上げて設定中に何をすればいいか分からない、ボタンが押せない理由が分からないため)。押せるときは緑、押せないときは赤。
+        buttons.SetFlowBreak(_exitButton, true);
+        _nextStepLabel.AutoSize = true;
+        _nextStepLabel.MaximumSize = new Size(720, 0);
+        _nextStepLabel.Font = new Font(Font.FontFamily, 11, FontStyle.Bold);
+        _nextStepLabel.Margin = new Padding(0, 8, 0, 0);
+        buttons.Controls.Add(_nextStepLabel);
 
         // 接続先ごとに1行。見出しと値の開始位置をそろえる。
         var statusPanel = _connectionStatusPanel;
