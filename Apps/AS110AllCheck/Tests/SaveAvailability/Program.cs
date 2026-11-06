@@ -109,6 +109,26 @@ internal static class Program
             Console.WriteLine("PASS save root fills start/last serial in green, measurement serial is typed, red prompt when empty, red warning when outside");
         }
         finally { ((TextBox)Field("_rootBox")).Text="";serialBox.Text="";Call("ApplySaveRootRange");Call("UpdateControls");try{Directory.Delete(Path.GetDirectoryName(rangeRoot)!,true);}catch(IOException){} }
+        // 完了済み(保護中)の S/N を測定開始S/N に入れたときは、押してからエラーにせず、データ調整ボタンを押せなくして「次にすること」で知らせる。
+        string completedRoot=Path.Combine(Path.GetTempPath(),"AS110AllCheck-complete-"+Guid.NewGuid().ToString("N"),"SN1-100");
+        Directory.CreateDirectory(completedRoot);
+        try
+        {
+            var storeType=assembly.GetType("PSCAutomation.Apps.AS110AllCheck.CompletionStore")!;
+            object completionStore=Activator.CreateInstance(storeType,completedRoot)!;
+            using(var held=(IDisposable)storeType.GetMethod("Lock")!.Invoke(completionStore,null)!)
+                storeType.GetMethod("Append")!.Invoke(completionStore,["COMPLETE","2","AS110-035","x"]);
+            var configure=type.GetMethod("ConfigureProduct",Private)!;
+            ((TextBox)Field("_rootBox")).Text=completedRoot;Call("ApplySaveRootRange");
+            serialBox.Text="2";configure.Invoke(form,[false]);Call("UpdateControls");
+            if(!(bool)Field("_serialCompleted"))throw new Exception("Completed serial was not detected when typed");
+            // 機器なしなので「次にすること」は未接続の案内が先に出る。ここではボタンが押せないことと、完了済みの判定だけを確かめる(文言は GetStartBlockReason の順で接続後に出る)。
+            if(((Button)Field("_startButton")).Enabled)throw new Exception("Completed serial must disable start");
+            serialBox.Text="3";configure.Invoke(form,[false]);Call("UpdateControls");
+            if((bool)Field("_serialCompleted"))throw new Exception("Non-completed serial must clear the completed state");
+            Console.WriteLine("PASS completed serial is detected when typed and blocks start; another serial clears it");
+        }
+        finally { ((TextBox)Field("_rootBox")).Text="";serialBox.Text="";Call("ApplySaveRootRange");Call("UpdateControls");try{Directory.Delete(Path.GetDirectoryName(completedRoot)!,true);}catch(IOException){} }
         if(((Control)Field("_transferButton")).Left>=((Control)Field("_saveButton")).Left)throw new Exception("Excel transfer button is not first in the action row");
         string productionImage=Path.Combine(AppContext.BaseDirectory,"production-panel.png");
         // 非表示フォームの子はハンドルが無く描かれないので、先に作る。

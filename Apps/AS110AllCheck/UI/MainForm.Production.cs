@@ -200,7 +200,7 @@ internal sealed partial class MainForm : Form
                 // S/N が空のまま残っていた測定結果(データ調整のものなど)は、S/N を入れた時点で破棄される(S/N なしではデータ取りに使えない)。
                 bool discarded=_flow.HasCapture && _flow.SerialMissing && _serialBox.Text.Trim().Length>0;
                 ConfigureProduct(requireSaveRoot:false);
-                return _flow.Serial.Length>0?$"S/N {_flow.Serial} から"+(discarded?"（S/N なしの前の測定結果は破棄しました）":""):"測定開始S/N を入力してください";});
+                return _flow.Serial.Length>0?$"S/N {_flow.Serial} から"+(discarded?"（S/N なしの前の測定結果は破棄しました）":"")+(_serialCompleted?"（完了済みのため測定開始できません。保護解除が必要）":""):"測定開始S/N を入力してください";});
             // 測定開始S/N が入るまで Excel の事前準備を待たせているので、入ったらここで始める。
             if(_flow.Serial.Length>0 && _excel is null && _templateLoaded)RequestExcelPreparation();
         };
@@ -218,9 +218,24 @@ internal sealed partial class MainForm : Form
         if (_flow.Mode == TestMode.Adjustment) { _flow.ConfigureAdjustment(SelectedModel); return; }
         _flow.SetLastSerial(_lastSerialBox.Text.Trim());
         // 測定開始S/N が空のときは型式だけ持ち、測定開始はできない(赤字「入力してください」で案内)。
-        if(_serialBox.Text.Trim().Length==0) { _flow.ConfigureWithoutSerial(SelectedModel); return; }
+        if(_serialBox.Text.Trim().Length==0) { _flow.ConfigureWithoutSerial(SelectedModel); _serialCompleted=false; return; }
         _flow.Configure(_serialBox.Text.Trim(),SelectedModel);
-        if(_flow.Mode==TestMode.Production && (requireSaveRoot || _rootBox.Text.Length>0)) { var store=Store;using var held=store.Lock();if(store.IsComplete(_flow.Serial))throw new InvalidOperationException("このS/Nは完了済みです。保護解除が必要です。"); }
+        if(_flow.Mode==TestMode.Production && (requireSaveRoot || _rootBox.Text.Length>0))
+        {
+            RefreshSerialCompletion(requireSaveRoot);
+            // 測定開始のとき(requireSaveRoot)だけ止める。S/N 入力・保存先選択・モード選択のときはポップアップにせず、「次にすること」とボタンで知らせる(2026-11-06、人の指摘)。
+            if(_serialCompleted && requireSaveRoot)throw new InvalidOperationException("このS/Nは完了済みです。保護解除が必要です。");
+        }
+    }
+    // 測定開始S/N が完了記録で保護中か(押してからエラーにせず、「次にすること」とデータ調整ボタンに反映する)。
+    private bool _serialCompleted;
+    // 完了記録を読み直して _serialCompleted を更新する。S/N を入れたとき・保存先を選んだとき・合格で次の番号へ進んだとき・保護と解除を変えたときに呼ぶ。
+    private void RefreshSerialCompletion(bool throwOnError=false)
+    {
+        _serialCompleted=false;
+        if(_flow.Mode!=TestMode.Production || _flow.SerialMissing || _rootBox.Text.Length==0)return;
+        try { var store=Store;using var held=store.Lock();_serialCompleted=store.IsComplete(_flow.Serial); }
+        catch(Exception ex) when(!throwOnError) { AppendLog("完了記録の確認に失敗："+ex.Message); }
     }
     private void ChangeTestMode()
     {
@@ -263,7 +278,7 @@ internal sealed partial class MainForm : Form
         _startButton.Text=_flow.Mode==TestMode.Motion?"測定開始":"データ調整";
         // 型式(参照波形)未選択・データ取りの保存先未選択は、押してからエラーにせず押せない状態にして「次にすること」で案内する(2026-11-06)。
         _startButton.Enabled=ready && !_flow.SaveFailed && !_flow.CaptureFailed && (!_reviewStage) && (_flow.Mode!=TestMode.Motion || MotionContactEnergized) && !_flow.SerialRangeFinished && !_flow.SerialMissing
-            && (_flow.Mode==TestMode.Motion || _selectedReferencePath is not null) && (_flow.Mode!=TestMode.Production || _rootBox.Text.Length>0);
+            && (_flow.Mode==TestMode.Motion || _selectedReferencePath is not null) && (_flow.Mode!=TestMode.Production || _rootBox.Text.Length>0) && !_serialCompleted;
         _transferButton.Enabled=idle && _flow.HasCapture && !_flow.CaptureFailed && !_reviewStage;
         string saveBlockReason=GetSaveBlockReason();
         _saveButton.Enabled=saveBlockReason.Length==0;
@@ -348,6 +363,7 @@ internal sealed partial class MainForm : Form
             if(_rootBox.Text.Length==0)return "「保存先選択」で保存先を選んでください";
             if(_flow.SerialMissing)return "測定開始S/N を入力してください";
             if(_flow.SerialRangeFinished)return $"最後の S/N {_flow.LastSerial} を超えています。保存先を選び直し、測定開始S/N を入力してください";
+            if(_serialCompleted)return $"測定開始S/N {_flow.Serial} は完了済み（保護中）です。別の番号にするか、「完了番号の保護と解除」で S/N {_flow.Serial} のチェックを外してください";
         }
         if(_flow.CaptureFailed)return "一時保存に失敗しています。「一時保存を再試行」を押してください";
         if(_flow.SaveFailed)return "保存に失敗しています。「保存」で同じ番号を再保存してください";
@@ -661,6 +677,8 @@ internal sealed partial class MainForm : Form
             _excel.CloseVerified(); // 閉じる処理が失敗したら記録・加算しない。
             store.Append("COMPLETE",_flow.Serial,_flow.Model.Name,_flow.BaseName);
             string previous=_flow.Serial;_flow.Advance();_serialBox.Text=_flow.Serial;_reviewStage=false;_ownedSaveBase=null;
+            // 次の番号がすでに完了済み(測り直しの途中など)なら、押す前に分かるようにしておく。
+            _serialCompleted=store.IsComplete(_flow.Serial);
             _excel.Dispose();_excel=null;_capturePath=null;
             return _flow.SerialRangeFinished ? $"S/N{previous}完了。最後のS/N {_flow.LastSerial} まで終わりました。次の範囲は保存先を選び直し、測定開始S/Nを入力してください。" : $"S/N{previous}完了。次はS/N{_flow.Serial}です。";
         });
@@ -707,6 +725,8 @@ internal sealed partial class MainForm : Form
         RunOperation("保護と解除",()=> {
             var store=Store;using var held=store.Lock();
             var (released,reprotected)=store.SetProtection(desired);
+            // 今の測定開始S/N の保護が変わったかもしれないので、データ調整ボタンと「次にすること」に反映する。
+            if(!_flow.SerialMissing)_serialCompleted=store.IsComplete(_flow.Serial);
             var parts=new List<string>();
             if(released.Length>0) parts.Add($"S/N {string.Join(", ",released)} の保護を解除しました（既存ファイルは残しています）");
             if(reprotected.Length>0) parts.Add($"S/N {string.Join(", ",reprotected)} を保護しました");
