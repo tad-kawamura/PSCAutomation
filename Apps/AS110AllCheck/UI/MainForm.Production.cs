@@ -96,6 +96,36 @@ internal sealed partial class MainForm : Form
         _rangeStartBox.Text=range?.Start??"";_lastSerialBox.Text=range?.End??"";
         _rangeStartBox.ForeColor=_lastSerialBox.ForeColor=range is null?SystemColors.WindowText:Color.Green;
     }
+    // この起動で人が保存先を選んだか。データ取りでは、選ぶまで校正画面を開かず、校正記録も書かない(保存先 → 校正 → 型式 → S/N の順)。
+    private bool _saveRootChosen;
+    // データ取り以外は保存先を使わないので、校正へ進める。
+    private bool SaveRootReady => _flow.Mode!=TestMode.Production || _saveRootChosen;
+    // 保存先を決める(「保存先選択」と転送設定の保存先の変更から呼ぶ)。校正を適用済みなら、選んだ保存先へ校正記録を書く。
+    // 書けない保存先は受け付けず、選ぶ前の状態に戻す。受け付けたら、データ取りで校正がまだなら校正画面を開く。
+    private bool SelectSaveRoot(string path)
+    {
+        string previousRoot=_rootBox.Text;
+        bool previousChosen=_saveRootChosen;
+        _rootBox.Text=path;
+        _saveRootChosen=true;
+        try { WriteCalibrationRecordIfReady(); }
+        catch(Exception ex) when(ex is IOException or UnauthorizedAccessException or ArgumentException)
+        {
+            _rootBox.Text=previousRoot;
+            _saveRootChosen=previousChosen;
+            AppendLog($"保存先選択：校正記録を書けません / {ex.Message}");
+            ErrorNotification.Show(this,"この保存先には校正記録を書けません。別の保存先を選んでください。\n"+CalibrationRecordFile.FolderPath(path)+"\n"+ex.Message,"保存先の選択",MessageBoxButtons.OK,MessageBoxIcon.Error);
+            return false;
+        }
+        _transferSettings.SaveRoot=path;_transferSettings.Save();
+        ApplySaveRootRange();
+        if(_flow.Mode==TestMode.Production && CanChangeSetup) RunOperation("保存先選択",()=>{ConfigureProduct(requireSaveRoot:false);return _rootBox.Text;});
+        UpdateControls();
+        ReportUnrecordedData();
+        // 保存先が決まったので、接続確認が済んでいれば校正画面を開く(まだなら接続確認の終わりで開く)。
+        OpenCalibrationIfPending();
+        return true;
+    }
     // 保存先の Excel/PDF/LOGGER にある、完了記録に無い S/N のデータを知らせる(保護は「完了番号の保護と解除」の画面で付ける)。
     private void ReportUnrecordedData()
     {
@@ -128,28 +158,17 @@ internal sealed partial class MainForm : Form
     private Control BuildProductionPanel()
     {
 
-        _rootBox.Text=_transferSettings.SaveRoot;
+        // 保存先は起動のたびに空から始め、人が「保存先選択」で選ぶ(前回の保存先は選択画面の初期フォルダーにだけ使う)。
+        // 前回の保存先を入れたままにすると、データ取りで校正を適用した時点で前回のロットのフォルダーへ校正記録が書かれ、
+        // そのフォルダーが無い(USB を抜いた等)と保存先を選ぶ前に校正が止まっていた(2026-11-06、人の指摘)。
         ApplySaveRootRange();
         _chooseSaveRootButton.Click+=(_,_)=> {
             if(_operationInProgress || _flow.Measuring || _flow.SaveFailed || _leakRunning || _flow.HasSaved) return;
             using var dialog=new FolderBrowserDialog();
+            string previous=_rootBox.Text.Length>0?_rootBox.Text:_transferSettings.SaveRoot;
+            if(previous.Length>0 && Directory.Exists(previous)) dialog.SelectedPath=previous;
             if(dialog.ShowDialog(this)!=DialogResult.OK) return;
-            string previousRoot=_rootBox.Text;
-            _rootBox.Text=dialog.SelectedPath;
-            // 校正を適用済みなら、選んだ保存先へ校正記録を書く。書けない保存先は受け付けず、選ぶ前の保存先に戻す。
-            try { WriteCalibrationRecordIfReady(); }
-            catch(Exception ex) when(ex is IOException or UnauthorizedAccessException or ArgumentException)
-            {
-                _rootBox.Text=previousRoot;
-                AppendLog($"保存先選択：校正記録を書けません / {ex.Message}");
-                ErrorNotification.Show(this,"この保存先には校正記録を書けません。別の保存先を選んでください。\n"+CalibrationRecordFile.FolderPath(dialog.SelectedPath)+"\n"+ex.Message,"保存先の選択",MessageBoxButtons.OK,MessageBoxIcon.Error);
-                return;
-            }
-            _transferSettings.SaveRoot=dialog.SelectedPath;_transferSettings.Save();
-            ApplySaveRootRange();
-            if(_flow.Mode==TestMode.Production && CanChangeSetup) RunOperation("保存先選択",()=>{ConfigureProduct(requireSaveRoot:false);return _rootBox.Text;});
-            UpdateControls();
-            ReportUnrecordedData();
+            SelectSaveRoot(dialog.SelectedPath);
         };
         _releaseSerialButton.Click+=(_,_)=>ReleaseCompletedSerial();
         _transferSettingsButton.Click+=(_,_)=>EditTransferSettings();
@@ -369,6 +388,8 @@ internal sealed partial class MainForm : Form
         if(_operationInProgress)return "処理中です。終わるまで待ってください";
         if(_flow.Measuring)return "測定中です";
         if(_leakRunning)return "漏れチェック中です";
+        // データ取りは保存先を選んでから校正に進む(校正記録を保存先に書くため)。
+        if(!SaveRootReady)return "「保存先選択」で保存先を選んでください（選ぶと校正画面が開きます）";
         if(!_calibrationApplied)return CalibrationSupported?"校正値を入力してください（「校正値を入力」）":"雛形を読み込んでください（「雛形を読み込む」）";
         if(!_templateLoaded)return "LOGGER で雛形が開かれていません。「校正値を入力」で読み込み直してください";
         if(!LoggerReadyToStart)return $"LOGGER が{GetLoggerStateText()}です。LOGGER を停止してから「状態確認」を押してください";
@@ -774,7 +795,10 @@ internal sealed partial class MainForm : Form
         _flow.TransferFailed();
         var grid=new PropertyGrid {Dock=DockStyle.Fill,SelectedObject=_transferSettings,ToolbarVisible=false,PropertySort=PropertySort.NoSort};
         var ok=new Button{Text="設定保存",Dock=DockStyle.Bottom,Height=40,DialogResult=DialogResult.OK};dialog.Controls.AddRange([grid,ok]);
-        if(dialog.ShowDialog(this)==DialogResult.OK)RunOperation("転送設定保存",()=>{_transferSettings.Save();_rootBox.Text=_transferSettings.SaveRoot;return "設定しました。";});
+        string previousSaveRoot=_transferSettings.SaveRoot;
+        if(dialog.ShowDialog(this)==DialogResult.OK)RunOperation("転送設定保存",()=>{_transferSettings.Save();return "設定しました。";});
         UpdateControls();
+        // 転送設定の「保存先フォルダ」を書き換えたときは、「保存先選択」で選んだのと同じ扱いにする(変えていなければ今の保存先のまま)。
+        if(_transferSettings.SaveRoot!=previousSaveRoot && _transferSettings.SaveRoot.Length>0) SelectSaveRoot(_transferSettings.SaveRoot);
     }
 }

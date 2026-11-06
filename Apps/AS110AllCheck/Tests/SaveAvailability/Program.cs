@@ -46,7 +46,8 @@ internal static class Program
         var rootBox=(Control)Field("_rootBox");
         bool LocalVisible(Control control)=>(bool)getState.Invoke(control,[2])!;
         if(LocalVisible(productionPanel))throw new Exception("Operation panel appeared before mode selection");
-        ((TextBox)Field("_rootBox")).Text="";
+        // 保存先は起動のたびに空から始める(転送設定に残っている前回の保存先は入れない。2026-11-06、人の指摘)。
+        if(((TextBox)Field("_rootBox")).Text.Length!=0)throw new Exception("Save root must start empty instead of the previous save root");
         foreach(int mode in new[]{0,1,2})
         {
             modeBox.SelectedIndex=mode;
@@ -60,6 +61,40 @@ internal static class Program
                 throw new Exception("Save root / serial visibility did not follow mode: "+mode);
         }
         Console.WriteLine("PASS startup waits for mode; all three modes reveal the calibration panel; save root and serial only in production");
+        // データ取りは保存先を選んでから校正へ進む(保存先 → 校正 → 型式 → S/N。2026-11-06、人の指摘)。
+        // 「保存先選択」で選ぶまで校正記録を書かず、選んだ時点でその保存先に書く。データ調整・動き検査は保存先が無いので校正へ進める。
+        var saveRootReady=type.GetProperty("SaveRootReady",Private)!;
+        if((bool)Field("_saveRootChosen") || (bool)saveRootReady.GetValue(form)!)throw new Exception("Production must wait for the save root before calibration");
+        modeBox.SelectedIndex=1;Call("ChangeTestMode");
+        if(!(bool)saveRootReady.GetValue(form)!)throw new Exception("Adjustment has no save root and must proceed to calibration");
+        modeBox.SelectedIndex=2;Call("ChangeTestMode");
+        var calibrationType=assembly.GetType("PSCAutomation.Apps.AS110AllCheck.As110Calibration")!;
+        object calibration=Activator.CreateInstance(calibrationType,new PSCAutomation.Wrappers.LoggerFiles.ScalingPoints(-0.002f,0.01f,0.993f,30f),new PSCAutomation.Wrappers.LoggerFiles.ScalingPoints(-0.001f,0f,5.524f,540f))!;
+        object record=Activator.CreateInstance(assembly.GetType("PSCAutomation.Apps.AS110AllCheck.CalibrationRecord")!,DateTimeOffset.Now,calibration,"データ取り","NR-500","test.xdt")!;
+        var recordField=type.GetField("_appliedCalibrationRecord",Private)!;var recordedRootField=type.GetField("_calibrationRecordedRoot",Private)!;
+        var transferSettings=Field("_transferSettings");var saveRootProperty=transferSettings.GetType().GetProperty("SaveRoot")!;
+        string originalSaveRoot=(string)saveRootProperty.GetValue(transferSettings)!;
+        string chosenRoot=Path.Combine(Path.GetTempPath(),"AS110AllCheck-choose-"+Guid.NewGuid().ToString("N"),"SN1-10");
+        Directory.CreateDirectory(chosenRoot);
+        try
+        {
+            recordField.SetValue(form,record);
+            ((TextBox)Field("_rootBox")).Text=chosenRoot;Call("WriteCalibrationRecordIfReady");
+            if(Directory.Exists(Path.Combine(chosenRoot,"校正記録")))throw new Exception("Calibration record must not be written before the save root is chosen in this run");
+            ((TextBox)Field("_rootBox")).Text="";
+            if(!(bool)type.GetMethod("SelectSaveRoot",Private)!.Invoke(form,[chosenRoot])!)throw new Exception("Selecting a writable save root must be accepted");
+            if(!(bool)Field("_saveRootChosen") || !(bool)saveRootReady.GetValue(form)! || rootBox.Text!=chosenRoot)throw new Exception("Selecting the save root must mark it chosen and allow calibration");
+            if(Directory.GetFiles(Path.Combine(chosenRoot,"校正記録"),"校正_*.txt").Length!=1)throw new Exception("Selecting the save root must write the calibration record there");
+            if(((TextBox)Field("_lastSerialBox")).Text!="10")throw new Exception("Selecting the save root must fill the range from the folder name");
+            Console.WriteLine("PASS production waits for the save root before calibration; the calibration record is written when the save root is chosen");
+        }
+        finally
+        {
+            recordField.SetValue(form,null);recordedRootField.SetValue(form,null);type.GetField("_saveRootChosen",Private)!.SetValue(form,false);
+            saveRootProperty.SetValue(transferSettings,originalSaveRoot);transferSettings.GetType().GetMethod("Save")!.Invoke(transferSettings,null);
+            ((TextBox)Field("_rootBox")).Text="";Call("ApplySaveRootRange");Call("UpdateControls");
+            try{Directory.Delete(Path.GetDirectoryName(chosenRoot)!,true);}catch(IOException){}
+        }
         // 「次にすること」: データ調整ボタンが押せない間は、理由と次の操作を赤字で出す(機器なしなので未接続の案内になる)。押せない理由が空のままボタンが押せない状態を作らない。
         var nextStep=(Label)Field("_nextStepLabel");var startButton=(Button)Field("_startButton");
         string startBlockReason=(string)type.GetMethod("GetStartBlockReason",Private)!.Invoke(form,null)!;

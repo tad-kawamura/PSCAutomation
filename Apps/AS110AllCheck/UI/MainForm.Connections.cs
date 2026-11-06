@@ -362,7 +362,7 @@ internal sealed partial class MainForm : Form
                 // 雛形の所在のみ確認。校正値を適用してから開く。
                 if (_modeSelected) GetDetectedTemplatePath();
                 RefreshReferenceCandidates();
-                return $"正常終了 / 本体={_detectedHardwareName} / {(_modeSelected ? "校正値の入力" : "モードの選択")}待ち";
+                return $"正常終了 / 本体={_detectedHardwareName} / {(!_modeSelected ? "モードの選択" : SaveRootReady ? "校正値の入力" : "保存先の選択")}待ち";
             });
         }
         finally
