@@ -75,7 +75,7 @@ internal sealed partial class MainForm : Form
     private readonly TableLayoutPanel _productionPanel=new() { AutoSize=true,AutoSizeMode=AutoSizeMode.GrowAndShrink,Dock=DockStyle.Fill,ColumnCount=1,Visible=false };
     private TableLayoutPanel _setupPanel=null!,_rangePanel=null!,_serialPanel=null!,_savePathPanel=null!,_protectionPanel=null!,_actionPanel=null!;
     private readonly Button _chooseSaveRootButton=new() { Text="保存先選択",AutoSize=true };
-    private readonly Button _releaseSerialButton=new() { Text="完了番号の保護解除",AutoSize=true };
+    private readonly Button _releaseSerialButton=new() { Text="完了番号の保護と解除",AutoSize=true };
     private readonly Button _transferSettingsButton=new() { Text="転送設定",AutoSize=true };
     // 開始S/N・最後S/N は保存先フォルダー名「SN開始-最後」から入れる表示専用の欄(人は入力しない)。入ったら緑字。
     private readonly TextBox _rangeStartBox = new() { Width=100,ReadOnly=true,TabStop=false };
@@ -91,7 +91,7 @@ internal sealed partial class MainForm : Form
         _rangeStartBox.Text=range?.Start??"";_lastSerialBox.Text=range?.End??"";
         _rangeStartBox.ForeColor=_lastSerialBox.ForeColor=range is null?SystemColors.WindowText:Color.Green;
     }
-    // 保存先の Excel/PDF/LOGGER にある、完了記録に無い S/N のデータを知らせる(保護は「完了番号の保護解除」の画面で付ける)。
+    // 保存先の Excel/PDF/LOGGER にある、完了記録に無い S/N のデータを知らせる(保護は「完了番号の保護と解除」の画面で付ける)。
     private void ReportUnrecordedData()
     {
         if(_rootBox.Text.Length==0) return;
@@ -101,7 +101,7 @@ internal sealed partial class MainForm : Form
             var (unrecorded,unreadable)=SaveFolder.FindUnrecorded(_rootBox.Text,store.Read());
             if(unrecorded.Count==0 && unreadable==0){AppendLog("保存先確認：完了記録に無いデータはありません。");return;}
             string serials=string.Join(", ",unrecorded.Select(f=>f.Serial));
-            string message=(unrecorded.Count>0?$"完了記録に無いデータが {unrecorded.Count} 件あります（S/N {serials}）。\n保護するなら「完了番号の保護解除」でチェックを付けて確定してください。":"")
+            string message=(unrecorded.Count>0?$"完了記録に無いデータが {unrecorded.Count} 件あります（S/N {serials}）。\n保護するなら「完了番号の保護と解除」でチェックを付けて確定してください。":"")
                 +(unreadable>0?$"{(unrecorded.Count>0?"\n":"")}このアプリの形式でないファイルが {unreadable} 件あります（S/N を読めないので対象外）。":"");
             AppendLog("保存先確認："+message.Replace("\n"," "));
             ErrorNotification.Show(this,message,"保存先の確認",MessageBoxButtons.OK,MessageBoxIcon.Information);
@@ -575,7 +575,7 @@ internal sealed partial class MainForm : Form
         // 完了記録は保存先の「完了記録.txt」にあるので、保存先が無いと一覧を出せない。
         if(_rootBox.Text.Length==0)
         {
-            ErrorNotification.Show(this,"保存先を選択してください。\n完了番号の保護は保存先の「完了記録.txt」で管理しています。","完了番号の保護解除",MessageBoxButtons.OK,MessageBoxIcon.Warning);
+            ErrorNotification.Show(this,"保存先を選択してください。\n完了番号の保護は保存先の「完了記録.txt」で管理しています。","完了番号の保護と解除",MessageBoxButtons.OK,MessageBoxIcon.Warning);
             return;
         }
         // 一覧の 1 行: 記録のある S/N(保護中・解除済み)と、記録は無いがデータのある S/N(記録なし)。
@@ -588,15 +588,15 @@ internal sealed partial class MainForm : Form
             entries.AddRange(unrecorded.Select(f=>(f.Serial,false,f.Model,f.BaseName,"（記録なし）")));
             entries=entries.OrderBy(e=>long.Parse(e.Serial)).ToList();
         }
-        catch(Exception ex) { AppendLog($"保護解除：エラー / {ex.Message}");ErrorNotification.Show(this,ex.Message,"完了番号の保護解除",MessageBoxButtons.OK,MessageBoxIcon.Error);return; }
+        catch(Exception ex) { AppendLog($"保護と解除：エラー / {ex.Message}");ErrorNotification.Show(this,ex.Message,"完了番号の保護と解除",MessageBoxButtons.OK,MessageBoxIcon.Error);return; }
         if(entries.Count==0)
         {
-            ErrorNotification.Show(this,$"完了記録のあるS/Nも、保存されたデータもありません。\n保存先: {_rootBox.Text}","完了番号の保護解除",MessageBoxButtons.OK,MessageBoxIcon.Information);
+            ErrorNotification.Show(this,$"完了記録のあるS/Nも、保存されたデータもありません。\n保存先: {_rootBox.Text}","完了番号の保護と解除",MessageBoxButtons.OK,MessageBoxIcon.Information);
             return;
         }
         // 番号順に並べ、保護中はチェック付き、解除済み・記録なしはチェックなしで出す。
         // チェックを外せば解除、付ければ保護(記録なしは型式とファイル名を記録に残す)。「確定」を押したときにまとめて反映する(誤クリックはキャンセルで戻せる)。
-        using var dialog=new Form {Text="完了番号の保護解除",ClientSize=new Size(420,380),StartPosition=FormStartPosition.CenterParent,TopMost=true,MinimizeBox=false,MaximizeBox=false};
+        using var dialog=new Form {Text="完了番号の保護と解除",ClientSize=new Size(420,380),StartPosition=FormStartPosition.CenterParent,TopMost=true,MinimizeBox=false,MaximizeBox=false};
         var guide=new Label{Left=12,Top=10,Width=396,Height=68,Text=$"保存先: {_rootBox.Text}\nチェックあり＝保護中。チェックを外すと保護を解除し、付けると保護します（記録なしのデータも保護できます）。\n「確定」で反映します。既存ファイルは残します。"};
         var list=new CheckedListBox{Left=12,Top=82,Width=396,Height=240,CheckOnClick=true,Font=new Font(Font.FontFamily,12)};
         foreach(var entry in entries) list.Items.Add("S/N "+entry.Serial+entry.Note,entry.Protected);
@@ -605,8 +605,8 @@ internal sealed partial class MainForm : Form
         dialog.Controls.AddRange([guide,list,ok,cancel]);dialog.AcceptButton=ok;dialog.CancelButton=cancel;
         if(dialog.ShowDialog(this)!=DialogResult.OK)return;
         var desired=entries.Select((e,i)=>(e.Serial,Protected:list.GetItemChecked(i),e.Model,e.BaseName)).ToArray();
-        if(desired.Select(d=>d.Protected).SequenceEqual(entries.Select(e=>e.Protected))){AppendLog("保護解除：チェックを変えた S/N が無いので何もしていません。");return;}
-        RunOperation("保護解除",()=> {
+        if(desired.Select(d=>d.Protected).SequenceEqual(entries.Select(e=>e.Protected))){AppendLog("保護と解除：チェックを変えた S/N が無いので何もしていません。");return;}
+        RunOperation("保護と解除",()=> {
             var store=Store;using var held=store.Lock();
             var (released,reprotected)=store.SetProtection(desired);
             var parts=new List<string>();
