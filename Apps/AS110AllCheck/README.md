@@ -114,7 +114,7 @@ YDT一時保存失敗の推定原因、当面の単発収集への変更と検�
 pio run -d Apps/AS110AllCheck/firmware
 ```
 
-M5Stackの通常文字は日本語16pxフォントを1.125倍した18px相当です。ボタン名が枠幅を超える場合だけ縮小します。データ調整ではS/N欄を表示しません。文字サイズの変更には本体への再書き込みが必要です。生成物の `.ino.cpp` は入れず、`.ino` を正本とします。
+M5Stackの通常文字は日本語16pxフォントを1.125倍した18px相当です。データ取りでは、今の作業名（「AS110 / データ取り」）と S/N の 2 行だけ 2 倍の 32px 相当にして、離れた所からも読めるようにしています（2026-11-06。桁の多い S/N は画面幅に収まるよう縮めます。状態欄・ボタン名は 18px 相当のまま）。動き検査・データ調整は 18px 相当のままです。ボタン名が枠幅を超える場合だけ縮小します。データ調整ではS/N欄を表示しません。文字サイズの変更には本体への再書き込みが必要です。生成物の `.ino.cpp` は入れず、`.ino` を正本とします。
 
 ## 動き検査と開発者モード
 
@@ -161,4 +161,4 @@ dotnet $e $d "<dir>/雛形/雛形.xlsx" --optimization
 - 未確認: **実機での動作すべて**（M5Stack、NR-500 / NR-X の USB・Wi-Fi、WF1973 / SDG1032X、LOGGER の測定・保存、漏れチェック、正式保存）、SaveAvailability のダイアログありの実行、発行した exe を別の PC で動かすこと
 - 2026-11-05 LOGGER の事前起動（起動を画面準備と重ねる）: この PC に M5Stack・WF1973・NR-500（旧 WAVE LOGGER、USB）をつないだ状態で Debug ビルドの exe を起動し、接続確認が正常終了（本体=NR-500）して、閉じると LOGGER も終了することを確認。接続確認のログで「COMオブジェクト生成（事前起動を使用）」と「LOGGER事前起動の完了待ち = 0.000 秒」が出て、プロセス起動から接続確認終了までが 3.0 秒（変更前の同日のログでは 11.2〜13.4 秒。ただしこの回は LOGGER 本体の起動自体が 0.6 秒と速く、7〜8 秒かかる回での短縮幅は未確認）。未確認: NR-X・WAVE LOGGER X・Wi-Fi での事前起動、両方の LOGGER が入った PC で種類を切り替えたときの破棄
 - 2026-11-06、別の PC（SDK 9.0.318、NI-VISA 25.3・Excel 16・WAVE LOGGER X 1.11.06 あり、旧 WAVE LOGGER と機器はなし）で機器なしの検査をやり直した: `AS110AllCheck.slnf` の Release ビルド（エラー 0・警告 0）、Verification（照合を含む）、AppShutdown、SaveAvailability（`--no-dialogs --with-excel`）、ExcelHeader の 6 モード、`Wrappers/Tests/WaveLogger.Automation.Tests`（事前起動を含む）がすべて成功。検査のあと Excel が 3 つ裏に残った（既知）。この PC では NR-500 経路（旧 WAVE LOGGER）の実機確認はできない
-- M5Stack スケッチ: 2026-11-05 に人が Arduino IDE（esp32 3.3.12、ボード M5Core、M5Unified 0.2.29）で M5Stack Basic V2.7 へ書き込めた（手順は [Arduino IDE の準備](docs/m5stack-arduino-ide-setup.md)）。書き込み後の表示・ボタン・G26 接点・PC アプリとの通信は未確認。スケッチは変えていない
+- M5Stack スケッチ: 2026-11-05 に人が Arduino IDE（esp32 3.3.12、ボード M5Core、M5Unified 0.2.29）で M5Stack Basic V2.7 へ書き込めた（手順は [Arduino IDE の準備](docs/m5stack-arduino-ide-setup.md)）。書き込み後の表示・ボタン・G26 接点・PC アプリとの通信は未確認。2026-11-06 にデータ取りの作業名と S/N を 32px 相当に大きくするスケッチの変更をした（実機での表示は未確認。使うには再書き込みが要る）

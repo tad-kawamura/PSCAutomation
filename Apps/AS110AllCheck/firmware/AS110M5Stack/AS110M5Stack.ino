@@ -27,9 +27,18 @@ void handle(const String& line){
 void draw(){
  M5.Display.fillScreen(TFT_BLACK);M5.Display.setTextColor(TFT_WHITE,TFT_BLACK);
  // 日本語16pxフォントを1.125倍し、18px相当で表示する。
- M5.Display.setFont(&fonts::efontJA_16);M5.Display.setTextSize(1.125f);M5.Display.setCursor(8,8);
+ // データ取りだけは作業名と S/N を 2 倍（32px相当、2 行で y=8〜72）にして、離れた所からも何の作業で S/N いくつかを読めるようにする。
+ bool production=mode=="2";
+ M5.Display.setFont(&fonts::efontJA_16);M5.Display.setTextSize(production?2.0f:1.125f);M5.Display.setCursor(8,8);
  M5.Display.println("AS110 / "+String(mode=="0"?"動き検査":mode=="1"?"データ調整":"データ取り"));
- if(mode!="1")M5.Display.println("S/N "+serial);
+ if(mode!="1"){
+  String serialLine="S/N "+serial;
+  // 桁の多い S/N は画面幅（左右 8px を除く 304px）に収める。
+  int serialWidth=M5.Display.textWidth(serialLine);
+  if(production && serialWidth>304)M5.Display.setTextSize(2.0f*304.0f/serialWidth);
+  M5.Display.println(serialLine);
+  M5.Display.setTextSize(1.125f);
+ }
  if(mode=="0")M5.Display.println(stableNf?"外部接点：通電":"外部接点：非通電");
  M5.Display.setCursor(8,78);
  bool online=lastUi!=0 && (uint32_t)(millis()-lastUi)<PC_TIMEOUT_MS;
