@@ -197,7 +197,7 @@ internal sealed partial class MainForm : Form
         {
             AutoSize = true,
             Font = new Font(Font, FontStyle.Bold),
-            Text = "参照波形：",
+            Text = "型式（参照波形）：",
             Margin = new Padding(0, 6, 8, 0)
         });
         _referenceComboBox.DropDownStyle = ComboBoxStyle.DropDownList;

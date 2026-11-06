@@ -60,9 +60,13 @@ internal static class Program
                 throw new Exception("Save root / serial visibility did not follow mode: "+mode);
         }
         Console.WriteLine("PASS startup waits for mode; all three modes reveal the calibration panel; save root and serial only in production");
-        // データ取りの操作欄の並び: 型式 → 保存先 → 開始S/N・最後S/N(フォルダー名から) → 測定開始S/N → 保護解除・転送設定 → ボタン → 状態。最後に選んだモードはデータ取り(2)。
+        // データ取りの操作欄の並び: 保存先 → 開始S/N・最後S/N(フォルダー名から) → 測定開始S/N → 保護解除・転送設定 → ボタン → 状態(型式の行は無い。参照波形で決まる)。最後に選んだモードはデータ取り(2)。
         _=form.Handle;form.PerformLayout();
-        Control[] orderedRows=[(Control)Field("_setupPanel"),(Control)Field("_savePathPanel"),(Control)Field("_rangePanel"),(Control)Field("_serialPanel"),(Control)Field("_protectionPanel"),(Control)Field("_actionPanel"),(Control)Field("_flowLabel")];
+        // 「設定変更（測定を破棄）」は操作欄ではなく校正欄の「校正値を変更」の右隣。
+        var remeasure=(Control)Field("_remeasureButton");var calibrationButton=(Control)Field("_calibrationButton");
+        if(remeasure.Parent!=calibrationButton.Parent || remeasure.Left<=calibrationButton.Left)throw new Exception("設定変更（測定を破棄） must sit right of 校正値を変更 in the calibration panel");
+        if(productionPanel.Contains(remeasure))throw new Exception("設定変更（測定を破棄） must not be in the production panel");
+        Control[] orderedRows=[(Control)Field("_savePathPanel"),(Control)Field("_rangePanel"),(Control)Field("_serialPanel"),(Control)Field("_protectionPanel"),(Control)Field("_actionPanel"),(Control)Field("_flowLabel")];
         for(int i=1;i<orderedRows.Length;i++)
             if(orderedRows[i].Top<=orderedRows[i-1].Top)throw new Exception($"Production rows out of order at {i}: {string.Join(",",orderedRows.Select(r=>r.Top))}");
         var serialBox=(TextBox)Field("_serialBox");var rangeStartBox=(TextBox)Field("_rangeStartBox");var lastSerialBox=(TextBox)Field("_lastSerialBox");
@@ -112,7 +116,7 @@ internal static class Program
         string formImage=Path.Combine(AppContext.BaseDirectory,"main-form.png");
         CreateHandles(form);form.PerformLayout();
         using(var bitmap=new Bitmap(form.Width,form.Height)){ form.DrawToBitmap(bitmap,new Rectangle(Point.Empty,bitmap.Size)); bitmap.Save(formImage); }
-        Console.WriteLine("PASS production rows are model, save root, range, measurement serial, release, buttons, status; layout images: "+productionImage+" / "+formImage);
+        Console.WriteLine("PASS production rows are save root, range, measurement serial, release, buttons, status; layout images: "+productionImage+" / "+formImage);
         var flow=Field("_flow");
         var flowType=flow.GetType();
         flowType.GetProperty("Mode")!.SetValue(flow,Enum.Parse(assembly.GetType("PSCAutomation.Apps.AS110AllCheck.TestMode")!,"Production"));

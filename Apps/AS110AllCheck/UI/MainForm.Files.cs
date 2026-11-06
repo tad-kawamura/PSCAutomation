@@ -133,6 +133,17 @@ internal sealed partial class MainForm : Form
         }
         await RunOperationAsync("参照波形読み込み", async () =>
         {
+            // 型式は参照波形のファイル名から決める(2026-11-06 に「型式」の行を廃止。人の判断)。動き検査では型式を使わない。
+            ProductModel? model = FindModelForReference(reference.FilePath);
+            if (_flow.Mode != TestMode.Motion)
+            {
+                if (model is null)
+                    throw new InvalidOperationException($"参照波形「{reference.DisplayName}」に対応する型式がありません。ファイル名に型式名（{string.Join("・", ProductModel.All.Select(m => m.Name))}）を含めてください。");
+                if (!CanChangeSetup && model != _flow.Model)
+                    throw new InvalidOperationException("測定結果が残っている間は型式（参照波形）を変えられません。「設定変更（測定を破棄）」を先に押してください。");
+                _selectedModel = model;
+                if (CanChangeSetup) ConfigureProduct(requireSaveRoot: false);
+            }
             RefreshTemplateState();
             RefreshLoggerState();
             if (!_templateLoaded)
@@ -144,12 +155,23 @@ internal sealed partial class MainForm : Form
             await LoadReferenceFileAsync(reference.FilePath);
             _selectedReferencePath = reference.FilePath;
             // 横軸の拡大はしない(2026-11-06 にスタンドごとの拡大を廃止。必要なら人が LOGGER の画面で拡大する)。
-            return reference.DisplayName + " / 読み込み操作済み（LOGGER画面で確認）";
+            return reference.DisplayName + (model is null ? "" : $" / 型式={model}") + " / 読み込み操作済み（LOGGER画面で確認）";
         });
         // エラー時は、読み込み前の選択に戻す。
         RestoreReferenceSelection();
         // 読み込み後はLOGGERを手動操作できるよう固定を解除する。
         if (_selectedReferencePath is not null) CompletePreparationDisplay();
+    }
+
+    // 参照波形のファイル名に含まれる型式名から型式を決める。「AS110-116B」と「AS110-116B350」のように前方が同じ型式があるので、
+    // 型式名の直後が英数字でないものだけを合致とし、長い名前を優先する。合う型式が無ければ null。
+    private static ProductModel? FindModelForReference(string path)
+    {
+        string name = Path.GetFileNameWithoutExtension(path);
+        return ProductModel.All
+            .Where(m => Regex.IsMatch(name, Regex.Escape(m.Name) + @"(?![A-Za-z0-9])", RegexOptions.IgnoreCase))
+            .OrderByDescending(m => m.Name.Length)
+            .FirstOrDefault();
     }
 
     private string LoadTemplateFile(string path)

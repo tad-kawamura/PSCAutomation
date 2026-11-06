@@ -44,7 +44,8 @@ internal sealed partial class MainForm : Form
         }, _modeBox]);
         return panel;
     }
-    private readonly ComboBox _modelBox = new() { DropDownStyle=ComboBoxStyle.DropDownList,Width=225 };
+    // 型式は参照波形(.xyb)のファイル名から決める(2026-11-06 に「型式」の行と「型式を適用」を廃止。人の判断)。MainForm.Files.cs の FindModelForReference。
+    private ProductModel _selectedModel = ProductModel.All[0];
     // 測定開始S/N(今の S/N)。人が入れる唯一の S/N。空のまま始める(起動時・範囲を終えた後)。
     private readonly TextBox _serialBox = new() { Width=110 };
     private readonly Label _serialLabel = new() { Text="測定開始S/N", AutoSize=true };
@@ -73,7 +74,7 @@ internal sealed partial class MainForm : Form
     // モードを選ぶまで全体を非表示にする。型式・Excel転送はデータ調整とデータ取りで、保存先・S/N・保存・漏れ試験・合格はデータ取りを選んだときだけ表示する。
     // 並びは上から 型式 → 保存先 → 開始S/N・最後S/N(フォルダー名から) → 測定開始S/N → 保護解除・転送設定 → ボタン → 状態。表示/非表示を切り替えても並びが変わらないよう、行も列も TableLayoutPanel で位置を固定する。
     private readonly TableLayoutPanel _productionPanel=new() { AutoSize=true,AutoSizeMode=AutoSizeMode.GrowAndShrink,Dock=DockStyle.Fill,ColumnCount=1,Visible=false };
-    private TableLayoutPanel _setupPanel=null!,_rangePanel=null!,_serialPanel=null!,_savePathPanel=null!,_protectionPanel=null!,_actionPanel=null!;
+    private TableLayoutPanel _rangePanel=null!,_serialPanel=null!,_savePathPanel=null!,_protectionPanel=null!,_actionPanel=null!;
     private readonly Button _chooseSaveRootButton=new() { Text="保存先選択",AutoSize=true };
     private readonly Button _releaseSerialButton=new() { Text="完了番号の保護と解除",AutoSize=true };
     private readonly Button _transferSettingsButton=new() { Text="転送設定",AutoSize=true };
@@ -122,9 +123,7 @@ internal sealed partial class MainForm : Form
     }
     private Control BuildProductionPanel()
     {
-        _modelBox.Items.AddRange(ProductModel.All);_modelBox.SelectedIndex=0;
-        var applyModel=new Button {Text="型式を適用",AutoSize=true};
-        applyModel.Click+=async (_,_)=>await SelectProductModelAsync();
+
         _rootBox.Text=_transferSettings.SaveRoot;
         ApplySaveRootRange();
         _chooseSaveRootButton.Click+=(_,_)=> {
@@ -166,8 +165,7 @@ internal sealed partial class MainForm : Form
             _reviewStage=false;UpdateControls();
         });
         ConfigureButton(_retryCaptureButton,"一時保存を再試行",(_,_)=>RetryCapture());
-        // 型式 → 保存先 → (フォルダー名から)開始S/N・最後S/N → 測定開始S/N の順。保存先を先に選ぶと範囲が決まるので、その下に範囲と測定開始S/N を置く。
-        _setupPanel=Row(_modelBox,applyModel);
+        // 保存先 → (フォルダー名から)開始S/N・最後S/N → 測定開始S/N の順。保存先を先に選ぶと範囲が決まるので、その下に範囲と測定開始S/N を置く。型式の行は無い(参照波形で決まる)。
         _savePathPanel=Row(_chooseSaveRootButton,_rootBox);
         _saveRootWarningLabel.Margin=new Padding(0,0,0,6);
         _rangePanel=Row(_rangeStartLabel,_rangeStartBox,_lastSerialLabel,_lastSerialBox);
@@ -175,21 +173,22 @@ internal sealed partial class MainForm : Form
         _protectionPanel=Row(_releaseSerialButton,_transferSettingsButton);
         // 型式・測定開始S/N・保存先の入力欄は、上段のボタンより目立つよう大きい文字にする。開始S/N・最後S/N は人が入力しないので小さいまま。
         var inputFont=new Font(Font.FontFamily,12);
-        foreach(var row in new[]{_setupPanel,_serialPanel,_savePathPanel,_protectionPanel})
+        foreach(var row in new[]{_serialPanel,_savePathPanel,_protectionPanel})
             foreach(Control control in row.Controls) control.Font=inputFont;
-        _modelBox.Width=270;_serialBox.Width=140;_rootBox.Width=420;
+        _serialBox.Width=140;_rootBox.Width=420;
         _lastSerialLabel.Margin=new Padding(12,_lastSerialLabel.Margin.Top,_lastSerialLabel.Margin.Right,_lastSerialLabel.Margin.Bottom);
         _serialMissingLabel.Margin=new Padding(8,_serialMissingLabel.Margin.Top,_serialMissingLabel.Margin.Right,_serialMissingLabel.Margin.Bottom);
-        foreach(var button in new[]{applyModel,_chooseSaveRootButton,_releaseSerialButton,_transferSettingsButton}) button.MinimumSize=new Size(0,40);
+        foreach(var button in new[]{_chooseSaveRootButton,_releaseSerialButton,_transferSettingsButton}) button.MinimumSize=new Size(0,40);
         // 合格は下段の左に置き、上段を 4 つにして横幅を抑える。
         var mainActions=Row(_transferButton,_saveButton,_leakOutputButton,_leakButton);
-        var subActions=Row(_completeButton,_remeasureButton,_retryCaptureButton);
+        // 「設定変更（測定を破棄）」は校正欄の「校正値を変更」の隣(BuildCalibrationPanel)。
+        var subActions=Row(_completeButton,_retryCaptureButton);
         _actionPanel=new TableLayoutPanel { AutoSize=true,AutoSizeMode=AutoSizeMode.GrowAndShrink,ColumnCount=1,RowCount=2,Margin=Padding.Empty };
         _actionPanel.Controls.Add(mainActions,0,0);_actionPanel.Controls.Add(subActions,0,1);
-        Control[] rows=[_setupPanel,_savePathPanel,_saveRootWarningLabel,_rangePanel,_serialPanel,_protectionPanel,_actionPanel,_flowLabel];
+        Control[] rows=[_savePathPanel,_saveRootWarningLabel,_rangePanel,_serialPanel,_protectionPanel,_actionPanel,_flowLabel];
         _productionPanel.RowCount=rows.Length;
         for(int i=0;i<rows.Length;i++){ _productionPanel.RowStyles.Add(new RowStyle(SizeType.AutoSize)); _productionPanel.Controls.Add(rows[i],0,i); }
-        _modelBox.SelectionChangeCommitted+=async (_,_)=>await SelectProductModelAsync();
+
         // 入力中もフォルダー名との照合(赤字)と「入力してください」を更新する。
         _serialBox.TextChanged+=(_,_)=>UpdateControls();
         _serialBox.Leave+=(_,_)=>{
@@ -201,7 +200,7 @@ internal sealed partial class MainForm : Form
         return _productionPanel;
     }
     private bool CanChangeSetup => !_operationInProgress && !_flow.Measuring && !_flow.SaveFailed && !_flow.CaptureFailed && !_leakRunning && !_flow.HasCapture;
-    private ProductModel SelectedModel => _modelBox.SelectedItem as ProductModel ?? ProductModel.All[0];
+    private ProductModel SelectedModel => _selectedModel;
     private CompletionStore Store => new(_rootBox.Text.Length>0?_rootBox.Text:throw new InvalidOperationException("保存先を選択してください。"));
     private void ConfigureProduct(bool requireSaveRoot=true)
     {
@@ -233,30 +232,16 @@ internal sealed partial class MainForm : Form
     }
     private GeneratorBurstSettings CurrentBurstSettings => As110MotionTest.GetSettings(
         isSdg1032X: _generator is Sdg1032XSession, isMotion: _flow.Mode == TestMode.Motion);
-    private async Task SelectProductModelAsync()
-    {
-        if(!CanChangeSetup) { _modelBox.SelectedItem=_flow.Model;return; }
-        await RunOperationAsync("型式選択",async ()=> {
-            ConfigureProduct(requireSaveRoot:false);
-            if(!_calibrationApplied)return "校正値を先に適用してください。";
-            string[] candidates=Directory.GetFiles(TemplateFolderPath,"*.xyb").Where(p=>
-                System.Text.RegularExpressions.Regex.IsMatch(Path.GetFileNameWithoutExtension(p),System.Text.RegularExpressions.Regex.Escape(SelectedModel.Name)+@"(?![A-Za-z0-9])",System.Text.RegularExpressions.RegexOptions.IgnoreCase)).ToArray();
-            if(candidates.Length!=1) throw new InvalidOperationException($"{SelectedModel.Name}の参照波形が{candidates.Length}件です。対応する.xybを1件置いてください。");
-            RefreshLoggerState();if(!LoggerReadyToStart)throw new InvalidOperationException("LOGGERの停止を待ってください。");
-            await LoadReferenceFileAsync(candidates[0]);_selectedReferencePath=candidates[0];
-            RestoreReferenceSelection(); CompletePreparationDisplay();return SelectedModel.ToString();
-        });
-    }
     private void UpdateProductionControls()
     {
         bool idle=!_operationInProgress && !_leakRunning && !_flow.Measuring;
         bool ready=idle && ConnectionsReady && _calibrationApplied && _templateLoaded && LoggerReadyToStart && _arduino.MeasurementInputReady;
         _modeBox.Enabled=idle && !_flow.SaveFailed && !_flow.CaptureFailed && !_flow.HasSaved;
-        _modelBox.Enabled=CanChangeSetup && _calibrationApplied && _flow.Mode!=TestMode.Motion;
+
         bool production=_flow.Mode==TestMode.Production;
         bool excelMode=_modeSelected && _flow.Mode!=TestMode.Motion;
         _productionPanel.Visible=_modeSelected;
-        _setupPanel.Visible=_protectionPanel.Visible=_actionPanel.Visible=excelMode;
+        _protectionPanel.Visible=_actionPanel.Visible=_remeasureButton.Visible=excelMode;
         _savePathPanel.Visible=_chooseSaveRootButton.Visible=_rootBox.Visible=_releaseSerialButton.Visible=production;
         _saveButton.Visible=_leakOutputButton.Visible=_leakButton.Visible=_completeButton.Visible=production;
         _rangePanel.Visible=_rangeStartLabel.Visible=_rangeStartBox.Visible=_lastSerialLabel.Visible=_lastSerialBox.Visible=production;

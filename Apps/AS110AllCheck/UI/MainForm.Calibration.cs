@@ -37,7 +37,14 @@ internal sealed partial class MainForm : Form
         _calibrationStatusLabel.Margin = new Padding(0, 4, 0, 8);
         _calibrationPanel.Controls.Add(_calibrationStatusLabel);
         ConfigureButton(_calibrationButton, "校正値を入力", (_, _) => ApplyCalibration(fromButton: true));
-        _calibrationPanel.Controls.Add(_calibrationButton);
+        // 「設定変更（測定を破棄）」は「校正値を変更」の隣に置く(2026-11-06、人の指示)。文言・動作の設定は BuildProductionPanel / UpdateProductionControls。
+        var buttons = new FlowLayoutPanel
+        {
+            AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            FlowDirection = FlowDirection.LeftToRight, WrapContents = false, Margin = Padding.Empty
+        };
+        buttons.Controls.AddRange([_calibrationButton, _remeasureButton]);
+        _calibrationPanel.Controls.Add(buttons);
     }
 
     // 接続確認とモード選択の両方が済み、まだ適用していなければ校正画面を開く(モード選択後・接続確認後の両方から呼ぶ)。
