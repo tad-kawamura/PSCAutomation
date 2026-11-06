@@ -68,6 +68,8 @@ internal sealed partial class MainForm : Form
     private string _excelJudgmentStatus="未確認",_excelJudgmentError="";
     private string _saveAvailabilitySignature="";
     private string? _ownedSaveBase;
+    // 正式保存で同名ファイルがあって保存しなかったときの案内(「次にすること」に赤字で出す)。転送結果が無効になるか保存できたら消す。
+    private string? _saveConflict;
     private CancellationTokenSource? _leakCancel;
     private readonly string _sessionFolder=Path.Combine(Path.GetTempPath(),"AS110BoltCheck","ver3-"+Guid.NewGuid().ToString("N"));
 
@@ -79,9 +81,10 @@ internal sealed partial class MainForm : Form
     private readonly Button _releaseSerialButton=new() { Text="完了番号の保護と解除",AutoSize=true };
     private readonly Button _transferSettingsButton=new() { Text="転送設定",AutoSize=true };
     // 開始S/N・最後S/N は保存先フォルダー名「SN開始-最後」から入れる表示専用の欄(人は入力しない)。入ったら緑字。
-    private readonly TextBox _rangeStartBox = new() { Width=100,ReadOnly=true,TabStop=false };
+    // 読み取り専用の TextBox は BackColor を自分で決めないと ForeColor が効かず灰色のままになる(WinForms の仕様)ので、BackColor を明示する。
+    private readonly TextBox _rangeStartBox = new() { Width=100,ReadOnly=true,TabStop=false,BackColor=SystemColors.Window };
     private readonly Label _rangeStartLabel = new() { Text="開始S/N", AutoSize=true };
-    private readonly TextBox _lastSerialBox = new() { Width=100,ReadOnly=true,TabStop=false };
+    private readonly TextBox _lastSerialBox = new() { Width=100,ReadOnly=true,TabStop=false,BackColor=SystemColors.Window };
     private readonly Label _lastSerialLabel = new() { Text="最後S/N", AutoSize=true };
     // 保存先フォルダー名「SN開始-最後」と S/N が合わないときの赤字。保存先の行の下に出す。
     private readonly Label _saveRootWarningLabel = new() { AutoSize=true,ForeColor=Color.Red,MaximumSize=new Size(680,0),Visible=false };
@@ -301,6 +304,13 @@ internal sealed partial class MainForm : Form
             _nextStepLabel.Text=$"次にすること：{blocked}（「{_startButton.Text}」は押せません）";
             return;
         }
+        if(!_flow.HasTransfer || _flow.HasSaved)_saveConflict=null;
+        if(_saveConflict is not null)
+        {
+            _nextStepLabel.ForeColor=Color.Red;
+            _nextStepLabel.Text=$"次にすること：{_saveConflict}。今回の測定で置き換えるなら「保存」→「はい」。前のデータを残すなら「設定変更（測定を破棄）」→ 測定開始S/N を次の番号にして測り直す（前のデータを合格扱いにするなら「完了番号の保護と解除」で S/N {_flow.Serial} にチェック）";
+            return;
+        }
         _nextStepLabel.ForeColor=Color.Green;
         string next;
         string change=_flow.Mode==TestMode.Production?"、S/N や型式を変えるなら「設定変更（測定を破棄）」":"";
@@ -500,7 +510,27 @@ internal sealed partial class MainForm : Form
             string root=Path.GetFullPath(_rootBox.Text),baseName=_flow.BaseName;
             string excel=Path.Combine(root,"Excel",baseName+".xlsx"),pdf=Path.Combine(root,"PDF",baseName+".pdf"),logger=Path.Combine(root,"LOGGER",baseName+Path.GetExtension(_capturePath));
             string ownership=root+"|"+baseName;
-            if(_ownedSaveBase!=ownership && !store.WasReleased(_flow.Serial) && new[]{excel,pdf,logger}.Any(File.Exists))throw new IOException("同名ファイルがあります。別途開いているファイルや過去の保存を確認してください。");
+            string[] existing=new[]{excel,pdf,logger}.Where(File.Exists).ToArray();
+            if(_ownedSaveBase!=ownership && !store.WasReleased(_flow.Serial) && existing.Length>0)
+            {
+                // 前に同じ S/N を保存したファイル(合格にはしていない)が残っている。まだ何も書いていないので「保存失敗」にはせず、
+                // 上書きするかを人に聞く。上書きしないときは「次にすること」に取れる手を出す(2026-11-06、人の指摘: 何をすればいいか分からなかった)。
+                _flow.SaveFailed=false;
+                _saveConflict=$"S/N {_flow.Serial} の保存ファイルがすでにあります（{string.Join("・",existing.Select(f=>Path.GetFileName(Path.GetDirectoryName(f)!)))}）";
+                UseWaitCursor=false;
+                DialogResult answer;
+                try
+                {
+                    answer=ErrorNotification.Show(this,
+                        $"S/N {_flow.Serial} の保存ファイルがすでにあります（合格にはなっていません）。\n"+string.Join("\n",existing)+
+                        "\n\n今回の測定で上書きしますか？\n「はい」：上書きして保存する\n「いいえ」：保存しない。前のデータを残すなら「設定変更（測定を破棄）」→ 測定開始S/N を次の番号にして測り直す",
+                        "正式保存：同名ファイル",MessageBoxButtons.YesNo,MessageBoxIcon.Warning);
+                }
+                finally { UseWaitCursor=true; }
+                if(answer!=DialogResult.Yes) return "同名ファイルがあるため保存しませんでした。"+_saveConflict;
+                AppendLog("正式保存：同名ファイルを上書きします / "+string.Join(" / ",existing));
+            }
+            _saveConflict=null;
             _ownedSaveBase=ownership;
             foreach(string file in new[]{excel,pdf,logger})Directory.CreateDirectory(Path.GetDirectoryName(file)!);
             // 生成は一時ファイルへ。個別の置換が失敗してもSavedRevisionは更新しない。
