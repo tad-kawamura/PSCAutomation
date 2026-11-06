@@ -194,17 +194,31 @@ internal sealed partial class MainForm : Form
 
         // 入力中もフォルダー名との照合(赤字)と「入力してください」を更新する。
         _serialBox.TextChanged+=(_,_)=>UpdateControls();
-        _serialBox.Leave+=(_,_)=>{
-            if(!CanEnterSerial)return;
-            RunOperation("測定開始S/N設定",()=>{
-                // S/N が空のまま残っていた測定結果(データ調整のものなど)は、S/N を入れた時点で破棄される(S/N なしではデータ取りに使えない)。
-                bool discarded=_flow.HasCapture && _flow.SerialMissing && _serialBox.Text.Trim().Length>0;
-                ConfigureProduct(requireSaveRoot:false);
-                return _flow.Serial.Length>0?$"S/N {_flow.Serial} から"+(discarded?"（S/N なしの前の測定結果は破棄しました）":"")+(_serialCompleted?"（完了済みのため測定開始できません。保護解除が必要）":""):"測定開始S/N を入力してください";});
-            // 測定開始S/N が入るまで Excel の事前準備を待たせているので、入ったらここで始める。
-            if(_flow.Serial.Length>0 && _excel is null && _templateLoaded)RequestExcelPreparation();
+        // 確定は欄を離れたとき(Tab・ほかの欄のクリック)と Enter の両方(2026-11-06、人の指摘: Enter を押しても「次にすること」が変わらず、ほかの欄をクリックしないと確定しなかった)。
+        _serialBox.Leave+=(_,_)=>ApplySerialInput();
+        _serialBox.KeyDown+=(_,e)=>{
+            if(e.KeyCode!=Keys.Enter)return;
+            e.Handled=e.SuppressKeyPress=true;  // Enter の警告音を出さない
+            ApplySerialInput();
         };
         return _productionPanel;
+    }
+    // 最後に確定した測定開始S/N の入力文字列。Enter で確定した直後に欄を離れても、同じ内容を二度確定(ログを二重に出す)しないための覚え。
+    private string? _appliedSerialText;
+    // 測定開始S/N の欄の内容を確定する(Leave と Enter から呼ぶ)。
+    private void ApplySerialInput()
+    {
+        if(!CanEnterSerial)return;
+        string text=_serialBox.Text.Trim();
+        if(text==_appliedSerialText)return;
+        RunOperation("測定開始S/N設定",()=>{
+            // S/N が空のまま残っていた測定結果(データ調整のものなど)は、S/N を入れた時点で破棄される(S/N なしではデータ取りに使えない)。
+            bool discarded=_flow.HasCapture && _flow.SerialMissing && text.Length>0;
+            ConfigureProduct(requireSaveRoot:false);
+            _appliedSerialText=text;
+            return _flow.Serial.Length>0?$"S/N {_flow.Serial} から"+(discarded?"（S/N なしの前の測定結果は破棄しました）":"")+(_serialCompleted?"（完了済みのため測定開始できません。保護解除が必要）":""):"測定開始S/N を入力してください";});
+        // 測定開始S/N が入るまで Excel の事前準備を待たせているので、入ったらここで始める。
+        if(_flow.Serial.Length>0 && _excel is null && _templateLoaded)RequestExcelPreparation();
     }
     private bool CanChangeSetup => !_operationInProgress && !_flow.Measuring && !_flow.SaveFailed && !_flow.CaptureFailed && !_leakRunning && !_flow.HasCapture;
     // 測定開始S/N を入れられるとき。測定結果が残っていても、S/N がまだ空なら入れられる(2026-11-06。データ調整の結果が残ったままデータ取りへ移ると、
