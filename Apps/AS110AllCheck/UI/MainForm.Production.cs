@@ -5,6 +5,8 @@ internal sealed partial class MainForm : Form
     private readonly ProductionWorkflow _flow = new();
     private readonly TransferSettings _transferSettings = TransferSettings.Load();
     private readonly ComboBox _modeBox = new() { DropDownStyle=ComboBoxStyle.DropDownList,Width=125 };
+    private const string ModeUnsetText="未設定";
+    private static readonly Color ModeUnsetColor=Color.Red;
     private bool _modeSelected;
 
     private Control BuildModeSelectionPanel()
@@ -19,6 +21,21 @@ internal sealed partial class MainForm : Form
         _modeBox.Width=230;
         _modeBox.DropDownHeight=180;
         _modeBox.Items.AddRange(["動き検査","データ調整","データ取り"]);
+        // 起動直後はまだ選んでいないので、空欄の代わりに赤文字で「未設定」を出す(DropDownList は文字を置けないため自前で描く)。
+        _modeBox.DrawMode=DrawMode.OwnerDrawFixed;
+        _modeBox.DrawItem+=(_,e)=>
+        {
+            if(e.Index<0)
+            {
+                // 未選択の表示欄。フォーカスの青い帯に赤文字が載ると読めないので、白地に赤文字で描く。
+                e.Graphics.FillRectangle(SystemBrushes.Window,e.Bounds);
+                TextRenderer.DrawText(e.Graphics,ModeUnsetText,e.Font,e.Bounds,ModeUnsetColor,TextFormatFlags.Left|TextFormatFlags.VerticalCenter|TextFormatFlags.NoPadding);
+                return;
+            }
+            e.DrawBackground();
+            TextRenderer.DrawText(e.Graphics,_modeBox.Items[e.Index]?.ToString()??"",e.Font,e.Bounds,e.ForeColor,TextFormatFlags.Left|TextFormatFlags.VerticalCenter|TextFormatFlags.NoPadding);
+            e.DrawFocusRectangle();
+        };
         _modeBox.SelectionChangeCommitted+=(_,_)=>ChangeTestMode();
         panel.Controls.AddRange([new Label
         {
@@ -51,9 +68,9 @@ internal sealed partial class MainForm : Form
     private readonly string _sessionFolder=Path.Combine(Path.GetTempPath(),"AS110BoltCheck","ver3-"+Guid.NewGuid().ToString("N"));
 
     // モードを選ぶまで全体を非表示にする。型式・Excel転送はデータ調整とデータ取りで、保存先・S/N・保存・漏れ試験・合格はデータ取りを選んだときだけ表示する。
-    // 並びは上から 型式・S/N → 保存先 → 保護解除・転送設定 → ボタン → 状態。表示/非表示を切り替えても並びが変わらないよう、行も列も TableLayoutPanel で位置を固定する。
+    // 並びは上から 型式 → 開始S/N・最後S/N → 保存先 → 保護解除・転送設定 → ボタン → 状態。表示/非表示を切り替えても並びが変わらないよう、行も列も TableLayoutPanel で位置を固定する。
     private readonly TableLayoutPanel _productionPanel=new() { AutoSize=true,AutoSizeMode=AutoSizeMode.GrowAndShrink,Dock=DockStyle.Fill,ColumnCount=1,Visible=false };
-    private TableLayoutPanel _setupPanel=null!,_savePathPanel=null!,_protectionPanel=null!,_actionPanel=null!;
+    private TableLayoutPanel _setupPanel=null!,_serialPanel=null!,_savePathPanel=null!,_protectionPanel=null!,_actionPanel=null!;
     private readonly Button _chooseSaveRootButton=new() { Text="保存先選択",AutoSize=true };
     private readonly Button _releaseSerialButton=new() { Text="完了番号の保護解除",AutoSize=true };
     private readonly Button _transferSettingsButton=new() { Text="転送設定",AutoSize=true };
@@ -100,12 +117,14 @@ internal sealed partial class MainForm : Form
             _reviewStage=false;UpdateControls();
         });
         ConfigureButton(_retryCaptureButton,"一時保存を再試行",(_,_)=>RetryCapture());
-        _setupPanel=Row(_modelBox,applyModel,_serialLabel,_serialBox,_lastSerialLabel,_lastSerialBox);
+        // 型式と S/N を 1 行に並べると横長になるので、開始S/N・最後S/N は型式の下の行にする。
+        _setupPanel=Row(_modelBox,applyModel);
+        _serialPanel=Row(_serialLabel,_serialBox,_lastSerialLabel,_lastSerialBox);
         _savePathPanel=Row(_chooseSaveRootButton,_rootBox);
         _protectionPanel=Row(_releaseSerialButton,_transferSettingsButton);
         // 型式・S/N・保存先の入力欄は、上段のボタンより目立つよう大きい文字にする。
         var inputFont=new Font(Font.FontFamily,12);
-        foreach(var row in new[]{_setupPanel,_savePathPanel,_protectionPanel})
+        foreach(var row in new[]{_setupPanel,_serialPanel,_savePathPanel,_protectionPanel})
             foreach(Control control in row.Controls) control.Font=inputFont;
         _modelBox.Width=270;_serialBox.Width=_lastSerialBox.Width=140;_rootBox.Width=420;
         foreach(var button in new[]{applyModel,_chooseSaveRootButton,_releaseSerialButton,_transferSettingsButton}) button.MinimumSize=new Size(0,40);
@@ -113,7 +132,7 @@ internal sealed partial class MainForm : Form
         var subActions=Row(_remeasureButton,_retryCaptureButton);
         _actionPanel=new TableLayoutPanel { AutoSize=true,AutoSizeMode=AutoSizeMode.GrowAndShrink,ColumnCount=1,RowCount=2,Margin=Padding.Empty };
         _actionPanel.Controls.Add(mainActions,0,0);_actionPanel.Controls.Add(subActions,0,1);
-        Control[] rows=[_setupPanel,_savePathPanel,_protectionPanel,_actionPanel,_flowLabel];
+        Control[] rows=[_setupPanel,_serialPanel,_savePathPanel,_protectionPanel,_actionPanel,_flowLabel];
         _productionPanel.RowCount=rows.Length;
         for(int i=0;i<rows.Length;i++){ _productionPanel.RowStyles.Add(new RowStyle(SizeType.AutoSize)); _productionPanel.Controls.Add(rows[i],0,i); }
         _modelBox.SelectionChangeCommitted+=async (_,_)=>await SelectProductModelAsync();
@@ -176,7 +195,7 @@ internal sealed partial class MainForm : Form
         _setupPanel.Visible=_protectionPanel.Visible=_actionPanel.Visible=excelMode;
         _savePathPanel.Visible=_chooseSaveRootButton.Visible=_rootBox.Visible=_releaseSerialButton.Visible=production;
         _saveButton.Visible=_leakOutputButton.Visible=_leakButton.Visible=_completeButton.Visible=production;
-        _serialLabel.Visible=_serialBox.Visible=_lastSerialLabel.Visible=_lastSerialBox.Visible=production;
+        _serialPanel.Visible=_serialLabel.Visible=_serialBox.Visible=_lastSerialLabel.Visible=_lastSerialBox.Visible=production;
         _serialBox.Enabled=_lastSerialBox.Enabled=CanChangeSetup && production;
         _startButton.Text=_flow.Mode==TestMode.Motion?"測定開始":"データ調整";
         _startButton.Enabled=ready && !_flow.SaveFailed && !_flow.CaptureFailed && (!_reviewStage) && (_flow.Mode!=TestMode.Motion || MotionContactEnergized) && !_flow.SerialRangeFinished;

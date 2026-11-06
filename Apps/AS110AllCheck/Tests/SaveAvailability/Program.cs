@@ -19,6 +19,23 @@ internal static class Program
         var modeBox=(ComboBox)Field("_modeBox");
         if(modeBox.SelectedIndex!=-1 || (bool)Field("_modeSelected"))
             throw new Exception("Startup must wait for an explicit mode selection");
+        // 未選択のモード欄は空欄ではなく赤文字の「未設定」を描く。Windows は未選択の表示欄を Index=-1 で描かせる(DrawToBitmap では呼ばれない)ので、
+        // 同じ引数で描画処理を直接呼び、赤い画素があること・選択後は赤が消えることで確かめる。
+        if(modeBox.DrawMode!=DrawMode.OwnerDrawFixed)throw new Exception("Mode box must draw the unset text itself");
+        _=modeBox.Handle;
+        var onDrawItem=typeof(ComboBox).GetMethod("OnDrawItem",Private)!;
+        bool DrawsRed(int index,string imageName)
+        {
+            using var bitmap=new Bitmap(Math.Max(modeBox.Width,1),Math.Max(modeBox.ItemHeight,1));
+            using(var graphics=Graphics.FromImage(bitmap))
+                onDrawItem.Invoke(modeBox,[new DrawItemEventArgs(graphics,modeBox.Font,new Rectangle(Point.Empty,bitmap.Size),index,DrawItemState.None)]);
+            bitmap.Save(Path.Combine(AppContext.BaseDirectory,imageName));
+            for(int y=0;y<bitmap.Height;y++)for(int x=0;x<bitmap.Width;x++){ var c=bitmap.GetPixel(x,y); if(c.R>200 && c.G<80 && c.B<80) return true; }
+            return false;
+        }
+        if(!DrawsRed(-1,"mode-unset.png"))throw new Exception("Unset mode box did not draw the red '未設定' text");
+        if(DrawsRed(2,"mode-selected.png"))throw new Exception("Selected mode must not be drawn in red");
+        Console.WriteLine("PASS unset mode box shows red text, selected mode does not");
         var standPanel=(Control)Field("_standSelectionPanel");
         type.GetMethod("UpdateStandControls",Private)!.Invoke(form,[true]);
         // 非表示の親Formに影響されないよう、Visibleのローカル状態を調べる。
@@ -43,13 +60,13 @@ internal static class Program
                 throw new Exception("Save root / serial visibility did not follow mode: "+mode);
         }
         Console.WriteLine("PASS startup waits for mode; all three modes reveal stand selection; save root and serial only in production");
-        // データ取りの操作欄の並び: 型式・S/N → 保存先 → 保護解除・転送設定 → ボタン → 状態。最後に選んだモードはデータ取り(2)。
+        // データ取りの操作欄の並び: 型式 → 開始S/N・最後S/N → 保存先 → 保護解除・転送設定 → ボタン → 状態。最後に選んだモードはデータ取り(2)。
         _=form.Handle;form.PerformLayout();
-        Control[] orderedRows=[(Control)Field("_setupPanel"),(Control)Field("_savePathPanel"),(Control)Field("_protectionPanel"),(Control)Field("_actionPanel"),(Control)Field("_flowLabel")];
+        Control[] orderedRows=[(Control)Field("_setupPanel"),(Control)Field("_serialPanel"),(Control)Field("_savePathPanel"),(Control)Field("_protectionPanel"),(Control)Field("_actionPanel"),(Control)Field("_flowLabel")];
         for(int i=1;i<orderedRows.Length;i++)
             if(orderedRows[i].Top<=orderedRows[i-1].Top)throw new Exception($"Production rows out of order at {i}: {string.Join(",",orderedRows.Select(r=>r.Top))}");
-        var modelBox=(Control)Field("_modelBox");var serialBox=(Control)Field("_serialBox");var lastSerialBox=(Control)Field("_lastSerialBox");
-        if(!(modelBox.Left<serialBox.Left && serialBox.Left<lastSerialBox.Left))throw new Exception("Model, start serial, last serial are not left to right");
+        var serialBox=(Control)Field("_serialBox");var lastSerialBox=(Control)Field("_lastSerialBox");
+        if(serialBox.Left>=lastSerialBox.Left)throw new Exception("Start serial and last serial are not left to right");
         if(((Control)Field("_transferButton")).Left>=((Control)Field("_saveButton")).Left)throw new Exception("Excel transfer button is not first in the action row");
         string productionImage=Path.Combine(AppContext.BaseDirectory,"production-panel.png");
         // 非表示フォームの子はハンドルが無く描かれないので、先に作る。
@@ -64,7 +81,7 @@ internal static class Program
         string formImage=Path.Combine(AppContext.BaseDirectory,"main-form.png");
         CreateHandles(form);form.PerformLayout();
         using(var bitmap=new Bitmap(form.Width,form.Height)){ form.DrawToBitmap(bitmap,new Rectangle(Point.Empty,bitmap.Size)); bitmap.Save(formImage); }
-        Console.WriteLine("PASS production rows are model/serial, save root, release, buttons, status; layout images: "+productionImage+" / "+formImage);
+        Console.WriteLine("PASS production rows are model, serial, save root, release, buttons, status; layout images: "+productionImage+" / "+formImage);
         var flow=Field("_flow");
         var flowType=flow.GetType();
         flowType.GetProperty("Mode")!.SetValue(flow,Enum.Parse(assembly.GetType("PSCAutomation.Apps.AS110AllCheck.TestMode")!,"Production"));
