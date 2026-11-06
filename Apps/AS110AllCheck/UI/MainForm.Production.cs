@@ -103,6 +103,12 @@ internal sealed partial class MainForm : Form
         _setupPanel=Row(_modelBox,applyModel,_serialLabel,_serialBox,_lastSerialLabel,_lastSerialBox);
         _savePathPanel=Row(_chooseSaveRootButton,_rootBox);
         _protectionPanel=Row(_releaseSerialButton,_transferSettingsButton);
+        // 型式・S/N・保存先の入力欄は、上段のボタンより目立つよう大きい文字にする。
+        var inputFont=new Font(Font.FontFamily,12);
+        foreach(var row in new[]{_setupPanel,_savePathPanel,_protectionPanel})
+            foreach(Control control in row.Controls) control.Font=inputFont;
+        _modelBox.Width=270;_serialBox.Width=_lastSerialBox.Width=140;_rootBox.Width=420;
+        foreach(var button in new[]{applyModel,_chooseSaveRootButton,_releaseSerialButton,_transferSettingsButton}) button.MinimumSize=new Size(0,40);
         var mainActions=Row(_transferButton,_saveButton,_leakOutputButton,_leakButton,_completeButton);
         var subActions=Row(_remeasureButton,_retryCaptureButton);
         _actionPanel=new TableLayoutPanel { AutoSize=true,AutoSizeMode=AutoSizeMode.GrowAndShrink,ColumnCount=1,RowCount=2,Margin=Padding.Empty };

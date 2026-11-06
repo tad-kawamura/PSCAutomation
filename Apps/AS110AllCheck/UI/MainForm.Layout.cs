@@ -157,6 +157,9 @@ internal sealed partial class MainForm : Form
         ConfigureButton(_getStateButton, "状態確認", GetStateClicked);
         ConfigureButton(_restoreWifiButton, "元のWi-Fiへ戻す", RestoreWifiClicked);
         ConfigureButton(_exitButton, "アプリ終了", (_, _) => Close());
+        // 上段の操作ボタンは、下の型式・S/N・保存先の入力欄より目立たないよう一回り小さくする。
+        foreach (var button in new[] { _initializeButton, _startButton, _deleteTemplateButton, _getStateButton, _restoreWifiButton, _exitButton })
+            button.MinimumSize = new Size(120, 34);
 
         BuildDeveloperContactControls(buttons);
 
