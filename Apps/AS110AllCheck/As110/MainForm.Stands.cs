@@ -43,7 +43,7 @@ internal sealed partial class MainForm : Form
         {
             var button = new Button();
             ConfigureButton(button, $"{stand.Name}（{stand.InputVoltage:g} V＝{stand.CurrentMilliAmps:g} mA）",
-                (_, _) => SelectStand(stand), new Size(230, 36)); // 3 つが窓の幅 800 で 1 行に並ぶ幅
+                (_, _) => SelectStand(stand), new Size(220, 36)); // 3 つが窓の幅 760 で 1 行に並ぶ幅
             button.Margin = new Padding(0, 0, 8, 6);
             _standButtons.Add(button);
             _standButtonsPanel.Controls.Add(button);

@@ -14,6 +14,7 @@
     <Compile Include="../../As110/As110MotionTest.cs" Link="App/As110MotionTest.cs" />
     <Compile Include="../../Production/ProductionWorkflow.cs" Link="App/ProductionWorkflow.cs" />
     <Compile Include="../../Production/LeakCheckSequence.cs" Link="App/LeakCheckSequence.cs" />
+    <Compile Include="../../Production/SaveFolder.cs" Link="App/SaveFolder.cs" />
     <Compile Include="../../Excel/TransferSettings.cs" Link="App/TransferSettings.cs" />
     <!-- 発振器の設定値の型だけを使う(Instruments は NI-VISA を要るので参照しない) -->
     <Compile Include="../../../../Wrappers/Instruments/Generators/GeneratorBurstSettings.cs" Link="Wrappers/GeneratorBurstSettings.cs" />

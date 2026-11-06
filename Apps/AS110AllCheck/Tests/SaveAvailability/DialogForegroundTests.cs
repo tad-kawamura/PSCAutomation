@@ -69,6 +69,9 @@ internal static class DialogForegroundTests
         string saveRoot = Path.Combine(Path.GetTempPath(), "AS110AllCheck-release-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(saveRoot);
         File.WriteAllText(Path.Combine(saveRoot, "完了記録.txt"), $"COMPLETE\t{DateTime.Now:O}\t3\tAS110-035\ta\nCOMPLETE\t{DateTime.Now:O}\t1\tAS110-035\tb\nCOMPLETE\t{DateTime.Now:O}\t2\tAS110-035\tc\nRELEASE\t{DateTime.Now:O}\t2\t-\t-\n");
+        // 記録に無いデータ(S/N 5)も一覧に「記録なし」で出る。
+        Directory.CreateDirectory(Path.Combine(saveRoot, "PDF"));
+        File.WriteAllText(Path.Combine(saveRoot, "PDF", "AS110-035_SN5_20261106_6500.pdf"), "");
         ((TextBox)type.GetField("_rootBox", flags)!.GetValue(owner)!).Text = saveRoot;
         try
         {
@@ -93,10 +96,10 @@ internal static class DialogForegroundTests
                         if (!IsAbove(dialog.Handle, owner.Handle)) throw new Exception("Dialog is behind MainForm");
                         if (ticks == 0 && method == "ReleaseCompletedSerial")
                         {
-                            // 記録のある S/N が番号順に並び、保護中はチェック付き、解除済みはチェックなし。
+                            // S/N が番号順に並び、保護中はチェック付き、解除済み・記録なしはチェックなし。
                             var serials = dialog.Controls.OfType<CheckedListBox>().Single();
                             string shown = string.Join(",", serials.Items.Cast<object>().Select((item, i) => item + (serials.GetItemChecked(i) ? "+" : "-")));
-                            if (shown != "S/N 1+,S/N 2-,S/N 3+")
+                            if (shown != "S/N 1+,S/N 2（解除済み）-,S/N 3+,S/N 5（記録なし）-")
                                 throw new Exception("Release dialog does not list serials with protection state in order: " + shown);
                         }
                         if (ticks == 0 && dialog.Controls.OfType<TextBox>().FirstOrDefault() is { } input)

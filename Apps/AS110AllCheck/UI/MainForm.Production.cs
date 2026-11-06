@@ -48,7 +48,7 @@ internal sealed partial class MainForm : Form
     private readonly TextBox _serialBox = new() { Width=110,Text="1" };
     private readonly Label _serialLabel = new() { Text="開始S/N", AutoSize=true };
     private readonly TextBox _rootBox = new() { Width=280,ReadOnly=true };
-    private readonly Label _flowLabel = new() { AutoSize=true,MaximumSize=new Size(720,0) };
+    private readonly Label _flowLabel = new() { AutoSize=true,MaximumSize=new Size(680,0) };
     private readonly Button _transferButton=new(),_saveButton=new(),_leakOutputButton=new(),_leakButton=new(),_completeButton=new(),_remeasureButton=new(),_retryCaptureButton=new();
     private bool _leakOutputReady;
     // 出力OFFを送信できず、発振器の出力が残っている可能性がある状態。
@@ -76,6 +76,34 @@ internal sealed partial class MainForm : Form
     private readonly Button _transferSettingsButton=new() { Text="転送設定",AutoSize=true };
     private readonly TextBox _lastSerialBox = new() { Width=110 };
     private readonly Label _lastSerialLabel = new() { Text="最後S/N", AutoSize=true };
+    // 保存先フォルダー名「SN開始-最後」と S/N が合わないときの赤字。保存先の行の下に出す。
+    private readonly Label _saveRootWarningLabel = new() { AutoSize=true,ForeColor=Color.Red,MaximumSize=new Size(680,0),Visible=false };
+    // 保存先フォルダー名から開始S/N・最後S/N を入れる。開始S/N は空か「1」(初期値)のとき、最後S/N は空のときだけ。
+    private void ApplySaveRootRange()
+    {
+        var range=SaveFolder.ParseRange(_rootBox.Text);
+        if(range is null) return;
+        string start=_serialBox.Text.Trim();
+        if(start.Length==0 || start=="1") _serialBox.Text=range.Value.Start;
+        if(_lastSerialBox.Text.Trim().Length==0) _lastSerialBox.Text=range.Value.End;
+    }
+    // 保存先の Excel/PDF/LOGGER にある、完了記録に無い S/N のデータを知らせる(保護は「完了番号の保護解除」の画面で付ける)。
+    private void ReportUnrecordedData()
+    {
+        if(_rootBox.Text.Length==0) return;
+        try
+        {
+            var store=Store;using var held=store.Lock();
+            var (unrecorded,unreadable)=SaveFolder.FindUnrecorded(_rootBox.Text,store.Read());
+            if(unrecorded.Count==0 && unreadable==0){AppendLog("保存先確認：完了記録に無いデータはありません。");return;}
+            string serials=string.Join(", ",unrecorded.Select(f=>f.Serial));
+            string message=(unrecorded.Count>0?$"完了記録に無いデータが {unrecorded.Count} 件あります（S/N {serials}）。\n保護するなら「完了番号の保護解除」でチェックを付けて確定してください。":"")
+                +(unreadable>0?$"{(unrecorded.Count>0?"\n":"")}このアプリの形式でないファイルが {unreadable} 件あります（S/N を読めないので対象外）。":"");
+            AppendLog("保存先確認："+message.Replace("\n"," "));
+            ErrorNotification.Show(this,message,"保存先の確認",MessageBoxButtons.OK,MessageBoxIcon.Information);
+        }
+        catch(Exception ex){AppendLog($"保存先確認：エラー / {ex.Message}");ErrorNotification.Show(this,ex.Message,"保存先の確認",MessageBoxButtons.OK,MessageBoxIcon.Error);}
+    }
     private static TableLayoutPanel Row(params Control[] controls)
     {
         var row=new TableLayoutPanel { AutoSize=true,AutoSizeMode=AutoSizeMode.GrowAndShrink,RowCount=1,ColumnCount=controls.Length,Margin=new Padding(0,0,0,6) };
@@ -94,10 +122,16 @@ internal sealed partial class MainForm : Form
         var applyModel=new Button {Text="型式を適用",AutoSize=true};
         applyModel.Click+=async (_,_)=>await SelectProductModelAsync();
         _rootBox.Text=_transferSettings.SaveRoot;
+        ApplySaveRootRange();
         _chooseSaveRootButton.Click+=(_,_)=> {
             if(_operationInProgress || _flow.Measuring || _flow.SaveFailed || _leakRunning || _flow.HasSaved) return;
             using var dialog=new FolderBrowserDialog();
-            if(dialog.ShowDialog(this)==DialogResult.OK) { _rootBox.Text=dialog.SelectedPath;_transferSettings.SaveRoot=dialog.SelectedPath;_transferSettings.Save();UpdateControls(); }
+            if(dialog.ShowDialog(this)!=DialogResult.OK) return;
+            _rootBox.Text=dialog.SelectedPath;_transferSettings.SaveRoot=dialog.SelectedPath;_transferSettings.Save();
+            ApplySaveRootRange();
+            if(_flow.Mode==TestMode.Production && CanChangeSetup) RunOperation("保存先選択",()=>{ConfigureProduct(requireSaveRoot:false);return _rootBox.Text;});
+            UpdateControls();
+            ReportUnrecordedData();
         };
         _releaseSerialButton.Click+=(_,_)=>ReleaseCompletedSerial();
         _transferSettingsButton.Click+=(_,_)=>EditTransferSettings();
@@ -121,6 +155,7 @@ internal sealed partial class MainForm : Form
         _setupPanel=Row(_modelBox,applyModel);
         _serialPanel=Row(_serialLabel,_serialBox,_lastSerialLabel,_lastSerialBox);
         _savePathPanel=Row(_chooseSaveRootButton,_rootBox);
+        _saveRootWarningLabel.Margin=new Padding(0,0,0,6);
         _protectionPanel=Row(_releaseSerialButton,_transferSettingsButton);
         // 型式・S/N・保存先の入力欄は、上段のボタンより目立つよう大きい文字にする。
         var inputFont=new Font(Font.FontFamily,12);
@@ -133,10 +168,13 @@ internal sealed partial class MainForm : Form
         var subActions=Row(_completeButton,_remeasureButton,_retryCaptureButton);
         _actionPanel=new TableLayoutPanel { AutoSize=true,AutoSizeMode=AutoSizeMode.GrowAndShrink,ColumnCount=1,RowCount=2,Margin=Padding.Empty };
         _actionPanel.Controls.Add(mainActions,0,0);_actionPanel.Controls.Add(subActions,0,1);
-        Control[] rows=[_setupPanel,_serialPanel,_savePathPanel,_protectionPanel,_actionPanel,_flowLabel];
+        Control[] rows=[_setupPanel,_serialPanel,_savePathPanel,_saveRootWarningLabel,_protectionPanel,_actionPanel,_flowLabel];
         _productionPanel.RowCount=rows.Length;
         for(int i=0;i<rows.Length;i++){ _productionPanel.RowStyles.Add(new RowStyle(SizeType.AutoSize)); _productionPanel.Controls.Add(rows[i],0,i); }
         _modelBox.SelectionChangeCommitted+=async (_,_)=>await SelectProductModelAsync();
+        // 入力中もフォルダー名との照合(赤字)を更新する。
+        _serialBox.TextChanged+=(_,_)=>UpdateControls();
+        _lastSerialBox.TextChanged+=(_,_)=>UpdateControls();
         _serialBox.Leave+=(_,_)=>{if(!CanChangeSetup || _flow.Mode!=TestMode.Production)return;RunOperation("S/N設定",()=>{ConfigureProduct(requireSaveRoot:false);return "設定しました";});};
         _lastSerialBox.Leave+=(_,_)=>{if(!CanChangeSetup || _flow.Mode!=TestMode.Production)return;RunOperation("最後S/N設定",()=>{ConfigureProduct(requireSaveRoot:false);return _flow.LastSerial.Length>0?$"最後のS/N {_flow.LastSerial} まで":"最後のS/Nなし（上限なし）";});};
         return _productionPanel;
@@ -197,6 +235,8 @@ internal sealed partial class MainForm : Form
         _savePathPanel.Visible=_chooseSaveRootButton.Visible=_rootBox.Visible=_releaseSerialButton.Visible=production;
         _saveButton.Visible=_leakOutputButton.Visible=_leakButton.Visible=_completeButton.Visible=production;
         _serialPanel.Visible=_serialLabel.Visible=_serialBox.Visible=_lastSerialLabel.Visible=_lastSerialBox.Visible=production;
+        _saveRootWarningLabel.Text=production?SaveFolder.CheckRange(_rootBox.Text,_serialBox.Text.Trim(),_lastSerialBox.Text.Trim()):"";
+        _saveRootWarningLabel.Visible=_saveRootWarningLabel.Text.Length>0;
         _serialBox.Enabled=_lastSerialBox.Enabled=CanChangeSetup && production;
         _startButton.Text=_flow.Mode==TestMode.Motion?"測定開始":"データ調整";
         _startButton.Enabled=ready && !_flow.SaveFailed && !_flow.CaptureFailed && (!_reviewStage) && (_flow.Mode!=TestMode.Motion || MotionContactEnergized) && !_flow.SerialRangeFinished;
@@ -368,6 +408,9 @@ internal sealed partial class MainForm : Form
             _flow.SaveFailed=true;
             if(_excel is null || !_flow.HasTransfer || _capturePath is null)throw new InvalidOperationException("最新結果をExcelへ転送してください。");
             if(!_excel.IsPass()) { _lastExcelPass=false; _flow.SaveFailed=false;throw new InvalidOperationException("E21・L21の両方がOKではありません。"); }
+            // 保存先フォルダー名「SN開始-最後」と合わないときは書き込まずに止める(何も書いていないので再保存の扱いにはしない)。
+            string rangeProblem=SaveFolder.CheckRange(_rootBox.Text,_flow.Serial,_flow.LastSerial);
+            if(rangeProblem.Length>0) { _flow.SaveFailed=false;throw new InvalidOperationException(rangeProblem); }
             var store=Store;using var held=store.Lock();
             if(store.IsComplete(_flow.Serial))throw new InvalidOperationException("完了済みのS/Nは上書きできません。");
             string root=Path.GetFullPath(_rootBox.Text),baseName=_flow.BaseName;
@@ -519,32 +562,40 @@ internal sealed partial class MainForm : Form
             ErrorNotification.Show(this,"保存先を選択してください。\n完了番号の保護は保存先の「完了記録.txt」で管理しています。","完了番号の保護解除",MessageBoxButtons.OK,MessageBoxIcon.Warning);
             return;
         }
-        (string Serial,bool Protected)[] entries;
-        try { var store=Store;using var held=store.Lock();entries=store.Entries(); }
-        catch(Exception ex) { AppendLog($"保護解除：エラー / {ex.Message}");ErrorNotification.Show(this,ex.Message,"完了番号の保護解除",MessageBoxButtons.OK,MessageBoxIcon.Error);return; }
-        if(entries.Length==0)
+        // 一覧の 1 行: 記録のある S/N(保護中・解除済み)と、記録は無いがデータのある S/N(記録なし)。
+        List<(string Serial,bool Protected,string Model,string BaseName,string Note)> entries;
+        try
         {
-            ErrorNotification.Show(this,$"完了記録のあるS/Nはありません。\n保存先: {_rootBox.Text}","完了番号の保護解除",MessageBoxButtons.OK,MessageBoxIcon.Information);
+            var store=Store;using var held=store.Lock();
+            entries=store.Entries().Select(e=>(e.Serial,e.Protected,"-","再保護",e.Protected?"":"（解除済み）")).ToList();
+            var (unrecorded,_)=SaveFolder.FindUnrecorded(_rootBox.Text,store.Read());
+            entries.AddRange(unrecorded.Select(f=>(f.Serial,false,f.Model,f.BaseName,"（記録なし）")));
+            entries=entries.OrderBy(e=>long.Parse(e.Serial)).ToList();
+        }
+        catch(Exception ex) { AppendLog($"保護解除：エラー / {ex.Message}");ErrorNotification.Show(this,ex.Message,"完了番号の保護解除",MessageBoxButtons.OK,MessageBoxIcon.Error);return; }
+        if(entries.Count==0)
+        {
+            ErrorNotification.Show(this,$"完了記録のあるS/Nも、保存されたデータもありません。\n保存先: {_rootBox.Text}","完了番号の保護解除",MessageBoxButtons.OK,MessageBoxIcon.Information);
             return;
         }
-        // 記録のある S/N を番号順に並べ、保護中はチェック付き、解除済みはチェックなしで出す。
-        // チェックを外せば解除、付け直せば再保護。「確定」を押したときにまとめて反映する(誤クリックはキャンセルで戻せる)。
+        // 番号順に並べ、保護中はチェック付き、解除済み・記録なしはチェックなしで出す。
+        // チェックを外せば解除、付ければ保護(記録なしは型式とファイル名を記録に残す)。「確定」を押したときにまとめて反映する(誤クリックはキャンセルで戻せる)。
         using var dialog=new Form {Text="完了番号の保護解除",ClientSize=new Size(420,380),StartPosition=FormStartPosition.CenterParent,TopMost=true,MinimizeBox=false,MaximizeBox=false};
-        var guide=new Label{Left=12,Top=10,Width=396,Height=68,Text=$"保存先: {_rootBox.Text}\nチェックあり＝保護中。チェックを外すと保護を解除し、付け直すと再び保護します。\n「確定」で反映します。既存ファイルは残します。"};
+        var guide=new Label{Left=12,Top=10,Width=396,Height=68,Text=$"保存先: {_rootBox.Text}\nチェックあり＝保護中。チェックを外すと保護を解除し、付けると保護します（記録なしのデータも保護できます）。\n「確定」で反映します。既存ファイルは残します。"};
         var list=new CheckedListBox{Left=12,Top=82,Width=396,Height=240,CheckOnClick=true,Font=new Font(Font.FontFamily,12)};
-        foreach(var (serial,isProtected) in entries) list.Items.Add("S/N "+serial,isProtected);
+        foreach(var entry in entries) list.Items.Add("S/N "+entry.Serial+entry.Note,entry.Protected);
         var ok=new Button{Text="確定",Left=208,Top=332,Width=96,Height=36,DialogResult=DialogResult.OK};
         var cancel=new Button{Text="キャンセル",Left=312,Top=332,Width=96,Height=36,DialogResult=DialogResult.Cancel};
         dialog.Controls.AddRange([guide,list,ok,cancel]);dialog.AcceptButton=ok;dialog.CancelButton=cancel;
         if(dialog.ShowDialog(this)!=DialogResult.OK)return;
-        var desired=entries.Select((e,i)=>(e.Serial,Protected:list.GetItemChecked(i))).ToArray();
-        if(desired.SequenceEqual(entries)){AppendLog("保護解除：チェックを変えた S/N が無いので何もしていません。");return;}
+        var desired=entries.Select((e,i)=>(e.Serial,Protected:list.GetItemChecked(i),e.Model,e.BaseName)).ToArray();
+        if(desired.Select(d=>d.Protected).SequenceEqual(entries.Select(e=>e.Protected))){AppendLog("保護解除：チェックを変えた S/N が無いので何もしていません。");return;}
         RunOperation("保護解除",()=> {
             var store=Store;using var held=store.Lock();
             var (released,reprotected)=store.SetProtection(desired);
             var parts=new List<string>();
             if(released.Length>0) parts.Add($"S/N {string.Join(", ",released)} の保護を解除しました（既存ファイルは残しています）");
-            if(reprotected.Length>0) parts.Add($"S/N {string.Join(", ",reprotected)} を再び保護しました");
+            if(reprotected.Length>0) parts.Add($"S/N {string.Join(", ",reprotected)} を保護しました");
             return parts.Count==0?"選んだS/Nはすでにその状態でした。":string.Join("。",parts)+"。";
         });
     }

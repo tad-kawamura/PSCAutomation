@@ -105,15 +105,18 @@ internal sealed class CompletionStore
     // 一覧で決めた保護の状態を反映する。保護中→解除は RELEASE、解除済み→再保護は COMPLETE(型式・ファイル名は「-」「再保護」)を追記する。
     // 今の記録と同じ状態の S/N は何もしない(画面を開いている間にほかで変わっていても二重に書かない)。呼ぶ側が Lock() を持つ。
     public (string[] Released, string[] Protected) SetProtection(IEnumerable<(string Serial, bool Protected)> desired)
+        => SetProtection(desired.Select(d => (d.Serial, d.Protected, "-", "再保護")));
+    // 記録の無いデータを保護するときは、ファイル名から分かる型式とファイル名を記録に残す。
+    public (string[] Released, string[] Protected) SetProtection(IEnumerable<(string Serial, bool Protected, string Model, string BaseName)> desired)
     {
         var current = Read();
         var released = new List<string>(); var reprotected = new List<string>();
-        foreach (var (serial, protect) in desired)
+        foreach (var (serial, protect, model, baseName) in desired)
         {
             string key = Key(serial);
             bool isProtected = current.GetValueOrDefault(key) == "COMPLETE";
             if (protect == isProtected) continue;
-            if (protect) { Append("COMPLETE", key, "-", "再保護"); reprotected.Add(key); }
+            if (protect) { Append("COMPLETE", key, model, baseName); reprotected.Add(key); }
             else { Append("RELEASE", key, "-", "-"); released.Add(key); }
         }
         return (released.ToArray(), reprotected.ToArray());

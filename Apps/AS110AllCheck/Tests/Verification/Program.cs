@@ -51,6 +51,32 @@ using(store.Lock()){
     Check(!store.IsComplete("7")&&store.IsComplete("12")&&store.IsComplete("100"),"protection state after set");
     Check(File.ReadAllLines(Path.Combine(root,"完了記録.txt")).Last().StartsWith("COMPLETE\t")&&File.ReadAllLines(Path.Combine(root,"完了記録.txt")).Last().EndsWith("\t12\t-\t再保護"),"re-protection is journaled as COMPLETE");
 }
+// 保存先フォルダー名「SN開始-最後」の解析と、S/N との照合。
+Check(SaveFolder.ParseRange(Path.Combine(root,"SN71360-71460"))==("71360","71460"),"folder range parsed");
+Check(SaveFolder.ParseRange(Path.Combine(root,"AS110-035 SN00010-00020 試作"))==("00010","00020"),"folder range parsed inside other words");
+Check(SaveFolder.ParseRange(Path.Combine(root,"SN20-10")) is null && SaveFolder.ParseRange(Path.Combine(root,"測定データ")) is null && SaveFolder.ParseRange("") is null,"folder without a valid range has none");
+string rangeRoot=Path.Combine(root,"SN71360-71460");
+Check(SaveFolder.CheckRange(rangeRoot,"71360","71460")=="" && SaveFolder.CheckRange(rangeRoot,"71460","71460")=="","serial inside range with matching last is accepted");
+Check(SaveFolder.CheckRange(rangeRoot,"71500","71460").Contains("範囲 71360〜71460 の外") && SaveFolder.CheckRange(rangeRoot,"71359","71460").Contains("の外"),"serial outside range is reported");
+Check(SaveFolder.CheckRange(rangeRoot,"71400","71470").Contains("71470 がフォルダーの 71460 と違います"),"last serial differing from folder end is reported");
+Check(SaveFolder.CheckRange(rangeRoot,"71400","").Contains("最後S/N が空です"),"empty last serial is reported");
+Check(SaveFolder.CheckRange(Path.Combine(root,"測定データ"),"1","2").Contains("SN開始-最後 がありません") && SaveFolder.CheckRange("","1","")=="","folder without range is reported; no folder is not checked");
+Check(SaveFolder.CheckRange(rangeRoot,"71500","71470").EndsWith("保存先フォルダーを確認してください。"),"range problems end with the folder reminder");
+// 保存先の走査: Excel/PDF/LOGGER のファイル名から S/N を拾い、完了記録に無いものを返す。形式外は件数だけ。
+Directory.CreateDirectory(Path.Combine(rangeRoot,"Excel"));Directory.CreateDirectory(Path.Combine(rangeRoot,"LOGGER"));
+File.WriteAllText(Path.Combine(rangeRoot,"Excel","AS110-035_SN71362_20261106_6500.xlsx"),"");
+File.WriteAllText(Path.Combine(rangeRoot,"LOGGER","AS110-035_SN71362_20261106_6500.xdt"),"");
+File.WriteAllText(Path.Combine(rangeRoot,"LOGGER","AS110-035_SN0071361_20261106_6500.ydt"),"");
+File.WriteAllText(Path.Combine(rangeRoot,"Excel","メモ.xlsx"),"");
+var scanStore=new CompletionStore(rangeRoot);
+using(scanStore.Lock()){
+    scanStore.Append("COMPLETE","71361","AS110-035","x");
+    var (unrecorded,unreadable)=SaveFolder.FindUnrecorded(rangeRoot,scanStore.Read());
+    Check(unrecorded.Count==1 && unrecorded[0]==("71362","AS110-035","AS110-035_SN71362_20261106_6500") && unreadable==1,"unrecorded data found once per serial, leading zeros ignored, unreadable counted");
+    var (_,protectedNow)=scanStore.SetProtection([("71362",true,unrecorded[0].Model,unrecorded[0].BaseName)]);
+    Check(protectedNow.SequenceEqual(["71362"]) && scanStore.IsComplete("71362") && File.ReadAllLines(Path.Combine(rangeRoot,"完了記録.txt")).Last().EndsWith("\t71362\tAS110-035\tAS110-035_SN71362_20261106_6500"),"unrecorded data protected with model and file name");
+    Check(SaveFolder.FindUnrecorded(rangeRoot,scanStore.Read()).Unrecorded.Count==0,"nothing unrecorded after protecting");
+}
 using(var held=store.Lock()){bool locked=false;try{using var other=store.Lock();}catch(IOException){locked=true;}Check(locked,"shared store lock excludes second process");}
 File.AppendAllText(Path.Combine(root,"完了記録.txt"),"COMPLETE\tbroken");bool failed=false;try{store.Read();}catch(InvalidDataException){failed=true;}Check(failed,"corrupt journal fails closed");Directory.Delete(root,true);
 Check(TransferSettings.Compress([1,2,3,4,5,6,7,8,9,10],5).SequenceEqual([3.0,8.0]),"compression is block average");

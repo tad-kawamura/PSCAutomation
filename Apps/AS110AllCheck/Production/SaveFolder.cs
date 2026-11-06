@@ -1,0 +1,73 @@
+using System.Globalization;
+using System.Text.RegularExpressions;
+namespace PSCAutomation.Apps.AS110AllCheck;
+
+// 保存先フォルダーの決まりごと。
+// - フォルダー名は「SN開始-最後」(例: SN71360-71460)を含む。今の S/N がその範囲内で、最後S/N がフォルダーの最後と同じなら一致
+// - 中身は Excel/PDF/LOGGER の「型式_SN番号_日付_6500.拡張子」。ここから S/N を拾い、完了記録に無いものを見つける
+internal static class SaveFolder
+{
+    private static readonly Regex RangePattern = new(@"SN(\d+)-(\d+)", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+    private static readonly Regex FilePattern = new(@"^(?<model>.+?)_SN(?<serial>\d+)_\d{8}_6500$", RegexOptions.CultureInvariant);
+    private static readonly string[] DataFolders = ["Excel", "PDF", "LOGGER"];
+
+    public static string FolderName(string root) => Path.GetFileName(Path.TrimEndingDirectorySeparator(Path.GetFullPath(root)));
+
+    // フォルダー名から S/N の範囲を読む。無い、または開始が最後より大きいときは null。
+    public static (string Start, string End)? ParseRange(string root)
+    {
+        if (root.Length == 0) return null;
+        var match = RangePattern.Match(FolderName(root));
+        if (!match.Success) return null;
+        string start = match.Groups[1].Value, end = match.Groups[2].Value;
+        return Number(start) <= Number(end) ? (start, end) : null;
+    }
+
+    // フォルダー名と S/N の照合。問題が無ければ ""。あれば人に見せる文(保存先フォルダーを確認してください、で終わる)。
+    public static string CheckRange(string root, string currentSerial, string lastSerial)
+    {
+        if (root.Length == 0) return "";
+        string name = FolderName(root);
+        var range = ParseRange(root);
+        if (range is null) return $"保存先フォルダー名「{name}」に SN開始-最後 がありません。保存先フォルダーを確認してください。";
+        var (start, end) = range.Value;
+        var problems = new List<string>();
+        if (!long.TryParse(currentSerial, NumberStyles.None, CultureInfo.InvariantCulture, out long current)) problems.Add("S/N が数字ではありません");
+        else if (current < Number(start) || current > Number(end)) problems.Add($"S/N {currentSerial} が範囲 {start}〜{end} の外です");
+        if (lastSerial.Length == 0) problems.Add($"最後S/N が空です（フォルダーは {end}）");
+        else if (!long.TryParse(lastSerial, NumberStyles.None, CultureInfo.InvariantCulture, out long last)) problems.Add("最後S/N が数字ではありません");
+        else if (last != Number(end)) problems.Add($"最後S/N {lastSerial} がフォルダーの {end} と違います");
+        return problems.Count == 0 ? "" : $"保存先フォルダー名「{name}」と合いません（{string.Join("、", problems)}）。保存先フォルダーを確認してください。";
+    }
+
+    // Excel/PDF/LOGGER のファイル名から S/N を拾う。同じ S/N は最初に見つけた 1 件にまとめる。形式が読めないファイルは件数だけ数える。
+    public static (List<(string Serial, string Model, string BaseName)> Files, int Unreadable) Scan(string root)
+    {
+        var files = new List<(string Serial, string Model, string BaseName)>();
+        var seen = new HashSet<string>();
+        int unreadable = 0;
+        foreach (string folder in DataFolders)
+        {
+            string path = Path.Combine(root, folder);
+            if (!Directory.Exists(path)) continue;
+            foreach (string file in Directory.EnumerateFiles(path).OrderBy(f => f, StringComparer.OrdinalIgnoreCase))
+            {
+                string baseName = Path.GetFileNameWithoutExtension(file);
+                var match = FilePattern.Match(baseName);
+                if (!match.Success) { unreadable++; continue; }
+                string serial = Number(match.Groups["serial"].Value).ToString(CultureInfo.InvariantCulture);
+                if (seen.Add(serial)) files.Add((serial, match.Groups["model"].Value, baseName));
+            }
+        }
+        return (files.OrderBy(f => Number(f.Serial)).ToList(), unreadable);
+    }
+
+    // 完了記録(COMPLETE / RELEASE いずれも)に無い S/N のデータ。
+    public static (List<(string Serial, string Model, string BaseName)> Unrecorded, int Unreadable) FindUnrecorded(string root, IReadOnlyDictionary<string, string> records)
+    {
+        var (files, unreadable) = Scan(root);
+        return (files.Where(f => !records.ContainsKey(f.Serial)).ToList(), unreadable);
+    }
+
+    private static long Number(string digits) => long.Parse(digits, NumberStyles.None, CultureInfo.InvariantCulture);
+}

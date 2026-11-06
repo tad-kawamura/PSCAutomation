@@ -65,8 +65,30 @@ internal static class Program
         Control[] orderedRows=[(Control)Field("_setupPanel"),(Control)Field("_serialPanel"),(Control)Field("_savePathPanel"),(Control)Field("_protectionPanel"),(Control)Field("_actionPanel"),(Control)Field("_flowLabel")];
         for(int i=1;i<orderedRows.Length;i++)
             if(orderedRows[i].Top<=orderedRows[i-1].Top)throw new Exception($"Production rows out of order at {i}: {string.Join(",",orderedRows.Select(r=>r.Top))}");
-        var serialBox=(Control)Field("_serialBox");var lastSerialBox=(Control)Field("_lastSerialBox");
+        var serialBox=(TextBox)Field("_serialBox");var lastSerialBox=(TextBox)Field("_lastSerialBox");
         if(serialBox.Left>=lastSerialBox.Left)throw new Exception("Start serial and last serial are not left to right");
+        // 保存先フォルダー名「SN開始-最後」から開始S/N(空か 1 のとき)・最後S/N(空のとき)を入れ、合わないときは保存先の行の下に赤字を出す。
+        var warning=(Label)Field("_saveRootWarningLabel");
+        string rangeRoot=Path.Combine(Path.GetTempPath(),"AS110AllCheck-range-"+Guid.NewGuid().ToString("N"),"SN71360-71460");
+        Directory.CreateDirectory(rangeRoot);
+        try
+        {
+            ((TextBox)Field("_rootBox")).Text=rangeRoot;serialBox.Text="1";lastSerialBox.Text="";
+            Call("ApplySaveRootRange");Call("UpdateControls");
+            if(serialBox.Text!="71360" || lastSerialBox.Text!="71460")throw new Exception($"Save root range was not applied: {serialBox.Text}/{lastSerialBox.Text}");
+            if(LocalVisible(warning) || warning.Text.Length>0)throw new Exception("Range warning shown although serials match the folder: "+warning.Text);
+            serialBox.Text="71500";Call("UpdateControls");
+            if(!LocalVisible(warning) || !warning.Text.Contains("範囲 71360〜71460 の外") || warning.ForeColor!=Color.Red)throw new Exception("Range warning not shown in red for a serial outside the folder: "+warning.Text);
+            if(warning.Top<=((Control)Field("_savePathPanel")).Top || warning.Top>=((Control)Field("_protectionPanel")).Top)throw new Exception("Range warning is not between the save root row and the release row");
+            serialBox.Text="71400";lastSerialBox.Text="71470";Call("UpdateControls");
+            if(!warning.Text.Contains("71470 がフォルダーの 71460 と違います"))throw new Exception("Last serial mismatch not reported: "+warning.Text);
+            serialBox.Text="71400";Call("ApplySaveRootRange");
+            if(serialBox.Text!="71400" || lastSerialBox.Text!="71470")throw new Exception("Applying the folder range overwrote values the user typed");
+            lastSerialBox.Text="71460";Call("UpdateControls");
+            if(LocalVisible(warning))throw new Exception("Range warning remained after correcting: "+warning.Text);
+            Console.WriteLine("PASS save root range fills start/last serial and warns in red on mismatch");
+        }
+        finally { ((TextBox)Field("_rootBox")).Text="";serialBox.Text="1";lastSerialBox.Text="";Call("UpdateControls");try{Directory.Delete(Path.GetDirectoryName(rangeRoot)!,true);}catch(IOException){} }
         if(((Control)Field("_transferButton")).Left>=((Control)Field("_saveButton")).Left)throw new Exception("Excel transfer button is not first in the action row");
         string productionImage=Path.Combine(AppContext.BaseDirectory,"production-panel.png");
         // 非表示フォームの子はハンドルが無く描かれないので、先に作る。
