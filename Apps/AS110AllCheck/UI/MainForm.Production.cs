@@ -192,14 +192,21 @@ internal sealed partial class MainForm : Form
         // 入力中もフォルダー名との照合(赤字)と「入力してください」を更新する。
         _serialBox.TextChanged+=(_,_)=>UpdateControls();
         _serialBox.Leave+=(_,_)=>{
-            if(!CanChangeSetup || _flow.Mode!=TestMode.Production)return;
-            RunOperation("測定開始S/N設定",()=>{ConfigureProduct(requireSaveRoot:false);return _flow.Serial.Length>0?$"S/N {_flow.Serial} から":"測定開始S/N を入力してください";});
+            if(!CanEnterSerial)return;
+            RunOperation("測定開始S/N設定",()=>{
+                // S/N が空のまま残っていた測定結果(データ調整のものなど)は、S/N を入れた時点で破棄される(S/N なしではデータ取りに使えない)。
+                bool discarded=_flow.HasCapture && _flow.SerialMissing && _serialBox.Text.Trim().Length>0;
+                ConfigureProduct(requireSaveRoot:false);
+                return _flow.Serial.Length>0?$"S/N {_flow.Serial} から"+(discarded?"（S/N なしの前の測定結果は破棄しました）":""):"測定開始S/N を入力してください";});
             // 測定開始S/N が入るまで Excel の事前準備を待たせているので、入ったらここで始める。
             if(_flow.Serial.Length>0 && _excel is null && _templateLoaded)RequestExcelPreparation();
         };
         return _productionPanel;
     }
     private bool CanChangeSetup => !_operationInProgress && !_flow.Measuring && !_flow.SaveFailed && !_flow.CaptureFailed && !_leakRunning && !_flow.HasCapture;
+    // 測定開始S/N を入れられるとき。測定結果が残っていても、S/N がまだ空なら入れられる(2026-11-06。データ調整の結果が残ったままデータ取りへ移ると、
+    // 「S/N を入力してください」と案内しながら欄が灰色のままになり、何もできなくなっていた)。S/N が入った結果を変えるときは「設定変更（測定を破棄）」。
+    private bool CanEnterSerial => _flow.Mode==TestMode.Production && !_operationInProgress && !_flow.Measuring && !_flow.SaveFailed && !_flow.CaptureFailed && !_leakRunning && (!_flow.HasCapture || _flow.SerialMissing);
     private ProductModel SelectedModel => _selectedModel;
     private CompletionStore Store => new(_rootBox.Text.Length>0?_rootBox.Text:throw new InvalidOperationException("保存先を選択してください。"));
     private void ConfigureProduct(bool requireSaveRoot=true)
@@ -249,7 +256,7 @@ internal sealed partial class MainForm : Form
         _saveRootWarningLabel.Text=production?SaveFolder.CheckRange(_rootBox.Text,_serialBox.Text.Trim()):"";
         _saveRootWarningLabel.Visible=_saveRootWarningLabel.Text.Length>0;
         _serialMissingLabel.Visible=production && _serialBox.Text.Trim().Length==0;
-        _serialBox.Enabled=CanChangeSetup && production;
+        _serialBox.Enabled=CanEnterSerial;
         _startButton.Text=_flow.Mode==TestMode.Motion?"測定開始":"データ調整";
         // 型式(参照波形)未選択・データ取りの保存先未選択は、押してからエラーにせず押せない状態にして「次にすること」で案内する(2026-11-06)。
         _startButton.Enabled=ready && !_flow.SaveFailed && !_flow.CaptureFailed && (!_reviewStage) && (_flow.Mode!=TestMode.Motion || MotionContactEnergized) && !_flow.SerialRangeFinished && !_flow.SerialMissing
@@ -296,8 +303,9 @@ internal sealed partial class MainForm : Form
         }
         _nextStepLabel.ForeColor=Color.Green;
         string next;
-        if(_flow.HasCapture && !_flow.HasTransfer) next="測定済みです。「Excel転送」を押してください（測り直すなら「"+_startButton.Text+"」）";
-        else if(_flow.HasTransfer && _flow.Mode==TestMode.Production && saveBlockReason.Length==0) next="Excel転送済みです。「保存」を押してください（測り直すなら「"+_startButton.Text+"」）";
+        string change=_flow.Mode==TestMode.Production?"、S/N や型式を変えるなら「設定変更（測定を破棄）」":"";
+        if(_flow.HasCapture && !_flow.HasTransfer) next="測定済みです。「Excel転送」を押してください（測り直すなら「"+_startButton.Text+"」"+change+"）";
+        else if(_flow.HasTransfer && _flow.Mode==TestMode.Production && saveBlockReason.Length==0) next="Excel転送済みです。「保存」を押してください（測り直すなら「"+_startButton.Text+"」"+change+"）";
         else if(_flow.HasTransfer && _flow.Mode==TestMode.Production) next=$"Excel転送済み（{_excelJudgmentStatus}）。保存できません：{saveBlockReason}。測り直すなら「{_startButton.Text}」";
         else if(_flow.HasTransfer) next="Excel転送済みです。結果を確認し、測り直すなら「"+_startButton.Text+"」を押してください";
         else next=$"「{_startButton.Text}」を押してください（M5Stack の A ボタンでも始められます）";

@@ -139,6 +139,12 @@ internal static class Program
         var serialMissing=flowType.GetProperty("SerialMissing")!;
         flowType.GetMethod("ConfigureWithoutSerial")!.Invoke(flow,[product]);Call("UpdateProductionControls");
         if(!(bool)serialMissing.GetValue(flow)! || !((Label)Field("_flowLabel")).Text.Contains("測定開始S/Nを入力してください") || ((Button)Field("_startButton")).Enabled)throw new Exception("Missing serial must block measurement and prompt for input: "+((Label)Field("_flowLabel")).Text);
+        // S/N が空のまま測定結果が残っていても(データ調整の結果のままデータ取りへ移ったとき)、測定開始S/N の欄は入力できる。S/N が入った結果が残っているときは変えられない(「設定変更（測定を破棄）」)。
+        flowType.GetMethod("BeginMeasurement")!.Invoke(flow,[DateTime.Now]);flowType.GetMethod("CaptureSucceeded")!.Invoke(flow,null);Call("UpdateProductionControls");
+        if(!(bool)flowType.GetProperty("HasCapture")!.GetValue(flow)! || !serialBox.Enabled)throw new Exception("Measurement serial box must stay editable while the serial is empty, even with a capture");
+        flowType.GetMethod("Configure")!.Invoke(flow,["123",product]);flowType.GetMethod("BeginMeasurement")!.Invoke(flow,[DateTime.Now]);flowType.GetMethod("CaptureSucceeded")!.Invoke(flow,null);Call("UpdateProductionControls");
+        if(serialBox.Enabled)throw new Exception("Measurement serial box must be locked while a capture with a serial exists");
+        Console.WriteLine("PASS measurement serial is editable while empty even with a capture, locked once a capture has a serial");
         flowType.GetMethod("Configure")!.Invoke(flow,["123",product]);
         flowType.GetMethod("BeginMeasurement")!.Invoke(flow,[DateTime.Now]);
         flowType.GetMethod("CaptureSucceeded")!.Invoke(flow,null);
