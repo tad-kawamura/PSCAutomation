@@ -1,4 +1,5 @@
 ﻿using System.Diagnostics;
+using System.Globalization;
 namespace PSCAutomation.Apps.AS110AllCheck;
 internal sealed partial class MainForm : Form
 {
@@ -377,6 +378,8 @@ internal sealed partial class MainForm : Form
             if(_rootBox.Text.Length==0)return "「保存先選択」で保存先を選んでください";
             if(_flow.SerialMissing)return "測定開始S/N を入力してください";
             if(_flow.SerialRangeFinished)return $"最後の S/N {_flow.LastSerial} を超えています。保存先を選び直し、測定開始S/N を入力してください";
+            // 測定結果が残っているのに完了済み(測定を始めたあとで別の PC などから保護された)ときは、解除してから保存する一本道だけを出す。
+            if(_serialCompleted && _flow.HasCapture)return $"S/N {_flow.Serial} は完了済み（保護中）になっています。今回の測定で上書きするなら「完了番号の保護と解除」で S/N {_flow.Serial} のチェックを外してから「保存」を押してください";
             if(_serialCompleted)return $"測定開始S/N {_flow.Serial} は完了済み（保護中）です。別の番号にするか、「完了番号の保護と解除」で S/N {_flow.Serial} のチェックを外してください";
         }
         if(_flow.CaptureFailed)return "一時保存に失敗しています。「一時保存を再試行」を押してください";
@@ -398,6 +401,7 @@ internal sealed partial class MainForm : Form
         if(_flow.Measuring)return "測定中";
         if(_flow.Mode!=TestMode.Production)return "データ取り以外";
         if(!_flow.HasTransfer)return "最新測定の転送未完了";
+        if(_serialCompleted)return $"S/N {_flow.Serial} は完了済み（保護中）";
         if(!_lastExcelPass)return _excelJudgmentStatus;
         if(_reviewStage)return "一式保存後の工程";
         return "";
@@ -536,7 +540,13 @@ internal sealed partial class MainForm : Form
             string rangeProblem=SaveFolder.CheckRange(_rootBox.Text,_flow.Serial);
             if(rangeProblem.Length>0) { _flow.SaveFailed=false;throw new InvalidOperationException(rangeProblem); }
             var store=Store;using var held=store.Lock();
-            if(store.IsComplete(_flow.Serial))throw new InvalidOperationException("完了済みのS/Nは上書きできません。");
+            if(store.IsComplete(_flow.Serial))
+            {
+                // 測定を始めたあとで(別の PC などから)完了済みになった番号。まだ何も書いていないので「保存失敗」にはせず、
+                // 完了済みとして「保存」を押せなくし、「次にすること」に解除してから保存する道筋を出す(2026-11-06。以前は保存失敗が残って S/N 欄と「設定変更」が固まっていた)。
+                _flow.SaveFailed=false;_serialCompleted=true;
+                throw new InvalidOperationException($"S/N {_flow.Serial} は完了済み（保護中）のため上書きできません。\n今回の測定で上書きするなら「完了番号の保護と解除」で S/N {_flow.Serial} のチェックを外してから「保存」を押してください。");
+            }
             string root=Path.GetFullPath(_rootBox.Text),baseName=_flow.BaseName;
             string excel=Path.Combine(root,"Excel",baseName+".xlsx"),pdf=Path.Combine(root,"PDF",baseName+".pdf"),logger=Path.Combine(root,"LOGGER",baseName+Path.GetExtension(_capturePath));
             string ownership=root+"|"+baseName;
@@ -699,6 +709,10 @@ internal sealed partial class MainForm : Form
         // 製品の付け替え中に、次のS/N用のExcelを準備する。
         if(_excel is null)RequestExcelPreparation();
     }
+    // その S/N がいま測定中(データ取りで、その番号の測定結果が残っている)か。保護画面でその番号を保護させないために使う。番号は先頭の 0 を無視して比べる。
+    private bool IsSerialUnderMeasurement(string serial)
+        => _flow.Mode==TestMode.Production && !_flow.SerialMissing && _flow.HasCapture
+           && long.TryParse(serial,NumberStyles.None,CultureInfo.InvariantCulture,out long n) && n==long.Parse(_flow.Serial,CultureInfo.InvariantCulture);
     private void ReleaseCompletedSerial()
     {
         if(_operationInProgress || _flow.Measuring || _leakRunning)return;
@@ -716,7 +730,9 @@ internal sealed partial class MainForm : Form
             entries=store.Entries().Select(e=>(e.Serial,e.Protected,"-","再保護",e.Protected?"":"（解除済み）")).ToList();
             var (unrecorded,_)=SaveFolder.FindUnrecorded(_rootBox.Text,store.Read());
             entries.AddRange(unrecorded.Select(f=>(f.Serial,false,f.Model,f.BaseName,"（記録なし）")));
-            entries=entries.OrderBy(e=>long.Parse(e.Serial)).ToList();
+            // いま測定中(測定結果が残っている)の番号は保護できない。測定の途中で保護すると「保存」が止まり、解除しないと先へ進めなくなるため(2026-11-06、人の判断)。
+            entries=entries.Select(e=>!e.Protected && IsSerialUnderMeasurement(e.Serial)?(e.Serial,e.Protected,e.Model,e.BaseName,e.Note+"（測定中のため保護できません）"):e)
+                .OrderBy(e=>long.Parse(e.Serial)).ToList();
         }
         catch(Exception ex) { AppendLog($"保護と解除：エラー / {ex.Message}");ErrorNotification.Show(this,ex.Message,"完了番号の保護と解除",MessageBoxButtons.OK,MessageBoxIcon.Error);return; }
         if(entries.Count==0)
@@ -730,6 +746,8 @@ internal sealed partial class MainForm : Form
         var guide=new Label{Left=12,Top=10,Width=396,Height=68,Text=$"保存先: {_rootBox.Text}\nチェックあり＝保護中。チェックを外すと保護を解除し、付けると保護します（記録なしのデータも保護できます）。\n「確定」で反映します。既存ファイルは残します。"};
         var list=new CheckedListBox{Left=12,Top=82,Width=396,Height=240,CheckOnClick=true,Font=new Font(Font.FontFamily,12)};
         foreach(var entry in entries) list.Items.Add("S/N "+entry.Serial+entry.Note,entry.Protected);
+        // 測定中の番号にチェックを付けようとしても付かない(外すのはできる)。
+        list.ItemCheck+=(_,e)=>{ if(e.NewValue==CheckState.Checked && !entries[e.Index].Protected && IsSerialUnderMeasurement(entries[e.Index].Serial))e.NewValue=e.CurrentValue; };
         var ok=new Button{Text="確定",Left=208,Top=332,Width=96,Height=36,DialogResult=DialogResult.OK};
         var cancel=new Button{Text="キャンセル",Left=312,Top=332,Width=96,Height=36,DialogResult=DialogResult.Cancel};
         dialog.Controls.AddRange([guide,list,ok,cancel]);dialog.AcceptButton=ok;dialog.CancelButton=cancel;

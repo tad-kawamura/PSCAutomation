@@ -165,6 +165,19 @@ internal static class Program
         flowType.GetMethod("Configure")!.Invoke(flow,["123",product]);flowType.GetMethod("BeginMeasurement")!.Invoke(flow,[DateTime.Now]);flowType.GetMethod("CaptureSucceeded")!.Invoke(flow,null);Call("UpdateProductionControls");
         if(serialBox.Enabled)throw new Exception("Measurement serial box must be locked while a capture with a serial exists");
         Console.WriteLine("PASS measurement serial is editable while empty even with a capture, locked once a capture has a serial");
+        // 測定中の番号(データ取りで測定結果が残っている S/N)は「完了番号の保護と解除」で保護できない。先頭の 0 は無視して同じ番号とみなす。測定結果が無くなれば保護できる。
+        var underMeasurement=type.GetMethod("IsSerialUnderMeasurement",Private)!;
+        if(!(bool)underMeasurement.Invoke(form,["123"])! || !(bool)underMeasurement.Invoke(form,["0123"])! || (bool)underMeasurement.Invoke(form,["124"])!)throw new Exception("Serial under measurement must be detected (ignoring leading zeros) and other serials must not");
+        // 測定を始めたあとで完了済みになった番号は「保存」を押せず、理由に完了済みと出す(保存失敗の状態にはしない)。
+        flowType.GetMethod("TransferSucceeded")!.Invoke(flow,null);
+        var serialCompletedField=type.GetField("_serialCompleted",Private)!;
+        serialCompletedField.SetValue(form,true);Call("UpdateProductionControls");
+        string saveReason=(string)type.GetMethod("GetSaveBlockReason",Private)!.Invoke(form,null)!;
+        if(!saveReason.Contains("完了済み") || ((Button)Field("_saveButton")).Enabled || (bool)flowType.GetProperty("SaveFailed")!.GetValue(flow)!)throw new Exception("Completed serial with a capture must block save with the reason, not as a save failure: "+saveReason);
+        serialCompletedField.SetValue(form,false);
+        flowType.GetMethod("Invalidate")!.Invoke(flow,null);Call("UpdateProductionControls");
+        if((bool)underMeasurement.Invoke(form,["123"])!)throw new Exception("Serial must not count as under measurement once the capture is discarded");
+        Console.WriteLine("PASS serial under measurement cannot be protected; a completed serial with a capture blocks save with the reason");
         flowType.GetMethod("Configure")!.Invoke(flow,["123",product]);
         flowType.GetMethod("BeginMeasurement")!.Invoke(flow,[DateTime.Now]);
         flowType.GetMethod("CaptureSucceeded")!.Invoke(flow,null);
