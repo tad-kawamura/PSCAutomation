@@ -15,6 +15,10 @@ internal sealed class ProductionWorkflow
 {
     public TestMode Mode { get; set; }
     public string Serial { get; private set; } = "";
+    // 最後の S/N（空は上限なし）。開始 S/N がこれを超えたら測定を始めない。
+    public string LastSerial { get; private set; } = "";
+    public bool SerialRangeFinished => Mode == TestMode.Production && LastSerial.Length > 0 && Serial.Length > 0 &&
+        long.Parse(Serial, CultureInfo.InvariantCulture) > long.Parse(LastSerial, CultureInfo.InvariantCulture);
     public ProductModel Model { get; private set; } = ProductModel.All[0];
     public DateTime MeasuredAt { get; private set; }
     public long Revision { get; private set; }
@@ -37,6 +41,12 @@ internal sealed class ProductionWorkflow
         if (Measuring) throw new InvalidOperationException("測定中です。");
         if (Serial == serial && Model == model) return;
         Serial = serial; Model = model; Invalidate();
+    }
+    public void SetLastSerial(string lastSerial)
+    {
+        if (lastSerial.Length > 0 && (!long.TryParse(lastSerial, NumberStyles.None, CultureInfo.InvariantCulture, out long n) || n < 0 || n == long.MaxValue))
+            throw new ArgumentException("最後のシリアル番号を数字で入力してください（空は上限なし）。");
+        LastSerial = lastSerial;
     }
     public void ConfigureAdjustment(ProductModel model)
     {

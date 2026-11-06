@@ -43,6 +43,24 @@ internal static class Program
                 throw new Exception("Save root / serial visibility did not follow mode: "+mode);
         }
         Console.WriteLine("PASS startup waits for mode; all three modes reveal stand selection; save root and serial only in production");
+        // データ取りの操作欄の並び: 型式・S/N → 保存先 → 保護解除・転送設定 → ボタン → 状態。最後に選んだモードはデータ取り(2)。
+        _=form.Handle;form.PerformLayout();
+        Control[] orderedRows=[(Control)Field("_setupPanel"),(Control)Field("_savePathPanel"),(Control)Field("_protectionPanel"),(Control)Field("_actionPanel"),(Control)Field("_flowLabel")];
+        for(int i=1;i<orderedRows.Length;i++)
+            if(orderedRows[i].Top<=orderedRows[i-1].Top)throw new Exception($"Production rows out of order at {i}: {string.Join(",",orderedRows.Select(r=>r.Top))}");
+        var modelBox=(Control)Field("_modelBox");var serialBox=(Control)Field("_serialBox");var lastSerialBox=(Control)Field("_lastSerialBox");
+        if(!(modelBox.Left<serialBox.Left && serialBox.Left<lastSerialBox.Left))throw new Exception("Model, start serial, last serial are not left to right");
+        if(((Control)Field("_transferButton")).Left>=((Control)Field("_saveButton")).Left)throw new Exception("Excel transfer button is not first in the action row");
+        string productionImage=Path.Combine(AppContext.BaseDirectory,"production-panel.png");
+        // 非表示フォームの子はハンドルが無く描かれないので、先に作る。
+        static void CreateHandles(Control control){ _=control.Handle; foreach(Control child in control.Controls) CreateHandles(child); }
+        CreateHandles(productionPanel);form.PerformLayout();
+        using(var bitmap=new Bitmap(Math.Max(productionPanel.Width,1),Math.Max(productionPanel.Height,1)))
+        {
+            productionPanel.DrawToBitmap(bitmap,new Rectangle(Point.Empty,bitmap.Size));
+            bitmap.Save(productionImage);
+        }
+        Console.WriteLine("PASS production rows are model/serial, save root, release, buttons, status; layout image: "+productionImage);
         var flow=Field("_flow");
         var flowType=flow.GetType();
         flowType.GetProperty("Mode")!.SetValue(flow,Enum.Parse(assembly.GetType("PSCAutomation.Apps.AS110AllCheck.TestMode")!,"Production"));
@@ -54,6 +72,19 @@ internal static class Program
         if (!args.Contains("--no-dialogs")) JudgmentNoticeTests.Run(form, type, flow, flowType, assembly);
         if (args.Contains("--with-excel")) ExcelJudgmentFocusTests.Run(form, type);
         if (args.Contains("--with-excel")) ExcelPreparationTests.Run(assembly);
+        // 最後 S/N: 空は上限なし、開始 S/N が最後 S/N を超えたら範囲終了と判定し、状態欄に案内を出す。
+        var rangeFinished=flowType.GetProperty("SerialRangeFinished")!;
+        var setLast=flowType.GetMethod("SetLastSerial")!;
+        var flowLabel=(Label)Field("_flowLabel");
+        if((bool)rangeFinished.GetValue(flow)!)throw new Exception("Empty last serial must not finish the range");
+        setLast.Invoke(flow,["123"]);Call("UpdateProductionControls");
+        if((bool)rangeFinished.GetValue(flow)! || !flowLabel.Text.Contains("最後 123"))throw new Exception("Serial equal to last serial must stay in range: "+flowLabel.Text);
+        setLast.Invoke(flow,["122"]);Call("UpdateProductionControls");
+        if(!(bool)rangeFinished.GetValue(flow)!)throw new Exception("Serial beyond last serial must finish the range");
+        try{setLast.Invoke(flow,["abc"]);throw new Exception("Non-numeric last serial was accepted");}catch(System.Reflection.TargetInvocationException ex) when(ex.InnerException is ArgumentException){}
+        setLast.Invoke(flow,[""]);Call("UpdateProductionControls");
+        if((bool)rangeFinished.GetValue(flow)!)throw new Exception("Clearing last serial must reopen the range");
+        Console.WriteLine("PASS last serial: empty is unlimited, beyond last finishes the range");
         type.GetField("_lastExcelPass",Private)!.SetValue(form,true);
         Call("UpdateProductionControls");
         var save=(Button)Field("_saveButton");

@@ -51,34 +51,39 @@ internal sealed partial class MainForm : Form
     private readonly string _sessionFolder=Path.Combine(Path.GetTempPath(),"AS110BoltCheck","ver3-"+Guid.NewGuid().ToString("N"));
 
     // モードを選ぶまで全体を非表示にする。型式・Excel転送はデータ調整とデータ取りで、保存先・S/N・保存・漏れ試験・合格はデータ取りを選んだときだけ表示する。
-    private readonly FlowLayoutPanel _productionPanel=new() { AutoSize=true,Dock=DockStyle.Fill,FlowDirection=FlowDirection.TopDown,WrapContents=false,Visible=false };
-    private readonly FlowLayoutPanel _setupPanel=new() { AutoSize=true,WrapContents=true,MaximumSize=new Size(780,0) };
-    private readonly FlowLayoutPanel _savePathPanel=new() { AutoSize=true };
-    private readonly FlowLayoutPanel _actionPanel=new() { AutoSize=true,WrapContents=true,MaximumSize=new Size(780,0) };
+    // 並びは上から 型式・S/N → 保存先 → 保護解除・転送設定 → ボタン → 状態。表示/非表示を切り替えても並びが変わらないよう、行も列も TableLayoutPanel で位置を固定する。
+    private readonly TableLayoutPanel _productionPanel=new() { AutoSize=true,AutoSizeMode=AutoSizeMode.GrowAndShrink,Dock=DockStyle.Fill,ColumnCount=1,Visible=false };
+    private TableLayoutPanel _setupPanel=null!,_savePathPanel=null!,_protectionPanel=null!,_actionPanel=null!;
     private readonly Button _chooseSaveRootButton=new() { Text="保存先選択",AutoSize=true };
     private readonly Button _releaseSerialButton=new() { Text="完了番号の保護解除",AutoSize=true };
     private readonly Button _transferSettingsButton=new() { Text="転送設定",AutoSize=true };
+    private readonly TextBox _lastSerialBox = new() { Width=110 };
+    private readonly Label _lastSerialLabel = new() { Text="最後S/N", AutoSize=true };
+    private static TableLayoutPanel Row(params Control[] controls)
+    {
+        var row=new TableLayoutPanel { AutoSize=true,AutoSizeMode=AutoSizeMode.GrowAndShrink,RowCount=1,ColumnCount=controls.Length,Margin=new Padding(0,0,0,6) };
+        row.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        for(int i=0;i<controls.Length;i++)
+        {
+            row.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+            controls[i].Anchor=AnchorStyles.Left;
+            row.Controls.Add(controls[i],i,0);
+        }
+        return row;
+    }
     private Control BuildProductionPanel()
     {
-        var panel=_productionPanel;
-        var selection=_setupPanel;
         _modelBox.Items.AddRange(ProductModel.All);_modelBox.SelectedIndex=0;
         var applyModel=new Button {Text="型式を適用",AutoSize=true};
         applyModel.Click+=async (_,_)=>await SelectProductModelAsync();
-        selection.Controls.AddRange([_modelBox,applyModel,_serialLabel,_serialBox]);
-        var paths=_savePathPanel;
         _rootBox.Text=_transferSettings.SaveRoot;
-        var choose=_chooseSaveRootButton;
-        choose.Click+=(_,_)=> {
+        _chooseSaveRootButton.Click+=(_,_)=> {
             if(_operationInProgress || _flow.Measuring || _flow.SaveFailed || _leakRunning || _flow.HasSaved) return;
             using var dialog=new FolderBrowserDialog();
             if(dialog.ShowDialog(this)==DialogResult.OK) { _rootBox.Text=dialog.SelectedPath;_transferSettings.SaveRoot=dialog.SelectedPath;_transferSettings.Save();UpdateControls(); }
         };
-        var release=_releaseSerialButton;
-        release.Click+=(_,_)=>ReleaseCompletedSerial();
-        var settings=_transferSettingsButton;settings.Click+=(_,_)=>EditTransferSettings();
-        paths.Controls.AddRange([choose,_rootBox,release,settings]);
-        var actions=_actionPanel;
+        _releaseSerialButton.Click+=(_,_)=>ReleaseCompletedSerial();
+        _transferSettingsButton.Click+=(_,_)=>EditTransferSettings();
         ConfigureButton(_transferButton,"Excel転送",(_,_)=>TransferLatest());
         ConfigureButton(_saveButton,"保存",(_,_)=>SaveLatest());
         ConfigureButton(_leakOutputButton,"+30mA",(_,_)=>StartLeakOutput());
@@ -95,11 +100,20 @@ internal sealed partial class MainForm : Form
             _reviewStage=false;UpdateControls();
         });
         ConfigureButton(_retryCaptureButton,"一時保存を再試行",(_,_)=>RetryCapture());
-        actions.Controls.AddRange([_transferButton,_saveButton,_leakOutputButton,_leakButton,_completeButton,_remeasureButton,_retryCaptureButton]);
-        panel.Controls.AddRange([selection,paths,actions,_flowLabel]);
+        _setupPanel=Row(_modelBox,applyModel,_serialLabel,_serialBox,_lastSerialLabel,_lastSerialBox);
+        _savePathPanel=Row(_chooseSaveRootButton,_rootBox);
+        _protectionPanel=Row(_releaseSerialButton,_transferSettingsButton);
+        var mainActions=Row(_transferButton,_saveButton,_leakOutputButton,_leakButton,_completeButton);
+        var subActions=Row(_remeasureButton,_retryCaptureButton);
+        _actionPanel=new TableLayoutPanel { AutoSize=true,AutoSizeMode=AutoSizeMode.GrowAndShrink,ColumnCount=1,RowCount=2,Margin=Padding.Empty };
+        _actionPanel.Controls.Add(mainActions,0,0);_actionPanel.Controls.Add(subActions,0,1);
+        Control[] rows=[_setupPanel,_savePathPanel,_protectionPanel,_actionPanel,_flowLabel];
+        _productionPanel.RowCount=rows.Length;
+        for(int i=0;i<rows.Length;i++){ _productionPanel.RowStyles.Add(new RowStyle(SizeType.AutoSize)); _productionPanel.Controls.Add(rows[i],0,i); }
         _modelBox.SelectionChangeCommitted+=async (_,_)=>await SelectProductModelAsync();
         _serialBox.Leave+=(_,_)=>{if(!CanChangeSetup || _flow.Mode!=TestMode.Production)return;RunOperation("S/N設定",()=>{ConfigureProduct(requireSaveRoot:false);return "設定しました";});};
-        return panel;
+        _lastSerialBox.Leave+=(_,_)=>{if(!CanChangeSetup || _flow.Mode!=TestMode.Production)return;RunOperation("最後S/N設定",()=>{ConfigureProduct(requireSaveRoot:false);return _flow.LastSerial.Length>0?$"最後のS/N {_flow.LastSerial} まで":"最後のS/Nなし（上限なし）";});};
+        return _productionPanel;
     }
     private bool CanChangeSetup => !_operationInProgress && !_flow.Measuring && !_flow.SaveFailed && !_flow.CaptureFailed && !_leakRunning && !_flow.HasCapture;
     private ProductModel SelectedModel => _modelBox.SelectedItem as ProductModel ?? ProductModel.All[0];
@@ -108,6 +122,7 @@ internal sealed partial class MainForm : Form
     {
         if (_flow.Mode == TestMode.Motion) return;
         if (_flow.Mode == TestMode.Adjustment) { _flow.ConfigureAdjustment(SelectedModel); return; }
+        _flow.SetLastSerial(_lastSerialBox.Text.Trim());
         _flow.Configure(_serialBox.Text.Trim(),SelectedModel);
         if(_flow.Mode==TestMode.Production && (requireSaveRoot || _rootBox.Text.Length>0)) { var store=Store;using var held=store.Lock();if(store.IsComplete(_flow.Serial))throw new InvalidOperationException("このS/Nは完了済みです。保護解除が必要です。"); }
     }
@@ -152,13 +167,13 @@ internal sealed partial class MainForm : Form
         bool production=_flow.Mode==TestMode.Production;
         bool excelMode=_modeSelected && _flow.Mode!=TestMode.Motion;
         _productionPanel.Visible=_modeSelected;
-        _setupPanel.Visible=_savePathPanel.Visible=_actionPanel.Visible=excelMode;
-        _chooseSaveRootButton.Visible=_rootBox.Visible=_releaseSerialButton.Visible=production;
+        _setupPanel.Visible=_protectionPanel.Visible=_actionPanel.Visible=excelMode;
+        _savePathPanel.Visible=_chooseSaveRootButton.Visible=_rootBox.Visible=_releaseSerialButton.Visible=production;
         _saveButton.Visible=_leakOutputButton.Visible=_leakButton.Visible=_completeButton.Visible=production;
-        _serialLabel.Visible=_serialBox.Visible=production;
-        _serialBox.Enabled=CanChangeSetup && production;
+        _serialLabel.Visible=_serialBox.Visible=_lastSerialLabel.Visible=_lastSerialBox.Visible=production;
+        _serialBox.Enabled=_lastSerialBox.Enabled=CanChangeSetup && production;
         _startButton.Text=_flow.Mode==TestMode.Motion?"測定開始":"データ調整";
-        _startButton.Enabled=ready && !_flow.SaveFailed && !_flow.CaptureFailed && (!_reviewStage) && (_flow.Mode!=TestMode.Motion || MotionContactEnergized);
+        _startButton.Enabled=ready && !_flow.SaveFailed && !_flow.CaptureFailed && (!_reviewStage) && (_flow.Mode!=TestMode.Motion || MotionContactEnergized) && !_flow.SerialRangeFinished;
         _transferButton.Enabled=idle && _flow.HasCapture && !_flow.CaptureFailed && !_reviewStage;
         string saveBlockReason=GetSaveBlockReason();
         _saveButton.Enabled=saveBlockReason.Length==0;
@@ -174,9 +189,11 @@ internal sealed partial class MainForm : Form
         _remeasureButton.Text=_flow.HasSaved?"再測定へ戻る":"設定変更（測定を破棄）";
         _remeasureButton.Enabled=idle && (_reviewStage || _flow.HasCapture) && !_flow.SaveFailed;
         _retryCaptureButton.Visible=_flow.CaptureFailed;_retryCaptureButton.Enabled=idle && _flow.CaptureFailed && ConnectionsReady;
-        string identity = _flow.Mode == TestMode.Adjustment ? "データ調整（保存・S/N設定なし）" : $"S/N {_flow.Serial}";
+        string identity = _flow.Mode == TestMode.Adjustment ? "データ調整（保存・S/N設定なし）" : _flow.LastSerial.Length > 0 ? $"S/N {_flow.Serial}（最後 {_flow.LastSerial}）" : $"S/N {_flow.Serial}";
         _flowLabel.Text=$"{identity}　{(_leakRunning?"漏れチェック中":_flow.Measuring?"測定中":_flow.CaptureFailed?"一時保存失敗：再試行してください":_flow.SaveFailed?"保存失敗：同じ番号で再保存してください":_flow.HasSaved?$"一式保存済み／漏れチェック {_flow.LeakChecks}回":_flow.HasTransfer?$"Excel転送済み：{_excelJudgmentStatus}":_flow.HasCapture?"一時保存済み：Excel転送できます":_excelPreparing?"測定待ち（Excel準備中）":"測定待ち")}";
         if (_flow.Mode == TestMode.Motion) _flowLabel.Text = _flow.Measuring ? "動き検査中" : "動き検査：保存・S/N設定なし";
+        if (_flow.SerialRangeFinished && !_flow.Measuring && !_flow.HasCapture)
+            _flowLabel.Text = $"{identity}　最後のS/N {_flow.LastSerial} を超えています：開始S/Nと最後S/Nを確認してください（測定開始できません）";
         if(_leakOutputReady && !_leakRunning && !_generatorOutputUnknown)_flowLabel.Text+="／+30mA出力中：漏れ試験実施を押してください";
         if(_generatorOutputUnknown)_flowLabel.Text+="／発振器の出力状態不明：本体で出力OFFを確認し「確認」で再接続してください";
         if(_flow.Mode==TestMode.Production && _flow.HasTransfer && !_reviewStage && saveBlockReason.Length>0)
@@ -462,7 +479,7 @@ internal sealed partial class MainForm : Form
             store.Append("COMPLETE",_flow.Serial,_flow.Model.Name,_flow.BaseName);
             string previous=_flow.Serial;_flow.Advance();_serialBox.Text=_flow.Serial;_reviewStage=false;_ownedSaveBase=null;
             _excel.Dispose();_excel=null;_capturePath=null;
-            return $"S/N{previous}完了。次はS/N{_flow.Serial}です。";
+            return _flow.SerialRangeFinished ? $"S/N{previous}完了。最後のS/N {_flow.LastSerial} まで終わりました。次の範囲は開始S/Nと最後S/Nを入力してください。" : $"S/N{previous}完了。次はS/N{_flow.Serial}です。";
         });
         // 製品の付け替え中に、次のS/N用のExcelを準備する。
         if(_excel is null)RequestExcelPreparation();
