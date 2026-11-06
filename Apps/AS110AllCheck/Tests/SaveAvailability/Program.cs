@@ -25,6 +25,10 @@ internal static class Program
         var getState=typeof(Control).GetMethod("GetState",Private)!;
         bool StandVisible()=>(bool)getState.Invoke(standPanel,[2])!;
         if(StandVisible())throw new Exception("Stand selection appeared before mode selection");
+        var productionPanel=(Control)Field("_productionPanel");
+        var rootBox=(Control)Field("_rootBox");
+        bool LocalVisible(Control control)=>(bool)getState.Invoke(control,[2])!;
+        if(LocalVisible(productionPanel))throw new Exception("Operation panel appeared before mode selection");
         ((TextBox)Field("_rootBox")).Text="";
         foreach(int mode in new[]{0,1,2})
         {
@@ -33,8 +37,12 @@ internal static class Program
             type.GetMethod("UpdateStandControls",Private)!.Invoke(form,[true]);
             if(!(bool)Field("_modeSelected") || !StandVisible())
                 throw new Exception("Stand selection did not appear after mode selection: "+mode);
+            if(!LocalVisible(productionPanel))throw new Exception("Operation panel did not appear after mode selection: "+mode);
+            // 保存先・S/N はデータ取り(2)だけに表示する。
+            if(LocalVisible(rootBox)!=(mode==2) || LocalVisible((Control)Field("_serialBox"))!=(mode==2))
+                throw new Exception("Save root / serial visibility did not follow mode: "+mode);
         }
-        Console.WriteLine("PASS startup waits for mode; all three modes reveal stand selection");
+        Console.WriteLine("PASS startup waits for mode; all three modes reveal stand selection; save root and serial only in production");
         var flow=Field("_flow");
         var flowType=flow.GetType();
         flowType.GetProperty("Mode")!.SetValue(flow,Enum.Parse(assembly.GetType("PSCAutomation.Apps.AS110AllCheck.TestMode")!,"Production"));

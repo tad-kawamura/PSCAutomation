@@ -50,27 +50,35 @@ internal sealed partial class MainForm : Form
     private CancellationTokenSource? _leakCancel;
     private readonly string _sessionFolder=Path.Combine(Path.GetTempPath(),"AS110BoltCheck","ver3-"+Guid.NewGuid().ToString("N"));
 
+    // モードを選ぶまで全体を非表示にする。型式・Excel転送はデータ調整とデータ取りで、保存先・S/N・保存・漏れ試験・合格はデータ取りを選んだときだけ表示する。
+    private readonly FlowLayoutPanel _productionPanel=new() { AutoSize=true,Dock=DockStyle.Fill,FlowDirection=FlowDirection.TopDown,WrapContents=false,Visible=false };
+    private readonly FlowLayoutPanel _setupPanel=new() { AutoSize=true,WrapContents=true,MaximumSize=new Size(780,0) };
+    private readonly FlowLayoutPanel _savePathPanel=new() { AutoSize=true };
+    private readonly FlowLayoutPanel _actionPanel=new() { AutoSize=true,WrapContents=true,MaximumSize=new Size(780,0) };
+    private readonly Button _chooseSaveRootButton=new() { Text="保存先選択",AutoSize=true };
+    private readonly Button _releaseSerialButton=new() { Text="完了番号の保護解除",AutoSize=true };
+    private readonly Button _transferSettingsButton=new() { Text="転送設定",AutoSize=true };
     private Control BuildProductionPanel()
     {
-        var panel=new FlowLayoutPanel { AutoSize=true,Dock=DockStyle.Fill,FlowDirection=FlowDirection.TopDown,WrapContents=false };
-        var selection=new FlowLayoutPanel { AutoSize=true,WrapContents=true,MaximumSize=new Size(780,0) };
+        var panel=_productionPanel;
+        var selection=_setupPanel;
         _modelBox.Items.AddRange(ProductModel.All);_modelBox.SelectedIndex=0;
         var applyModel=new Button {Text="型式を適用",AutoSize=true};
         applyModel.Click+=async (_,_)=>await SelectProductModelAsync();
         selection.Controls.AddRange([_modelBox,applyModel,_serialLabel,_serialBox]);
-        var paths=new FlowLayoutPanel {AutoSize=true};
+        var paths=_savePathPanel;
         _rootBox.Text=_transferSettings.SaveRoot;
-        var choose=new Button {Text="保存先選択",AutoSize=true};
+        var choose=_chooseSaveRootButton;
         choose.Click+=(_,_)=> {
             if(_operationInProgress || _flow.Measuring || _flow.SaveFailed || _leakRunning || _flow.HasSaved) return;
             using var dialog=new FolderBrowserDialog();
             if(dialog.ShowDialog(this)==DialogResult.OK) { _rootBox.Text=dialog.SelectedPath;_transferSettings.SaveRoot=dialog.SelectedPath;_transferSettings.Save();UpdateControls(); }
         };
-        var release=new Button {Text="完了番号の保護解除",AutoSize=true};
+        var release=_releaseSerialButton;
         release.Click+=(_,_)=>ReleaseCompletedSerial();
-        var settings=new Button {Text="転送設定",AutoSize=true};settings.Click+=(_,_)=>EditTransferSettings();
+        var settings=_transferSettingsButton;settings.Click+=(_,_)=>EditTransferSettings();
         paths.Controls.AddRange([choose,_rootBox,release,settings]);
-        var actions=new FlowLayoutPanel {AutoSize=true,WrapContents=true,MaximumSize=new Size(780,0)};
+        var actions=_actionPanel;
         ConfigureButton(_transferButton,"Excel転送",(_,_)=>TransferLatest());
         ConfigureButton(_saveButton,"保存",(_,_)=>SaveLatest());
         ConfigureButton(_leakOutputButton,"+30mA",(_,_)=>StartLeakOutput());
@@ -141,8 +149,14 @@ internal sealed partial class MainForm : Form
         bool ready=idle && ConnectionsReady && _standScalingApplied && _templateLoaded && LoggerReadyToStart && _arduino.MeasurementInputReady;
         _modeBox.Enabled=idle && !_flow.SaveFailed && !_flow.CaptureFailed && !_flow.HasSaved;
         _modelBox.Enabled=CanChangeSetup && _standScalingApplied && _flow.Mode!=TestMode.Motion;
-        _serialLabel.Visible=_serialBox.Visible=_flow.Mode==TestMode.Production;
-        _serialBox.Enabled=CanChangeSetup && _flow.Mode==TestMode.Production;
+        bool production=_flow.Mode==TestMode.Production;
+        bool excelMode=_modeSelected && _flow.Mode!=TestMode.Motion;
+        _productionPanel.Visible=_modeSelected;
+        _setupPanel.Visible=_savePathPanel.Visible=_actionPanel.Visible=excelMode;
+        _chooseSaveRootButton.Visible=_rootBox.Visible=_releaseSerialButton.Visible=production;
+        _saveButton.Visible=_leakOutputButton.Visible=_leakButton.Visible=_completeButton.Visible=production;
+        _serialLabel.Visible=_serialBox.Visible=production;
+        _serialBox.Enabled=CanChangeSetup && production;
         _startButton.Text=_flow.Mode==TestMode.Motion?"測定開始":"データ調整";
         _startButton.Enabled=ready && !_flow.SaveFailed && !_flow.CaptureFailed && (!_reviewStage) && (_flow.Mode!=TestMode.Motion || MotionContactEnergized);
         _transferButton.Enabled=idle && _flow.HasCapture && !_flow.CaptureFailed && !_reviewStage;
