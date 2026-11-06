@@ -48,7 +48,7 @@ internal sealed partial class MainForm : Form
     private readonly TextBox _serialBox = new() { Width=110,Text="1" };
     private readonly Label _serialLabel = new() { Text="開始S/N", AutoSize=true };
     private readonly TextBox _rootBox = new() { Width=280,ReadOnly=true };
-    private readonly Label _flowLabel = new() { AutoSize=true,MaximumSize=new Size(760,0) };
+    private readonly Label _flowLabel = new() { AutoSize=true,MaximumSize=new Size(720,0) };
     private readonly Button _transferButton=new(),_saveButton=new(),_leakOutputButton=new(),_leakButton=new(),_completeButton=new(),_remeasureButton=new(),_retryCaptureButton=new();
     private bool _leakOutputReady;
     // 出力OFFを送信できず、発振器の出力が残っている可能性がある状態。
@@ -128,8 +128,9 @@ internal sealed partial class MainForm : Form
             foreach(Control control in row.Controls) control.Font=inputFont;
         _modelBox.Width=270;_serialBox.Width=_lastSerialBox.Width=140;_rootBox.Width=420;
         foreach(var button in new[]{applyModel,_chooseSaveRootButton,_releaseSerialButton,_transferSettingsButton}) button.MinimumSize=new Size(0,40);
-        var mainActions=Row(_transferButton,_saveButton,_leakOutputButton,_leakButton,_completeButton);
-        var subActions=Row(_remeasureButton,_retryCaptureButton);
+        // 合格は下段の左に置き、上段を 4 つにして横幅を抑える。
+        var mainActions=Row(_transferButton,_saveButton,_leakOutputButton,_leakButton);
+        var subActions=Row(_completeButton,_remeasureButton,_retryCaptureButton);
         _actionPanel=new TableLayoutPanel { AutoSize=true,AutoSizeMode=AutoSizeMode.GrowAndShrink,ColumnCount=1,RowCount=2,Margin=Padding.Empty };
         _actionPanel.Controls.Add(mainActions,0,0);_actionPanel.Controls.Add(subActions,0,1);
         Control[] rows=[_setupPanel,_serialPanel,_savePathPanel,_protectionPanel,_actionPanel,_flowLabel];
@@ -518,34 +519,33 @@ internal sealed partial class MainForm : Form
             ErrorNotification.Show(this,"保存先を選択してください。\n完了番号の保護は保存先の「完了記録.txt」で管理しています。","完了番号の保護解除",MessageBoxButtons.OK,MessageBoxIcon.Warning);
             return;
         }
-        string[] completed;
-        try { var store=Store;using var held=store.Lock();completed=store.CompletedSerials(); }
+        (string Serial,bool Protected)[] entries;
+        try { var store=Store;using var held=store.Lock();entries=store.Entries(); }
         catch(Exception ex) { AppendLog($"保護解除：エラー / {ex.Message}");ErrorNotification.Show(this,ex.Message,"完了番号の保護解除",MessageBoxButtons.OK,MessageBoxIcon.Error);return; }
-        if(completed.Length==0)
+        if(entries.Length==0)
         {
-            ErrorNotification.Show(this,$"保護されているS/Nはありません。\n保存先: {_rootBox.Text}","完了番号の保護解除",MessageBoxButtons.OK,MessageBoxIcon.Information);
+            ErrorNotification.Show(this,$"完了記録のあるS/Nはありません。\n保存先: {_rootBox.Text}","完了番号の保護解除",MessageBoxButtons.OK,MessageBoxIcon.Information);
             return;
         }
-        // 保護中の S/N を全部チェック付きで並べ、チェックを外した番号を「解除」で解除する。
-        using var dialog=new Form {Text="完了番号の保護解除",ClientSize=new Size(420,360),StartPosition=FormStartPosition.CenterParent,TopMost=true,MinimizeBox=false,MaximizeBox=false};
-        var guide=new Label{Left=12,Top=10,Width=396,Height=48,Text=$"保存先: {_rootBox.Text}\n保護を解除するS/Nのチェックを外して「解除」を押してください。既存ファイルは残します。"};
-        var list=new CheckedListBox{Left=12,Top=62,Width=396,Height=240,CheckOnClick=true,Font=new Font(Font.FontFamily,12)};
-        foreach(string serial in completed) list.Items.Add("S/N "+serial,true);
-        var ok=new Button{Text="解除",Left=208,Top=312,Width=96,Height=36,DialogResult=DialogResult.OK};
-        var cancel=new Button{Text="キャンセル",Left=312,Top=312,Width=96,Height=36,DialogResult=DialogResult.Cancel};
+        // 記録のある S/N を番号順に並べ、保護中はチェック付き、解除済みはチェックなしで出す。
+        // チェックを外せば解除、付け直せば再保護。「確定」を押したときにまとめて反映する(誤クリックはキャンセルで戻せる)。
+        using var dialog=new Form {Text="完了番号の保護解除",ClientSize=new Size(420,380),StartPosition=FormStartPosition.CenterParent,TopMost=true,MinimizeBox=false,MaximizeBox=false};
+        var guide=new Label{Left=12,Top=10,Width=396,Height=68,Text=$"保存先: {_rootBox.Text}\nチェックあり＝保護中。チェックを外すと保護を解除し、付け直すと再び保護します。\n「確定」で反映します。既存ファイルは残します。"};
+        var list=new CheckedListBox{Left=12,Top=82,Width=396,Height=240,CheckOnClick=true,Font=new Font(Font.FontFamily,12)};
+        foreach(var (serial,isProtected) in entries) list.Items.Add("S/N "+serial,isProtected);
+        var ok=new Button{Text="確定",Left=208,Top=332,Width=96,Height=36,DialogResult=DialogResult.OK};
+        var cancel=new Button{Text="キャンセル",Left=312,Top=332,Width=96,Height=36,DialogResult=DialogResult.Cancel};
         dialog.Controls.AddRange([guide,list,ok,cancel]);dialog.AcceptButton=ok;dialog.CancelButton=cancel;
         if(dialog.ShowDialog(this)!=DialogResult.OK)return;
-        string[] release=completed.Where((_,i)=>!list.GetItemChecked(i)).ToArray();
-        if(release.Length==0){AppendLog("保護解除：チェックを外した S/N が無いので何もしていません。");return;}
+        var desired=entries.Select((e,i)=>(e.Serial,Protected:list.GetItemChecked(i))).ToArray();
+        if(desired.SequenceEqual(entries)){AppendLog("保護解除：チェックを変えた S/N が無いので何もしていません。");return;}
         RunOperation("保護解除",()=> {
             var store=Store;using var held=store.Lock();
-            var released=new List<string>();
-            foreach(string serial in release)
-            {
-                if(!store.IsComplete(serial)) continue; // 画面を開いている間にほかで解除された番号は飛ばす
-                store.Append("RELEASE",serial,"-","-");released.Add(serial);
-            }
-            return released.Count==0?"選んだS/Nはすでに解除されていました。":$"S/N {string.Join(", ",released)} の保護を解除しました。既存ファイルは残しています。";
+            var (released,reprotected)=store.SetProtection(desired);
+            var parts=new List<string>();
+            if(released.Length>0) parts.Add($"S/N {string.Join(", ",released)} の保護を解除しました（既存ファイルは残しています）");
+            if(reprotected.Length>0) parts.Add($"S/N {string.Join(", ",reprotected)} を再び保護しました");
+            return parts.Count==0?"選んだS/Nはすでにその状態でした。":string.Join("。",parts)+"。";
         });
     }
     private void EditTransferSettings()

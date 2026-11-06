@@ -98,9 +98,26 @@ internal sealed class CompletionStore
     }
     public bool IsComplete(string serial) => Read().GetValueOrDefault(Key(serial)) == "COMPLETE";
     public bool WasReleased(string serial) => Read().GetValueOrDefault(Key(serial)) == "RELEASE";
-    // 今も保護されている(完了済みで解除していない)S/N を番号順に返す。保護解除の一覧に使う。
-    public string[] CompletedSerials() => Read().Where(p => p.Value == "COMPLETE").Select(p => p.Key)
-        .OrderBy(s => long.Parse(s, CultureInfo.InvariantCulture)).ToArray();
+    // 記録のある S/N を番号順に、今保護されているか(COMPLETE か)と一緒に返す。保護解除の一覧に使う。
+    public (string Serial, bool Protected)[] Entries() => Read()
+        .OrderBy(p => long.Parse(p.Key, CultureInfo.InvariantCulture))
+        .Select(p => (p.Key, p.Value == "COMPLETE")).ToArray();
+    // 一覧で決めた保護の状態を反映する。保護中→解除は RELEASE、解除済み→再保護は COMPLETE(型式・ファイル名は「-」「再保護」)を追記する。
+    // 今の記録と同じ状態の S/N は何もしない(画面を開いている間にほかで変わっていても二重に書かない)。呼ぶ側が Lock() を持つ。
+    public (string[] Released, string[] Protected) SetProtection(IEnumerable<(string Serial, bool Protected)> desired)
+    {
+        var current = Read();
+        var released = new List<string>(); var reprotected = new List<string>();
+        foreach (var (serial, protect) in desired)
+        {
+            string key = Key(serial);
+            bool isProtected = current.GetValueOrDefault(key) == "COMPLETE";
+            if (protect == isProtected) continue;
+            if (protect) { Append("COMPLETE", key, "-", "再保護"); reprotected.Add(key); }
+            else { Append("RELEASE", key, "-", "-"); released.Add(key); }
+        }
+        return (released.ToArray(), reprotected.ToArray());
+    }
     public void Append(string action,string serial,string model,string baseName)
     {
         if (action is not ("COMPLETE" or "RELEASE")) throw new ArgumentException(nameof(action));

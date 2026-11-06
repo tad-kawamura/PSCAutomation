@@ -65,10 +65,10 @@ internal static class DialogForegroundTests
         ((System.Windows.Forms.Timer)type.GetField("_statusHeartbeat", flags)!.GetValue(owner)!).Stop();
         owner.Show();
         Set("_operationInProgress", false);
-        // 保護解除の画面は保存先の完了記録から一覧を作るので、完了済み S/N を 2 つ持つ一時の保存先を用意する。
+        // 保護解除の画面は保存先の完了記録から一覧を作るので、完了済み S/N 2 つと解除済み S/N 1 つを持つ一時の保存先を用意する。
         string saveRoot = Path.Combine(Path.GetTempPath(), "AS110AllCheck-release-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(saveRoot);
-        File.WriteAllText(Path.Combine(saveRoot, "完了記録.txt"), $"COMPLETE\t{DateTime.Now:O}\t3\tAS110-035\ta\nCOMPLETE\t{DateTime.Now:O}\t1\tAS110-035\tb\n");
+        File.WriteAllText(Path.Combine(saveRoot, "完了記録.txt"), $"COMPLETE\t{DateTime.Now:O}\t3\tAS110-035\ta\nCOMPLETE\t{DateTime.Now:O}\t1\tAS110-035\tb\nCOMPLETE\t{DateTime.Now:O}\t2\tAS110-035\tc\nRELEASE\t{DateTime.Now:O}\t2\t-\t-\n");
         ((TextBox)type.GetField("_rootBox", flags)!.GetValue(owner)!).Text = saveRoot;
         try
         {
@@ -93,10 +93,11 @@ internal static class DialogForegroundTests
                         if (!IsAbove(dialog.Handle, owner.Handle)) throw new Exception("Dialog is behind MainForm");
                         if (ticks == 0 && method == "ReleaseCompletedSerial")
                         {
-                            // 保護中の S/N が番号順に全部チェック付きで並ぶ。
+                            // 記録のある S/N が番号順に並び、保護中はチェック付き、解除済みはチェックなし。
                             var serials = dialog.Controls.OfType<CheckedListBox>().Single();
-                            if (serials.Items.Count != 2 || serials.Items[0]!.ToString() != "S/N 1" || serials.Items[1]!.ToString() != "S/N 3" || serials.CheckedItems.Count != 2)
-                                throw new Exception("Release dialog does not list completed serials checked in order: " + string.Join(",", serials.Items.Cast<object>()));
+                            string shown = string.Join(",", serials.Items.Cast<object>().Select((item, i) => item + (serials.GetItemChecked(i) ? "+" : "-")));
+                            if (shown != "S/N 1+,S/N 2-,S/N 3+")
+                                throw new Exception("Release dialog does not list serials with protection state in order: " + shown);
                         }
                         if (ticks == 0 && dialog.Controls.OfType<TextBox>().FirstOrDefault() is { } input)
                         {
