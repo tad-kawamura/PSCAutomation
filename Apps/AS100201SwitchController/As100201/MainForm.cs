@@ -47,7 +47,7 @@ internal sealed partial class MainForm : Form
     private As100201Switch? _pendingWaveformSwitch;
     private int _waveformRequestVersion;
     private string _detectedHardwareName = string.Empty;
-    // 2 回押しの待ち時間と位相(試用版、画面で変えて設定ファイルに残す)。
+    // 位相(標準)と 2 回押しの待ち時間(試用中)。画面で変えて設定ファイルに残す。
     private readonly As100201SwitchSettingsStore _switchSettingsStore = As100201SwitchSettingsStore.CreateDefault();
     private As100201SwitchSettings _switchSettings;
 

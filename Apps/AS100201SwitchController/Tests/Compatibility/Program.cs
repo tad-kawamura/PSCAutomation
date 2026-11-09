@@ -41,11 +41,11 @@ internal static class Program
         Check(await wf.StartWithPhaseAsync(As100201WaveformSettings.Continuous, As100201WaveformSettings.PcPhaseDegrees, () => false), "PC restart failed");
         Check(await wf.StartWithPhaseAsync(As100201WaveformSettings.Continuous, As100201WaveformSettings.CrPhaseDegrees, () => false), "CR restart failed");
         Check(fake.Commands.SequenceEqual(new[] {
-            ":SOURce:VOLTage 10.2;PHASe 15;FREQuency:FIXed 0.02",
+            ":SOURce:VOLTage 10.2;PHASe 0;FREQuency:FIXed 0.02",
             ":SOURce:VOLTage:OFFSet 0", ":SOURce:PHASe:INITiate", ":OUTPut:STATe ON",
-            ":SOURce:VOLTage 10.2;PHASe 165;FREQuency:FIXed 0.02",
+            ":SOURce:VOLTage 10.2;PHASe 140;FREQuency:FIXed 0.02",
             ":SOURce:VOLTage:OFFSet 0", ":SOURce:PHASe:INITiate" }), "waveform sequence or output toggling changed");
-        Pass("PC/CR command order, invariant numbers, repeated restart without OFF/ON");
+        Pass("PC/CR command order (default phases 0° / 140°), invariant numbers, repeated restart without OFF/ON");
 
         for (int boundary = 1; boundary <= 3; boundary++)
         {
@@ -164,17 +164,17 @@ internal static class Program
         Pass("sketch version check: only AS100201_READY:2 is accepted");
 
         var d = As100201SwitchSettings.Defaults;
-        Check(d.DoubleWaitMilliseconds == 250 && d.PcSinglePhaseDegrees == 15 && d.PcDoublePhaseDegrees == 75 &&
-            d.CrSinglePhaseDegrees == 165 && d.CrDoublePhaseDegrees == 200, "defaults changed");
-        Check(d.GetPhase(As100201Switch.Parse("PC_go")) == 15 && d.GetPhase(As100201Switch.Parse("PC_go_2")) == 75 &&
-            d.GetPhase(As100201Switch.Parse("CR_go")) == 165 && d.GetPhase(As100201Switch.Parse("CR_go_2")) == 200, "phase selection");
+        Check(d.DoubleWaitMilliseconds == 250 && d.PcSinglePhaseDegrees == 0 && d.PcDoublePhaseDegrees == 75 &&
+            d.CrSinglePhaseDegrees == 140 && d.CrDoublePhaseDegrees == 250, "defaults changed");
+        Check(d.GetPhase(As100201Switch.Parse("PC_go")) == 0 && d.GetPhase(As100201Switch.Parse("PC_go_2")) == 75 &&
+            d.GetPhase(As100201Switch.Parse("CR_go")) == 140 && d.GetPhase(As100201Switch.Parse("CR_go_2")) == 250, "phase selection");
         try { d.GetPhase(As100201Switch.Parse("F8")); throw new Exception("F8 has phase"); }
         catch (ArgumentOutOfRangeException) { }
         var problems = new List<string>();
         var normalized = (d with { DoubleWaitMilliseconds = 10, CrDoublePhaseDegrees = 360, PcDoublePhaseDegrees = 90 }).Normalize(problems);
-        Check(problems.Count == 2 && normalized.DoubleWaitMilliseconds == 250 && normalized.CrDoublePhaseDegrees == 200 &&
+        Check(problems.Count == 2 && normalized.DoubleWaitMilliseconds == 250 && normalized.CrDoublePhaseDegrees == 250 &&
             normalized.PcDoublePhaseDegrees == 90, "out-of-range values not reset individually");
-        Pass("settings defaults (0.25 s, 15/75, 165/200), phase selection, out-of-range reset per item");
+        Pass("settings defaults (0.25 s, 0/75, 140/250), phase selection, out-of-range reset per item");
 
         string root = Path.Combine(Path.GetTempPath(), "AS100201DoublePressTest_" + Guid.NewGuid().ToString("N"));
         try
@@ -213,9 +213,9 @@ internal static class Program
         Check(fake.Commands.SequenceEqual(new[] {
             ":SOURce:VOLTage 10.2;PHASe 75;FREQuency:FIXed 0.02",
             ":SOURce:VOLTage:OFFSet 0", ":SOURce:PHASe:INITiate", ":OUTPut:STATe ON",
-            ":SOURce:VOLTage 10.2;PHASe 200;FREQuency:FIXed 0.02",
+            ":SOURce:VOLTage 10.2;PHASe 250;FREQuency:FIXed 0.02",
             ":SOURce:VOLTage:OFFSet 0", ":SOURce:PHASe:INITiate" }), "double-press restart sequence");
-        Pass("double press restarts WF1973 with 75° / 200°, same amplitude and frequency, no OFF/ON");
+        Pass("double press restarts WF1973 with 75° / 250°, same amplitude and frequency, no OFF/ON");
     }
 }
 

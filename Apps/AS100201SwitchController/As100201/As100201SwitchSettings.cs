@@ -2,8 +2,8 @@ using System.Text.Json;
 
 namespace PSCAutomation.Apps.AS100201SwitchController;
 
-// 2 回押し(試用版、2026-11-09)で画面から変える値。exe の隣の設定ファイルに残す。
-// 値が決まったら画面の入力欄を外し、As100201WaveformSettings の固定値に戻す予定(人の方針)。
+// 画面から変える値(位相 4 つと 2 回押しの待ち時間)。exe の隣の設定ファイルに残す。
+// 位相の入力は標準の機能(2026-11-09 人の指示。試用版だけにしない)。2 回押し(待ち時間を含む)は試用中。
 internal sealed record As100201SwitchSettings
 {
     public const int MinDoubleWaitMilliseconds = 50;

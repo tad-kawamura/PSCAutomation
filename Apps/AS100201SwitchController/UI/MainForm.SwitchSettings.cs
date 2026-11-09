@@ -1,7 +1,7 @@
 namespace PSCAutomation.Apps.AS100201SwitchController;
 
-// 2 回押し(試用版、2026-11-09): 待ち時間と位相を画面で変え、設定ファイルに残す。
-// 値が決まったらこの入力欄を外して固定値に戻す予定(人の方針)。
+// 位相と 2 回押しの待ち時間を画面で変え、設定ファイルに残す(2026-11-09)。
+// 位相の入力は標準の機能(人の指示で試用版だけにしない)。2 回押し(待ち時間を含む)は試用中。
 internal sealed partial class MainForm : Form
 {
     private readonly NumericUpDown _doubleWaitInput = new();
@@ -16,7 +16,7 @@ internal sealed partial class MainForm : Form
     {
         var group = new GroupBox
         {
-            Text = "2回押し（試用）　PC_go / CR_go を素早く2回押すと、2回押しの位相で出し直します",
+            Text = "出し直しの位相（PC_go / CR_go）　2回押しは試用中：1回目を離してから待ち時間以内にもう一度押す",
             AutoSize = true,
             AutoSizeMode = AutoSizeMode.GrowAndShrink,
             Dock = DockStyle.Fill,
