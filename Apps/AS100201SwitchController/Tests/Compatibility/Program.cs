@@ -23,6 +23,7 @@ internal static class Program
         GeneratorChecks().GetAwaiter().GetResult();
         LoggerChecks();
         ProtocolAndLogChecks();
+        DoublePressChecks().GetAwaiter().GetResult();
         Console.WriteLine($"All {_passed} compatibility groups passed. No device or LOGGER application was opened.");
     }
 
@@ -142,6 +143,79 @@ internal static class Program
         Check(ArduinoDiagnosticLog.ApplicationName == "AS100201SwitchController", "log fallback directory changed");
         Check(ArduinoDiagnosticLog.FallbackDirectory.EndsWith(Path.Combine("AS100201SwitchController", "Logs")), "log fallback directory changed");
         Pass("product log directory and incident kinds preserved without NF policy");
+    }
+
+    // 2 回押し(試用版、2026-11-09 追加)。スケッチの判定そのものは実機でしか確かめられない。
+    private static async Task DoublePressChecks()
+    {
+        Check(As100201Switch.TryParse("PC_go", out var s) && s.Button == "PC_go" && s.Kind == As100201PressKind.Single, "PC_go single");
+        Check(As100201Switch.TryParse("CR_go_2", out s) && s.Button == "CR_go" && s.Kind == As100201PressKind.Double && s.IsWaveform, "CR_go double");
+        Check(As100201Switch.TryParse("PC_go_EXTRA", out s) && s.Kind == As100201PressKind.Extra, "PC_go extra");
+        Check(As100201Switch.TryParse("F8", out s) && !s.IsWaveform && s.Kind == As100201PressKind.Single, "F8 single");
+        Check(As100201Switch.TryParse("sw4", out s) && s.Button == "sw4", "sw4 single");
+        foreach (string bad in new[] { "F8_2", "sw4_EXTRA", "PC_go_3", "pc_go", "PC_go ", "DOUBLE_WAIT_MS_OK:250", "AS100201_READY:2" })
+            Check(!As100201Switch.TryParse(bad, out _), "accepted unknown switch line: " + bad);
+        Pass("switch lines: single / _2 / _EXTRA for PC_go and CR_go only; F8 and sw4 unchanged");
+
+        Check(As100201ArduinoProtocol.CheckHello("AS100201_READY:2") is null, "version 2 rejected");
+        Check(As100201ArduinoProtocol.CheckHello("AS100201_READY:1")?.Contains("版 1") == true, "version 1 accepted");
+        Check(As100201ArduinoProtocol.CheckHello(null)?.Contains("不明") == true, "missing reply accepted");
+        Check(As100201ArduinoProtocol.CheckHello("AS100201_READY:20") is not null, "version 20 accepted");
+        Pass("sketch version check: only AS100201_READY:2 is accepted");
+
+        var d = As100201SwitchSettings.Defaults;
+        Check(d.DoubleWaitMilliseconds == 250 && d.PcSinglePhaseDegrees == 15 && d.PcDoublePhaseDegrees == 75 &&
+            d.CrSinglePhaseDegrees == 165 && d.CrDoublePhaseDegrees == 200, "defaults changed");
+        Check(d.GetPhase(As100201Switch.Parse("PC_go")) == 15 && d.GetPhase(As100201Switch.Parse("PC_go_2")) == 75 &&
+            d.GetPhase(As100201Switch.Parse("CR_go")) == 165 && d.GetPhase(As100201Switch.Parse("CR_go_2")) == 200, "phase selection");
+        try { d.GetPhase(As100201Switch.Parse("F8")); throw new Exception("F8 has phase"); }
+        catch (ArgumentOutOfRangeException) { }
+        var problems = new List<string>();
+        var normalized = (d with { DoubleWaitMilliseconds = 10, CrDoublePhaseDegrees = 360, PcDoublePhaseDegrees = 90 }).Normalize(problems);
+        Check(problems.Count == 2 && normalized.DoubleWaitMilliseconds == 250 && normalized.CrDoublePhaseDegrees == 200 &&
+            normalized.PcDoublePhaseDegrees == 90, "out-of-range values not reset individually");
+        Pass("settings defaults (0.25 s, 15/75, 165/200), phase selection, out-of-range reset per item");
+
+        string root = Path.Combine(Path.GetTempPath(), "AS100201DoublePressTest_" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            string primaryDir = Path.Combine(root, "exe");
+            Directory.CreateDirectory(primaryDir);
+            var store = new As100201SwitchSettingsStore(primaryDir, Path.Combine(root, "local"));
+            Check(store.Load(out string? message) == d && message is null, "missing file not defaults");
+            var changed = d with { DoubleWaitMilliseconds = 300, PcSinglePhaseDegrees = 20 };
+            Check(store.Save(changed) == store.PrimaryPath, "not saved next to exe");
+            Check(store.Load(out message) == changed && message is null, "saved values not loaded");
+            File.WriteAllText(store.PrimaryPath, "{ broken");
+            Check(store.Load(out message) == d && message?.Contains("読めない") == true, "broken file not reported");
+            File.WriteAllText(store.PrimaryPath, "{\"DoubleWaitMilliseconds\": 5000, \"CrSinglePhaseDegrees\": 170}");
+            var partial = store.Load(out message);
+            Check(partial.DoubleWaitMilliseconds == 250 && partial.CrSinglePhaseDegrees == 170 && partial.PcDoublePhaseDegrees == 75 &&
+                message?.Contains("範囲外") == true, "partial or out-of-range file");
+
+            // exe の隣に書けないとき(ここではフォルダーが無い)は LOCALAPPDATA 側へ。新しい方を読む。
+            var noPrimary = new As100201SwitchSettingsStore(Path.Combine(root, "missing"), Path.Combine(root, "local"));
+            Check(noPrimary.Save(changed) == noPrimary.FallbackPath && noPrimary.Load(out _) == changed, "fallback save/load");
+            var both = new As100201SwitchSettingsStore(primaryDir, Path.Combine(root, "local"));
+            File.WriteAllText(both.PrimaryPath, "{\"DoubleWaitMilliseconds\": 400}");
+            File.SetLastWriteTimeUtc(both.PrimaryPath, DateTime.UtcNow.AddMinutes(-5));
+            Check(both.Load(out _) == changed, "older primary file preferred over newer fallback");
+            File.SetLastWriteTimeUtc(both.PrimaryPath, DateTime.UtcNow.AddMinutes(5));
+            Check(both.Load(out _).DoubleWaitMilliseconds == 400, "newer primary file ignored");
+        }
+        finally { try { Directory.Delete(root, true); } catch (IOException) { } }
+        Pass("settings file: save next to exe, fallback folder, newer file wins, broken file -> defaults");
+
+        var fake = new FakeInstrument();
+        using var wf = new Wf1973ContinuousSession(fake);
+        Check(await wf.StartWithPhaseAsync(As100201WaveformSettings.Continuous, d.GetPhase(As100201Switch.Parse("PC_go_2")), () => false), "PC double failed");
+        Check(await wf.StartWithPhaseAsync(As100201WaveformSettings.Continuous, d.GetPhase(As100201Switch.Parse("CR_go_2")), () => false), "CR double failed");
+        Check(fake.Commands.SequenceEqual(new[] {
+            ":SOURce:VOLTage 10.2;PHASe 75;FREQuency:FIXed 0.02",
+            ":SOURce:VOLTage:OFFSet 0", ":SOURce:PHASe:INITiate", ":OUTPut:STATe ON",
+            ":SOURce:VOLTage 10.2;PHASe 200;FREQuency:FIXed 0.02",
+            ":SOURce:VOLTage:OFFSet 0", ":SOURce:PHASe:INITiate" }), "double-press restart sequence");
+        Pass("double press restarts WF1973 with 75° / 200°, same amplitude and frequency, no OFF/ON");
     }
 }
 

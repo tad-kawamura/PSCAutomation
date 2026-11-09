@@ -44,27 +44,35 @@ internal sealed partial class MainForm : Form
     private bool _hardwareDetected;
     private bool _operationInProgress;
     private bool _waveformRestartInProgress;
-    private string? _pendingWaveformSwitch;
+    private As100201Switch? _pendingWaveformSwitch;
     private int _waveformRequestVersion;
     private string _detectedHardwareName = string.Empty;
+    // 2 回押しの待ち時間と位相(試用版、画面で変えて設定ファイルに残す)。
+    private readonly As100201SwitchSettingsStore _switchSettingsStore = As100201SwitchSettingsStore.CreateDefault();
+    private As100201SwitchSettings _switchSettings;
 
     public MainForm()
     {
         _nr500Connection = new Nr500Connection(_logger);
+        _switchSettings = _switchSettingsStore.Load(out string? settingsMessage);
+        _arduino.SetDoubleWait(_switchSettings.DoubleWaitMilliseconds);
         _arduino.Disconnected += ArduinoDisconnected;
         _arduino.SwitchPressed += ArduinoSwitchPressed;
         _arduino.StatusChanged += ArduinoStatusChanged;
+        _arduino.DoubleWaitApplied += ArduinoDoubleWaitApplied;
         _readyHeartbeat.Tick += StatusHeartbeatTick;
         StartPcDelayObservation();
         _readyHeartbeat.Start();
 
         Text = As100201Application.WindowTitle;
-        ClientSize = new Size(850, 650);
-        MinimumSize = new Size(680, 570);
+        ClientSize = new Size(850, 820);
+        MinimumSize = new Size(680, 680);
         StartPosition = FormStartPosition.CenterScreen;
 
         BuildLayout();
+        ShowSwitchSettings();
         ConfigureLoggerSelection();
+        if (settingsMessage is not null) AppendLog(settingsMessage);
         UpdateControls();
     }
 

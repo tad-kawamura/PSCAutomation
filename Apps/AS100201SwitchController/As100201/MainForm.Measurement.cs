@@ -35,7 +35,7 @@ internal sealed partial class MainForm : Form
 
     private void StartClicked(object? sender, EventArgs e)
     {
-        ExecuteSwitch("F8");
+        ExecuteSwitch(As100201Switch.Parse("F8"));
     }
 
     private void GetStateClicked(object? sender, EventArgs e)

@@ -16,9 +16,17 @@ internal sealed class As100201ArduinoProtocol : IDisposable
     private static readonly TimeSpan FreshLimit = TimeSpan.FromSeconds(1);
     private static readonly TimeSpan RecoveryTime = TimeSpan.FromSeconds(1);
     private const string HelloRequest = "AS100201_PING";
-    private const string HelloResponse = "AS100201_READY:1";
+    // 版 2(2026-11-09): PC_go / CR_go の 2 回押しをスケッチで判定する。版 1 のスケッチは接続エラーにする。
+    public const string HelloPrefix = "AS100201_READY:";
+    public const int SketchVersion = 2;
+    private const string DoubleWaitCommand = "DOUBLE_WAIT_MS:";
+    private const string DoubleWaitReply = "DOUBLE_WAIT_MS_OK:";
+    private string? _helloReply;
+    private int _doubleWaitMilliseconds = As100201WaveformSettings.DoubleWaitMilliseconds;
 
-    public event Action<string>? SwitchPressed;
+    public event Action<As100201Switch>? SwitchPressed;
+    // Arduino が受け付けた 2 回押しの待ち時間(ミリ秒)。
+    public event Action<int>? DoubleWaitApplied;
     public event Action? Disconnected;
     public event Action<string>? StatusChanged;
 
@@ -52,11 +60,44 @@ internal sealed class As100201ArduinoProtocol : IDisposable
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         if (!_connection.IsConnected) Reset();
-        await _connection.VerifyAsync(HelloRequest, line => line == HelloResponse, timingLog).ConfigureAwait(false);
+        Volatile.Write(ref _helloReply, null);
+        await _connection.VerifyAsync(HelloRequest, line =>
+        {
+            if (!line.StartsWith(HelloPrefix, StringComparison.Ordinal)) return false;
+            Volatile.Write(ref _helloReply, line);
+            return true;
+        }, timingLog).ConfigureAwait(false);
         ObjectDisposedException.ThrowIf(_disposed, this);
+        if (CheckHello(Volatile.Read(ref _helloReply)) is string versionError)
+        {
+            // 古いスケッチは 2 回押しを判定せず、1 回押しの送り方も違うので使わない。
+            await _connection.DisconnectAsync().ConfigureAwait(false);
+            ArduinoDiagnosticLog.Write("SKETCH_VERSION", versionError);
+            throw new As100201SketchVersionException(versionError);
+        }
         lock (_gate) _verified = true;
         // READY_OFFは新しい接続を含め、準備確認が終わるまで点灯させない。
         _connection.SendLine("READY_OFF");
+        _connection.SendLine(DoubleWaitCommand + Volatile.Read(ref _doubleWaitMilliseconds));
+    }
+
+    // 確認応答の版を見る。版 2 なら null、それ以外は人に見せる理由。
+    public static string? CheckHello(string? reply)
+    {
+        string version = reply is not null && reply.StartsWith(HelloPrefix, StringComparison.Ordinal)
+            ? reply[HelloPrefix.Length..] : "不明";
+        return version == SketchVersion.ToString(System.Globalization.CultureInfo.InvariantCulture) ? null :
+            $"Arduino のスケッチが古い（版 {version}、このアプリは版 {SketchVersion}）。" +
+            "firmware/ArduinoSwitchAndReadyLed を書き込み直してください。";
+    }
+
+    // 2 回押しの待ち時間を Arduino へ送る。未接続なら、次の接続確認の後に送る。
+    public void SetDoubleWait(int milliseconds)
+    {
+        if (milliseconds is < As100201SwitchSettings.MinDoubleWaitMilliseconds or > As100201SwitchSettings.MaxDoubleWaitMilliseconds)
+            throw new ArgumentOutOfRangeException(nameof(milliseconds));
+        Volatile.Write(ref _doubleWaitMilliseconds, milliseconds);
+        if (IsConnected) _connection.SendLine(DoubleWaitCommand + milliseconds);
     }
 
     // 受信が一時停止しただけなら同じポートでの受信再開を待つ。
@@ -111,7 +152,9 @@ internal sealed class As100201ArduinoProtocol : IDisposable
             if (!_disposed)
             {
                 ArduinoDiagnosticLog.Write("RECONNECT_WAIT", ex.Message);
-                StatusChanged?.Invoke("Arduinoの接続を待っています。USB接続後に自動で再確認します。");
+                StatusChanged?.Invoke(ex is As100201SketchVersionException
+                    ? ex.Message
+                    : "Arduinoの接続を待っています。USB接続後に自動で再確認します。");
             }
         }
         finally
@@ -168,9 +211,15 @@ internal sealed class As100201ArduinoProtocol : IDisposable
                 _staleLogged = false;
             }
         }
-        else if (line is "PC_go" or "CR_go" or "F8" or "sw4")
+        else if (line.StartsWith(DoubleWaitReply, StringComparison.Ordinal))
         {
-            if (InputReady) SwitchPressed?.Invoke(line);
+            if (int.TryParse(line.AsSpan(DoubleWaitReply.Length), System.Globalization.NumberStyles.None,
+                System.Globalization.CultureInfo.InvariantCulture, out int applied))
+                DoubleWaitApplied?.Invoke(applied);
+        }
+        else if (As100201Switch.TryParse(line, out var pressed))
+        {
+            if (InputReady) SwitchPressed?.Invoke(pressed);
             else ArduinoDiagnosticLog.Write("SWITCH_DROPPED", "復旧確認中の操作を破棄 / " + line);
         }
     }
@@ -202,3 +251,6 @@ internal sealed class As100201ArduinoProtocol : IDisposable
         _connection.Dispose();
     }
 }
+
+// Arduino のスケッチの版がアプリと合わない(書き込み直しが要る)。
+internal sealed class As100201SketchVersionException(string message) : InvalidOperationException(message);

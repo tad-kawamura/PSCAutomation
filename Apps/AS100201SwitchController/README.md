@@ -5,7 +5,7 @@ AS100-201 のスイッチ制御・測定アプリ。治具の Arduino のスイ�
 元は GitHub `tad-kawamura/AS100201SwitchController`(`5eb5b6391a82`、2026-10-28)。旧リポジトリは 2026-11-04 にアーカイブした(読み取り専用)。移植前の履歴はそちらで見る。旧リポジトリの README・AGENTS.md の冒頭には、ここへの案内を書いてある(`c8a5e4b`)。旧リポジトリをクローンした PC は、PSCAutomation をクローンし直して作業する。
 
 - 仕様(機器・操作・異常時・移植で変えたこと): [specs/AS100201SwitchController/SPEC.md](../../specs/AS100201SwitchController/SPEC.md)
-- Arduino スケッチ: `firmware/ArduinoSwitchAndReadyLed/ArduinoSwitchAndReadyLed.ino`(移植で内容は変えていない)
+- Arduino スケッチ: `firmware/ArduinoSwitchAndReadyLed/ArduinoSwitchAndReadyLed.ino`。**版 2**(2026-11-09、PC_go / CR_go の 2 回押しの判定を追加)。**アプリとスケッチは一緒に更新する**: 版 1 のスケッチをこのアプリにつなぐと接続エラー(「スケッチが古い」)、版 2 のスケッチを 2026-11-09 より前のアプリにつなぐと「Arduino が見つからない」になる。書き込みは Arduino IDE で(ボードは UNO R4 Minima)
 
 ## 開く・ビルドする
 
@@ -21,8 +21,10 @@ NI-VISA が入っていない PC ではビルドできない(`Wrappers/Instrumen
 
 | フォルダー・ファイル | 中身 |
 |---|---|
-| `As100201/As100201WaveformSettings.cs` | WF1973 の設定値(振幅 10.2Vpp・0.02Hz・オフセット 0V・PC 位相 15°・CR 位相 165°・三角波)。実機で位相を調整するときはここだけ直す |
-| `As100201/As100201ArduinoProtocol.cs` | Arduino との取り決め(確認文字列、250ms ごとの定期応答の監視、1 秒止まったら操作禁止、3 秒で再接続、復旧後 1 秒は操作を捨てる、READY LED) |
+| `As100201/As100201WaveformSettings.cs` | WF1973 の設定値(振幅 10.2Vpp・0.02Hz・オフセット 0V・三角波)と、位相・2 回押しの待ち時間の**初期値**(PC 15° / 75°、CR 165° / 200°、0.25 秒) |
+| `As100201/As100201SwitchSettings.cs` | 2 回押しの試用版で画面から変える値(待ち時間・4 つの位相)と、設定ファイルの読み書き |
+| `As100201/As100201Switch.cs` | Arduino から届くスイッチの行(1 回押し・`_2`・`_EXTRA`)の読み取り |
+| `As100201/As100201ArduinoProtocol.cs` | Arduino との取り決め(確認文字列と版、250ms ごとの定期応答の監視、1 秒止まったら操作禁止、3 秒で再接続、復旧後 1 秒は操作を捨てる、READY LED、2 回押しの待ち時間の送信) |
 | `As100201/As100201Application.cs` | 画面の文言、異常ログのアプリ名と固有の異常種別 |
 | `As100201/MainForm.*.cs` | 接続確認・雛形の登録・スイッチの処理・定期確認・前面表示・終了 |
 | `UI/` | 画面の組み立て、操作の共通処理、PC 遅延観測 |
@@ -38,9 +40,11 @@ NI-VISA が入っていない PC ではビルドできない(`Wrappers/Instrumen
 | 起動 | Arduino・WF1973・LOGGER/NR 本体(USB)を確認する。WF1973 は三角波にする。「確認」ボタンでやり直せる |
 | 「確認」(WF1973 が接続済み) | WF1973 の生存確認のあと、波形の形(三角波)だけを送り直す。出力・振幅・位相は変えない(形が DC などになっていたら、これで戻る) |
 | 雛形を画面へドロップ | LOGGER で開く。READY LED が点く |
-| PC_go / CR_go | WF1973 を PC 位相(15°)/ CR 位相(165°)で出し直す。出力中は OFF にしない。処理中の再押下は最後の押下で上書き |
-| F8 / 「測定開始（確認用）」 | LOGGER の測定開始(毎回 Start) |
-| sw4 | LOGGER の停止 |
+| PC_go / CR_go(1 回押し) | **離してから待ち時間(初期 0.25 秒)後に**、WF1973 を 1 回押しの位相(初期 PC 15° / CR 165°)で出し直す。出力中は OFF にしない。処理中の再押下は最後の押下で上書き |
+| PC_go / CR_go(2 回押し) | 1 回目を離してから待ち時間以内にもう一度押すと、2 回目を押した瞬間に 2 回押しの位相(初期 PC 75° / CR 200°)で出し直す。3 回以上続けて押しても 2 回押し 1 回(続きはログだけ)。待ち中に別のボタンを押すと、待っていた 1 回押しを先に動かす |
+| 画面の「2回押し（試用）」 | 待ち時間(0.05〜1.00 秒)と 4 つの位相(0〜359°)を入力する。次の押下から効く。exe の隣の `AS100201SwitchController.settings.json` に残す(書けなければ `%LOCALAPPDATA%\AS100201SwitchController\`)。「初期値に戻す」あり |
+| F8 / 「測定開始（確認用）」 | LOGGER の測定開始(毎回 Start)。2 回押しなし(押した瞬間) |
+| sw4 | LOGGER の停止。2 回押しなし(押した瞬間) |
 
 NR 本体は **USB だけ**(NR-500 / NR-X)。移植前にあった Wi-Fi の選択と「元のWi-Fiへ戻す」ボタンは外した(SPEC.md)。
 
@@ -51,7 +55,7 @@ dotnet build Apps/AS100201SwitchController/Tests/Compatibility/AS100201.Regressi
 Apps/AS100201SwitchController/Tests/Compatibility/bin/Debug/net9.0-windows/AS100201.RegressionTests.exe
 ```
 
-機器・LOGGER は使わない。10 グループすべて PASS で終了コード 0。
+機器・LOGGER は使わない。15 グループすべて PASS で終了コード 0(2026-11-09 に 2 回押しの 5 グループを追加: スイッチの行の読み取り、スケッチの版、設定の初期値・位相の選び方、設定ファイル、75° / 200° での出し直しのコマンド)。スケッチの 2 回押しの判定そのものは模擬で確かめられない(実機で確認する)。
 
 ## 発行
 
@@ -59,7 +63,17 @@ Apps/AS100201SwitchController/Tests/Compatibility/bin/Debug/net9.0-windows/AS100
 dotnet publish Apps/AS100201SwitchController/AS100201SwitchController.csproj -p:PublishProfile=FolderProfile
 ```
 
-`bin/Release/publish/AS100201SwitchController.exe` 1 つ(自己完結・win-x64)。雛形はアプリに同梱しない(人がふだんの xdt をドロップする)。異常ログは exe の隣の `Logs\`、書けなければ `%LOCALAPPDATA%\AS100201SwitchController\Logs`。
+`bin/Release/publish/AS100201SwitchController.exe` 1 つ(自己完結・win-x64)。雛形はアプリに同梱しない(人がふだんの xdt をドロップする)。異常ログは exe の隣の `Logs\`、書けなければ `%LOCALAPPDATA%\AS100201SwitchController\Logs`。2 回押しの設定ファイルは発行物に入れない(画面で値を変えたときに exe の隣にできる。無ければ初期値)。
+
+## 2 回押し(試用版、2026-11-09)
+
+仕様は SPEC.md「追加: 2 回押し(ダブルクリック)・試用版」。確かめたのはビルド・互換テスト(模擬)・スケッチのコンパイル(UNO R4 Minima)・画面の入力欄の配置(機器につながずに描いた画像)まで。**実機では未確認**:
+
+- スケッチの判定: 1 回押し(離してから待ち時間後に届く)・2 回押し・3 回以上・待ち中の別ボタン・押したままで別ボタン・チャタリングの多いスイッチでの誤判定
+- 画面で変えた待ち時間が Arduino に効くこと(ログの「Arduino に反映」)と、再接続後に送り直されること
+- 版 1 のスケッチをつないだときの接続エラーの表示と、2 秒おきの再確認の動き
+- 75° / 200° での出し直しの波形(目視・ロガー)
+- 設定ファイルの保存(発行した exe の隣、書けない場所に置いたとき)
 
 ## 確認(2026-11-04、移植後)
 

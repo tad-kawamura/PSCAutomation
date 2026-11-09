@@ -38,7 +38,7 @@ internal sealed partial class MainForm : Form
         catch (InvalidOperationException) when (_closing || IsDisposed || !IsHandleCreated) { }
     }
 
-    private void ArduinoSwitchPressed(string name)
+    private void ArduinoSwitchPressed(As100201Switch pressed)
     {
         long receivedAt = System.Diagnostics.Stopwatch.GetTimestamp();
         long version = _arduino.RequestVersion;
@@ -47,19 +47,26 @@ internal sealed partial class MainForm : Form
             if (version != _arduino.RequestVersion || !_arduino.InputReady ||
                 System.Diagnostics.Stopwatch.GetElapsedTime(receivedAt).TotalSeconds >= 1)
             {
-                ArduinoDiagnosticLog.Write("SWITCH_DROPPED", "遅延または復旧前の要求を破棄 / " + name);
+                ArduinoDiagnosticLog.Write("SWITCH_DROPPED", "遅延または復旧前の要求を破棄 / " + pressed.Line);
                 return;
             }
             double waitMs = System.Diagnostics.Stopwatch.GetElapsedTime(receivedAt).TotalMilliseconds;
-            ArduinoDiagnosticLog.Write("SWITCH_TIMING", $"{name} / 受信からUI処理開始={waitMs:F1}ms / version={version}");
-            ExecuteSwitch(name);
+            ArduinoDiagnosticLog.Write("SWITCH_TIMING", $"{pressed.Line} / 受信からUI処理開始={waitMs:F1}ms / version={version}");
+            ExecuteSwitch(pressed);
         });
     }
 
-    private void ExecuteSwitch(string name)
+    private void ExecuteSwitch(As100201Switch pressed)
     {
-        using var observation = PcDelayObservation.Begin("UI.Switch:" + name);
-        AppendLog($"スイッチ {name} を受信");
+        string name = pressed.Button;
+        using var observation = PcDelayObservation.Begin("UI.Switch:" + pressed.Line);
+        if (pressed.Kind == As100201PressKind.Extra)
+        {
+            // 2 回押しの後に続けて押された分は何もしない(2026-11-09 人と決めた仕様)。
+            AppendLog($"{name} の続けての押下を捨てました。");
+            return;
+        }
+        AppendLog($"スイッチ {pressed.DisplayName} を受信");
         if (!_readyLedOn || !ConnectionsReady || _operationInProgress)
         {
             AppendLog("接続確認と雛形読み込みが完了するまで操作できません。");
@@ -75,10 +82,11 @@ internal sealed partial class MainForm : Form
         {
             RefreshTemplateState();
             if (!_templateLoaded) return;
-            if (name is "PC_go" or "CR_go")
+            if (pressed.IsWaveform)
             {
                 // 再押下も受け付け、処理中なら最後の押下で上書きする。
-                RequestWaveformRestart(name);
+                // 1 回押し・2 回押しの区別はスケッチが行い、位相は画面の設定(As100201SwitchSettings)から選ぶ。
+                RequestWaveformRestart(pressed);
             }
             else if (name == "F8")
             {
@@ -98,19 +106,19 @@ internal sealed partial class MainForm : Form
         }
         catch (Exception ex)
         {
-            AppendLog($"{name} の実行に失敗：{ex.Message}");
-            ErrorNotification.Show(this, ex.Message, $"{name} 実行エラー",
+            AppendLog($"{pressed.DisplayName} の実行に失敗：{ex.Message}");
+            ErrorNotification.Show(this, ex.Message, $"{pressed.DisplayName} 実行エラー",
                 MessageBoxButtons.OK, MessageBoxIcon.Error);
         }
     }
 
-    private void RequestWaveformRestart(string name)
+    private void RequestWaveformRestart(As100201Switch pressed)
     {
-        _pendingWaveformSwitch = name;
+        _pendingWaveformSwitch = pressed;
         ++_waveformRequestVersion;
         if (_waveformRestartInProgress)
         {
-            AppendLog($"WF1973 再開始を予約：{name}（処理中の操作を中断）");
+            AppendLog($"WF1973 再開始を予約：{pressed.DisplayName}（処理中の操作を中断）");
             return;
         }
 
@@ -123,11 +131,13 @@ internal sealed partial class MainForm : Form
         UpdateControls();
         try
         {
-            while (_pendingWaveformSwitch is string name && !_closing && !IsDisposed && !Disposing && ConnectionsReady)
+            while (_pendingWaveformSwitch is As100201Switch pressed && !_closing && !IsDisposed && !Disposing && ConnectionsReady)
             {
                 _pendingWaveformSwitch = null;
                 int version = _waveformRequestVersion;
-                int phase = name == "PC_go" ? As100201WaveformSettings.PcPhaseDegrees : As100201WaveformSettings.CrPhaseDegrees;
+                string name = pressed.DisplayName;
+                // 位相はこの時点の画面の設定。処理中に変えた値は次の押下から効く。
+                int phase = _switchSettings.GetPhase(pressed);
 
                 // VISAはSTAのUIスレッドで扱う。新しい要求が来たら残りを中断する。
                 // 出力中はOFFにせず、選択した位相へ同期し直す。

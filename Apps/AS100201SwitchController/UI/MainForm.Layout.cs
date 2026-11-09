@@ -167,9 +167,12 @@ internal sealed partial class MainForm : Form
         root.Controls.Add(statusPanel, 0, 5);
         root.Controls.Add(_dropPanel, 0, 6);
         root.Controls.Add(templateStatus, 0, 7);
-        root.RowCount = 9;
+        // 2 回押しの待ち時間・位相の入力欄(試用版、2026-11-09)。
+        root.RowCount = 10;
+        root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        root.Controls.Add(BuildSwitchSettingsPanel(), 0, 8);
         root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-        root.Controls.Add(_logTextBox, 0, 8);
+        root.Controls.Add(_logTextBox, 0, 9);
         Controls.Add(root);
     }
 
