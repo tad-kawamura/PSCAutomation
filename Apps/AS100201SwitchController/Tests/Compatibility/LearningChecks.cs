@@ -58,6 +58,7 @@ internal static class LearningChecks
         var operation = new As100201LedgerRow(time, As100201LedgerEventKind.Operation) { Operation = "ノズル P", Direction = "押し込む", Degree = "普通", Note = "完了の取消、直前の測定なし" };
         Check(operation.ToCsvLine() == "2026-11-09 13:05:07,操作,,,,ノズル P,押し込む,普通,,,完了の取消、直前の測定なし", "operation row");
         Check(new As100201LedgerRow(time, As100201LedgerEventKind.Done).KindText == "完了" && new As100201LedgerRow(time, As100201LedgerEventKind.Undo).KindText == "取消", "kind text");
+        Check(MainForm.SaveDirectoryForTemplate(@"C:\data\AS100-201\流量PC.xdt") == @"C:\data\AS100-201" && MainForm.LedgerFileName == "調整記録.csv", "save directory is not the template folder");
         Check(As100201LedgerRow.Quote("a,b") == "\"a,b\"" && As100201LedgerRow.Quote("say \"hi\"") == "\"say \"\"hi\"\"\"" && As100201LedgerRow.Quote("plain") == "plain" &&
             As100201LedgerRow.Quote("x\ny") == "\"x\ny\"", "CSV quoting");
         Check(measurement.ToFields().Length == As100201LedgerRow.Columns.Length, "field count differs from columns");

@@ -108,8 +108,8 @@ internal sealed partial class MainForm : Form
         if (!IsLearningMode || _panel is null) return;
         _panelValueLabel.Text = _panel.InputReady ? "タッチパネル　接続済み" : _panel.IsConnected ? "定期応答の確認中" : "接続待ち（自動再確認）";
         _panelValueLabel.ForeColor = _panel.InputReady ? Color.DarkGreen : Color.DarkRed;
-        _saveDirectoryLabel.Text = _learning is null ? "未設定（保存先の決め方は相談中）" : _learning.SaveDirectory + "　台帳：" + Path.GetFileName(_learning.LedgerLocation);
-        _learningStateLabel.Text = _learning?.StateText ?? "保存先が決まるまで記録できません";
+        _saveDirectoryLabel.Text = _learning is null ? "未設定（雛形をドロップすると、雛形と同じフォルダーになります）" : _learning.SaveDirectory + "　台帳：" + Path.GetFileName(_learning.LedgerLocation);
+        _learningStateLabel.Text = _learning?.StateText ?? "雛形をドロップすると記録できます";
         _learningStateLabel.ForeColor = _learning is { Blocked: false } ? Color.DarkGreen : Color.DarkRed;
         _retryButton.Enabled = _learning is { Blocked: true } && !_operationInProgress;
     }
@@ -174,8 +174,8 @@ internal sealed partial class MainForm : Form
         AppendLog($"タッチパネル {command.DisplayName} を受信");
         if (_learning is null)
         {
-            AppendLog("保存先が決まっていないため記録できません。");
-            _panel.TrySend(As100201PanelProtocol.Nak("保存先が未設定です"));
+            AppendLog("雛形が未登録のため記録できません（雛形と同じフォルダーに保存します）。");
+            _panel.TrySend(As100201PanelProtocol.Nak("雛形をドロップしてから押してください"));
             return;
         }
         try
@@ -295,18 +295,37 @@ internal sealed partial class MainForm : Form
             readyLedOn: _readyLedOn, out refusal);
     }
 
-    // 台帳のファイル名(仮。保存先と一緒に「いずれ決める」)。
+    // 台帳のファイル名。保存先は雛形と同じフォルダー(2026-11-09 人の決定)。
     public const string LedgerFileName = "調整記録.csv";
 
-    // 保存先が決まったら呼ぶ。台帳は保存先の中の 1 つの CSV、xdt も同じフォルダー。
-    private void CreateLearningSession(string directory)
+    // 雛形のあるフォルダーが保存先(台帳も xdt もそこに置く)。
+    public static string SaveDirectoryForTemplate(string templatePath) =>
+        Path.GetDirectoryName(Path.GetFullPath(templatePath)) ?? Path.GetPathRoot(templatePath) ?? templatePath;
+
+    // 雛形を読み込めたときに呼ぶ(2026-11-09 人の決定: 保存先は雛形と同じフォルダー)。
+    // 同じフォルダーの雛形なら記録の状態(個体の件数・取消の対象)を引き継ぐ。別のフォルダーなら新しい台帳に切り替える。
+    // 書けずに止まっている間は切り替えない(覚えている測定の行と xdt を失わないため)。
+    private void LearningTemplateLoaded(string templatePath)
     {
+        if (!IsLearningMode) return;
+        string directory = SaveDirectoryForTemplate(templatePath);
+        if (_learning is not null)
+        {
+            if (string.Equals(_learning.SaveDirectory, directory, StringComparison.OrdinalIgnoreCase)) return;
+            if (_learning.Blocked)
+            {
+                AppendLog($"保存できず止まっているため、保存先を {directory} に切り替えません。「再試行」で保存できてから雛形を登録し直してください。");
+                return;
+            }
+            _learning.Log -= AppendLog;
+            AppendLog("雛形のフォルダーが変わったため、保存先と台帳を切り替えます（個体の件数は 0 から）。");
+        }
         _learning = new As100201LearningSession(new As100201CsvLedger(Path.Combine(directory, LedgerFileName)), _logger.SaveXdt)
         {
             SaveDirectory = directory
         };
         _learning.Log += AppendLog;
-        AppendLog($"学習モードの保存先：{directory}（台帳 {LedgerFileName}、xdt は同じフォルダー）");
+        AppendLog($"学習モードの保存先：{directory}（雛形と同じフォルダー。台帳 {LedgerFileName}、xdt は yyyyMMdd_HHmmss_側.xdt）");
         UpdateControls();
     }
 }

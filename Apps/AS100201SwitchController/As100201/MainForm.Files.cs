@@ -27,6 +27,8 @@ internal sealed partial class MainForm : Form
             _templatePath = paths[0];
             _templateLoaded = true;
             _measurementState.ReadAfter = 0;
+            // 学習モード: 保存先は雛形と同じフォルダー(通常モードでは何もしない)。
+            LearningTemplateLoaded(paths[0]);
             RefreshLoggerState();
             RefreshReadyLed();
             CompletePreparationDisplay();

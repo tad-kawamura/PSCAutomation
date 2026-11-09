@@ -35,7 +35,7 @@ internal sealed class As100201LearningSession
         _fileExists = fileExists ?? File.Exists;
     }
 
-    // xdt の保存先フォルダー。台帳と同じフォルダー(台帳の置き場は呼び出し側が決めて ledger に渡す)。
+    // xdt の保存先フォルダー。雛形と同じフォルダー(2026-11-09 人の決定)。台帳も同じフォルダー(呼び出し側が ledger に渡す)。
     public string SaveDirectory { get; init; } = "";
     public string LedgerLocation => _ledger.Location;
 
@@ -55,8 +55,8 @@ internal sealed class As100201LearningSession
         ? $"保存できず停止中：{BlockReason}"
         : $"記録中：この個体の測定 {MeasurementCount} 回・操作 {OperationCount} 回" + (Completed ? "（完了済み）" : "");
 
-    // 仮のファイル名: yyyyMMdd_HHmmss_<側>.xdt(側は PC / CR、2 回押しは PC2 / CR2。側が無ければ日時だけ)。
-    // 同じ秒に 2 つできたら _2, _3 … を付ける。命名は「いずれ決める」(人が決めたらここを変える)。
+    // ファイル名: yyyyMMdd_HHmmss_<側>.xdt(側は PC / CR、2 回押しは PC2 / CR2。側が無ければ日時だけ)。
+    // 同じ秒に 2 つできたら _2, _3 … を付ける(2026-11-09 人の決定。台帳の行と 1 対 1)。
     public string BuildXdtPath(DateTime time, string sideCode)
     {
         string stem = time.ToString("yyyyMMdd_HHmmss", System.Globalization.CultureInfo.InvariantCulture) +
