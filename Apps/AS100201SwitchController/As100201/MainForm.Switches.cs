@@ -67,9 +67,9 @@ internal sealed partial class MainForm : Form
             return;
         }
         AppendLog($"スイッチ {pressed.DisplayName} を受信");
-        if (!_readyLedOn || !ConnectionsReady || _operationInProgress)
+        if (!CanExecuteSwitch(pressed, out string refusal))
         {
-            AppendLog("接続確認と雛形読み込みが完了するまで操作できません。");
+            AppendLog(refusal);
             return;
         }
 
@@ -98,8 +98,11 @@ internal sealed partial class MainForm : Form
             else if (name == "sw4")
             {
                 // 停止は状態取得失敗時にも送信できるようにする。
+                bool wasMeasuring = _measurementStarted;
                 _logger.Stop();
                 _measurementState.ReadAfter = 0;
+                // 学習モード: 測定中だったら、測定の行を書いてから状態を読む(停止に戻っていれば xdt も保存する)。
+                if (wasMeasuring) LearningMeasurementStopped(As100201LearningSession.StopBySwitch);
                 RefreshLoggerState();
                 AppendLog("WAVE LOGGERへ停止を要求しました。");
             }
@@ -147,6 +150,7 @@ internal sealed partial class MainForm : Form
                     As100201WaveformSettings.Continuous, phase, () => version != _waveformRequestVersion || !ConnectionsReady || _closing || IsDisposed || Disposing);
                 if (completed && !IsDisposed)
                 {
+                    _lastWaveform = (pressed, phase);
                     AppendLog($"WF1973 出力開始：{name}（位相 {phase}°）");
                     AppendLog($"処理時間：WF1973位相再開始 = {restartTimer.Elapsed.TotalMilliseconds:F1} ms");
                 }

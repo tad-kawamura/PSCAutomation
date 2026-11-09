@@ -190,6 +190,9 @@ internal sealed partial class MainForm : Form
                     (arduinoResult.Error is null ? "（成功）" : "（失敗）"));
                 if (arduinoResult.Error is not null)
                     failures.Insert(0, "Arduino: " + arduinoResult.Error.Message);
+                // 学習モードはタッチパネルも確認する(Arduino の後に順に。見つからなければ学習モードは動かない)。
+                if (await VerifyPanelAsync() is string panelFailure) failures.Add(panelFailure);
+                if (_closing) return "終了中";
                 totalTimer.Stop();
                 AppendLog($"処理時間：接続確認全体（並行実行） = {totalTimer.Elapsed.TotalSeconds:F3} 秒");
                 LogProcessStartupTime("接続確認終了まで", complete: true);

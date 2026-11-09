@@ -64,7 +64,7 @@ internal sealed partial class MainForm : Form
 
     private void RefreshReadyLed()
     {
-        bool ready = !_closing && _templateLoaded && ConnectionsReady && !_operationInProgress;
+        bool ready = !_closing && _templateLoaded && ConnectionsReady && !_operationInProgress && LearningReady;
         if (ready == _readyLedOn) return;
         try
         {

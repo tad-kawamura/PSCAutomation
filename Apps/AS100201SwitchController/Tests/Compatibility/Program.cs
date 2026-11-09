@@ -10,12 +10,12 @@ using System.Reflection;
 internal static class Program
 {
     private static int _passed;
-    private static void Check(bool ok, string message)
+    internal static void Check(bool ok, string message)
     {
         if (!ok) throw new Exception(message);
     }
 
-    private static void Pass(string message) { ++_passed; Console.WriteLine("PASS " + message); }
+    internal static void Pass(string message) { ++_passed; Console.WriteLine("PASS " + message); }
 
     [STAThread]
     private static void Main()
@@ -24,6 +24,8 @@ internal static class Program
         LoggerChecks();
         ProtocolAndLogChecks();
         DoublePressChecks().GetAwaiter().GetResult();
+        // 学習モード(2026-11-09 承認の追加仕様)。LearningChecks.cs の 6 グループ。
+        LearningChecks.Run().GetAwaiter().GetResult();
         Console.WriteLine($"All {_passed} compatibility groups passed. No device or LOGGER application was opened.");
     }
 

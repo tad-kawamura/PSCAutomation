@@ -34,5 +34,6 @@ internal sealed partial class MainForm : Form
         _startButton.Enabled = !_operationInProgress && _readyLedOn && ConnectionsReady && _measurementState.ReadyToStart;
         _deleteTemplateButton.Enabled = !_operationInProgress && !_waveformRestartInProgress && _templateLoaded;
         _getStateButton.Enabled = !_operationInProgress && !_waveformRestartInProgress && initialized;
+        UpdateLearningControls();
     }
 }

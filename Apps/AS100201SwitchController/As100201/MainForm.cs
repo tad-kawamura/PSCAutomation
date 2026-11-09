@@ -51,8 +51,10 @@ internal sealed partial class MainForm : Form
     private readonly As100201SwitchSettingsStore _switchSettingsStore = As100201SwitchSettingsStore.CreateDefault();
     private As100201SwitchSettings _switchSettings;
 
-    public MainForm()
+    // mode: 起動時に選んだモード(通常 / 学習)。通常モードでは学習モードの部品を作らず、今までと同じ動き。
+    public MainForm(As100201StartupMode mode)
     {
+        _mode = mode;
         _nr500Connection = new Nr500Connection(_logger);
         _switchSettings = _switchSettingsStore.Load(out string? settingsMessage);
         _arduino.SetDoubleWait(_switchSettings.DoubleWaitMilliseconds);
@@ -64,15 +66,17 @@ internal sealed partial class MainForm : Form
         StartPcDelayObservation();
         _readyHeartbeat.Start();
 
-        Text = As100201Application.WindowTitle;
+        Text = As100201Application.GetWindowTitle(mode);
         ClientSize = new Size(850, 820);
         MinimumSize = new Size(680, 680);
         StartPosition = FormStartPosition.CenterScreen;
 
         BuildLayout();
+        BuildLearningUi();
         ShowSwitchSettings();
         ConfigureLoggerSelection();
         if (settingsMessage is not null) AppendLog(settingsMessage);
+        InitializeLearningMode();
         UpdateControls();
     }
 
@@ -95,6 +99,7 @@ internal sealed partial class MainForm : Form
         _readyHeartbeat.Dispose();
         try { if (_arduino.IsConnected) _arduino.SetReadyLed(false); } catch { }
         _arduino.Dispose();
+        DisposeLearningMode();
         _wf1973?.Dispose();
         _logger.Release();
 

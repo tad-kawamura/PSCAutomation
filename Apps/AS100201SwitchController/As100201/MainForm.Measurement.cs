@@ -7,8 +7,11 @@ internal sealed partial class MainForm : Form
 {
     private void RefreshLoggerState()
     {
+        bool wasMeasuring = _measurementStarted;
         if (_measurementState.Refresh(_logger.GetState, AppendLog))
             AppendLog("WAVE LOGGER 測定終了：次の測定を開始できます。");
+        // 学習モード: 測定中だった LOGGER が停止(エラー停止を含む)に戻ったら xdt を保存する。通常モードでは何もしない。
+        if (wasMeasuring && _measurementState.ReadyToStart) LearningMeasurementCompleted();
     }
 
     private void RefreshTemplateState()
