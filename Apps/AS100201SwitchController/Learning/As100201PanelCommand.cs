@@ -20,7 +20,7 @@ internal enum As100201Operation
     SpacerR
 }
 
-// タッチパネル(ESP32-S3)から届く確定済みの 1 行(SPEC_調整操作の記録.md「タッチパネルとのやり取り」)。
+// タッチパネル(M5Stack Tab5)から届く確定済みの 1 行(SPEC_調整操作の記録.md「タッチパネルとのやり取り」)。
 // 2 画面目の選択と取消の確認はパネルの中で完結し、PC には確定した 1 行だけが届く。
 //   ACT:MAG / ACT:DEMAG:FULL|TAP / ACT:NOZZLE:P|R:IN|OUT:1|2|3 / ACT:SPACER:P|R:UP|DOWN / DONE / UNDO
 // 台帳に書く言葉(操作・方向・程度)はここで決める。スペーサーの厚さは「いずれ決める」なので、まだ受け取らない。

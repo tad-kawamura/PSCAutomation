@@ -2,7 +2,7 @@ using System.Diagnostics;
 
 namespace PSCAutomation.Apps.AS100201SwitchController;
 
-// タッチパネル(ESP32-S3)との取り決め。Arduino の As100201ArduinoProtocol と同じ作り(SPEC_調整操作の記録.md「異常時」):
+// タッチパネル(M5Stack Tab5)との取り決め。Arduino の As100201ArduinoProtocol と同じ作り(SPEC_調整操作の記録.md「異常時」):
 // 250ms ごとの定期応答 DIAG_FRAME を見張り、1 秒止まれば操作禁止、3 秒止まる・切断で 2 秒おきに再接続、
 // 復旧後 1 秒は操作を捨てる。確認文字列は Arduino とぶつからない専用のもの(COM ポートを総当たりで探すため)。
 // 通信部品にはボタンの意味を持ち込まず、ここで解釈する。通信は IAs100201SerialLink 経由なので模擬に差し替えられる。

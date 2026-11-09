@@ -52,7 +52,7 @@ internal sealed class StartupModeDialog : Form
         {
             AutoSize = true,
             ForeColor = SystemColors.GrayText,
-            Text = "学習モードはタッチパネル（ESP32-S3、USB）がつながっていないと動きません。\r\n" +
+            Text = "学習モードはタッチパネル（M5Stack Tab5、USB）がつながっていないと動きません。\r\n" +
                 "途中でモードを変えるにはアプリを起動し直してください。",
             Margin = new Padding(4, 8, 4, 12)
         });
