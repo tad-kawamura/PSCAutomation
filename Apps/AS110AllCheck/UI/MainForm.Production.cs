@@ -676,7 +676,7 @@ internal sealed partial class MainForm : Form
             _leakRunning=true;_leakCancel=new CancellationTokenSource();UpdateControls();
             try
             {
-                ShowLoggerInFront("漏れチェック");
+                ShowLoggerInFront("漏れチェック",()=>_leakRunning);
                 try
                 {
                     await LeakCheckSequence.RunAsync(

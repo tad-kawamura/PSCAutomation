@@ -134,7 +134,7 @@ internal sealed partial class MainForm : Form
             long triggerSentAt = Stopwatch.GetTimestamp();
 
             // 出力開始を遅らせず、各回のデータ調整では測定中のLOGGERへ前面を渡す。
-            if (_flow.Mode != TestMode.Motion) ShowLoggerInFront("データ調整開始");
+            if (_flow.Mode != TestMode.Motion) ShowLoggerInFront("データ調整開始", () => _flow.Measuring);
 
             AppendLog("WAVE LOGGER 測定開始");
             AppendLog($"{GetGeneratorModelName()} トリガー送信：{CurrentBurstSettings.Summary}");

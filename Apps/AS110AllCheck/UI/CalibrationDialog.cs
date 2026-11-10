@@ -21,7 +21,7 @@ internal sealed class CalibrationDialog : Form
         StartPosition = FormStartPosition.CenterParent;
         MaximizeBox = MinimizeBox = false;
         ShowInTaskbar = false;
-        // 校正までのMainFormは最前面に固定されている。最前面でないモーダルはその背後に隠れ、
+        // LOGGERの背後に隠れないよう最前面にする。MainFormを最前面に固定していたころ(2026-11-11 まで)は、最前面でないモーダルはその背後に隠れ、
         // 画面が出ないまま操作を受け付けなくなる（保護解除・転送設定と同じ対策）。
         TopMost = true;
         AutoSize = true;

@@ -187,6 +187,11 @@ internal static class Program
         flowType.GetMethod("BeginMeasurement")!.Invoke(flow,[DateTime.Now]);
         flowType.GetMethod("CaptureSucceeded")!.Invoke(flow,null);
         flowType.GetMethod("TransferSucceeded")!.Invoke(flow,null);
+        // 準備画面を前に出しても最前面には固定しない(2026-11-11、データ調整でアプリの画面がLOGGERより前に出たため固定をやめた)。
+        _=form.Handle;
+        Call("KeepPreparationInFront");
+        if(form.TopMost)throw new Exception("Preparation screen must not stay topmost");
+        Console.WriteLine("PASS preparation screen is raised without staying topmost");
         if (!args.Contains("--no-dialogs")) JudgmentNoticeTests.Run(form, type, flow, flowType, assembly);
         if (args.Contains("--with-excel")) ExcelJudgmentFocusTests.Run(form, type);
         if (args.Contains("--with-excel")) ExcelPreparationTests.Run(assembly);
