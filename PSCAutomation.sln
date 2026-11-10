@@ -73,6 +73,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SaveAvailability", "Apps\AS
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ExcelHeaderTests", "Apps\AS110AllCheck\Tests\ExcelHeader\ExcelHeaderTests.csproj", "{DD426244-FAC3-41CD-83AE-542679330452}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "WaveLogger.LiveReadCheck", "Wrappers\Tests\WaveLogger.LiveReadCheck\WaveLogger.LiveReadCheck.csproj", "{0B686FFE-DEA6-486A-B414-D4EB50DBD913}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -407,6 +409,18 @@ Global
 		{DD426244-FAC3-41CD-83AE-542679330452}.Release|x64.Build.0 = Release|Any CPU
 		{DD426244-FAC3-41CD-83AE-542679330452}.Release|x86.ActiveCfg = Release|Any CPU
 		{DD426244-FAC3-41CD-83AE-542679330452}.Release|x86.Build.0 = Release|Any CPU
+		{0B686FFE-DEA6-486A-B414-D4EB50DBD913}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{0B686FFE-DEA6-486A-B414-D4EB50DBD913}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{0B686FFE-DEA6-486A-B414-D4EB50DBD913}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{0B686FFE-DEA6-486A-B414-D4EB50DBD913}.Debug|x64.Build.0 = Debug|Any CPU
+		{0B686FFE-DEA6-486A-B414-D4EB50DBD913}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{0B686FFE-DEA6-486A-B414-D4EB50DBD913}.Debug|x86.Build.0 = Debug|Any CPU
+		{0B686FFE-DEA6-486A-B414-D4EB50DBD913}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{0B686FFE-DEA6-486A-B414-D4EB50DBD913}.Release|Any CPU.Build.0 = Release|Any CPU
+		{0B686FFE-DEA6-486A-B414-D4EB50DBD913}.Release|x64.ActiveCfg = Release|Any CPU
+		{0B686FFE-DEA6-486A-B414-D4EB50DBD913}.Release|x64.Build.0 = Release|Any CPU
+		{0B686FFE-DEA6-486A-B414-D4EB50DBD913}.Release|x86.ActiveCfg = Release|Any CPU
+		{0B686FFE-DEA6-486A-B414-D4EB50DBD913}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -444,5 +458,6 @@ Global
 		{2CCDCFDD-EEA1-4B13-B070-2A27EBA0B8EE} = {CB58B39D-D091-6119-8A60-766CE2AF0050}
 		{379398CE-F3D8-4046-939B-E5E7D9445D17} = {CB58B39D-D091-6119-8A60-766CE2AF0050}
 		{DD426244-FAC3-41CD-83AE-542679330452} = {CB58B39D-D091-6119-8A60-766CE2AF0050}
+		{0B686FFE-DEA6-486A-B414-D4EB50DBD913} = {4F39B701-62D3-1773-C493-475A18ED51F2}
 	EndGlobalSection
 EndGlobal
