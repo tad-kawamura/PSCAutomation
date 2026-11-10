@@ -13,7 +13,7 @@ Arduino・VISA・Excel・検査画面・保存先の設定には依存しない�
 | `WaveLoggerSession.Shutdown.cs` | × 検知、停止・Quit・COM 解放、対象プロセス終了確認 |
 | `WaveLoggerSession.Files.cs` | ファイル開閉、データ数取得、既存の LOGGER 形式・CSV 保存 API |
 | `WaveLoggerSession.Reference.cs` | 参照読み込み前の停止待ち、版別の読み込み、横軸拡大 |
-| `WaveLoggerSession.Window.cs` | LOGGER 画面の復元・前面表示 |
+| `WaveLoggerSession.Window.cs` | LOGGER 画面の復元・前面表示(`BringToFront`)、画面のハンドル取得(`GetMainWindowHandle`。確実に前に出すときは `Common` の `WindowActivation.TryActivate` に渡す) |
 | `WaveLoggerSession.Prestart.cs` | LOGGER 本体ソフトの事前起動(別 STA スレッドで COM 生成し、UI スレッドへ参照を渡す) |
 | `LoggerProcessLifetime.cs` | 制御対象 PID の識別、条件付き終了、別プロセスの保護 |
 | `LoggerReferenceLoader.cs` / `LoggerFileDrop.cs` / `LoggerHorizontalZoom.cs` | 内部の Windows 画面操作。呼び出し元から直接使用しない |

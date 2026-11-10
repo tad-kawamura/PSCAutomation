@@ -68,7 +68,9 @@ internal sealed partial class MainForm : Form
         TopMost = false;
         try
         {
-            bool activated = _logger.BringToFront();
+            // M5Stackのボタンから始めたときや、前回のExcelが前面のときは、アプリが直前の操作を受けていないため
+            // 単純な前面要求はWindowsに拒否されやすい。Excelと同じく重なり順の変更と入力先の切替を両方行う。
+            bool activated = WindowActivation.TryActivate(_logger.GetMainWindowHandle());
             AppendLog(activated
                 ? $"{operation}：LOGGERを最前面に表示しました。"
                 : "LOGGER前面表示：Windowsが切り替えを許可しませんでした。LOGGER画面をクリックしてください。");

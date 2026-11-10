@@ -676,9 +676,7 @@ internal sealed partial class MainForm : Form
             _leakRunning=true;_leakCancel=new CancellationTokenSource();UpdateControls();
             try
             {
-                TopMost=false;
-                try { AppendLog(_logger.BringToFront()?"漏れチェック：LOGGERを最前面に表示しました。":"漏れチェック：Windowsが前面切替を許可しませんでした。LOGGER画面をクリックしてください。"); }
-                catch(Exception ex){AppendLog("漏れチェックのLOGGER前面表示："+ex.Message);}
+                ShowLoggerInFront("漏れチェック");
                 try
                 {
                     await LeakCheckSequence.RunAsync(
