@@ -201,7 +201,9 @@ internal sealed partial class MainForm : Form
                     throw new InvalidOperationException(string.Join(Environment.NewLine, failures));
 
                 KeepPreparationInFront();
-                return $"正常終了 / 本体={_detectedHardwareName} / 雛形待ち";
+                // 学習モードは決まった雛形を自動で読み込む(2026-11-10)。通常モードは今までどおりドロップを待つ。
+                string template = IsLearningMode ? LoadLearningTemplate() : "雛形待ち";
+                return $"正常終了 / 本体={_detectedHardwareName} / {template}";
             });
         }
         finally

@@ -14,6 +14,7 @@ internal sealed class As100201LearningSession
     private readonly Func<string, long> _saveXdt;
     private readonly Func<DateTime> _clock;
     private readonly Func<string, bool> _fileExists;
+    private readonly Action<string> _createDirectory;
     private readonly List<PendingWrite> _pending = [];
     private string? _armedXdtPath;
     private UndoTarget? _undoable;
@@ -27,15 +28,17 @@ internal sealed class As100201LearningSession
     public const string StopByLogger = "LOGGER の停止";
 
     public As100201LearningSession(IAs100201LearningLedger ledger, Func<string, long> saveXdt,
-        Func<DateTime>? clock = null, Func<string, bool>? fileExists = null)
+        Func<DateTime>? clock = null, Func<string, bool>? fileExists = null, Action<string>? createDirectory = null)
     {
         _ledger = ledger;
         _saveXdt = saveXdt;
         _clock = clock ?? (() => DateTime.Now);
         _fileExists = fileExists ?? File.Exists;
+        _createDirectory = createDirectory ?? (path => Directory.CreateDirectory(path));
     }
 
-    // xdt の保存先フォルダー。雛形と同じフォルダー(2026-11-09 人の決定)。台帳も同じフォルダー(呼び出し側が ledger に渡す)。
+    // 保存先フォルダー。exe の隣の「学習データ」(2026-11-10 人の決定。それまでは雛形と同じフォルダー)。
+    // 台帳はこの直下(呼び出し側が ledger に渡す)、xdt は日付フォルダー SaveDirectory\yyyyMMdd\ に置く。無ければ作る。
     public string SaveDirectory { get; init; } = "";
     public string LedgerLocation => _ledger.Location;
 
@@ -57,14 +60,20 @@ internal sealed class As100201LearningSession
 
     // ファイル名: yyyyMMdd_HHmmss_<側>.xdt(側は PC / CR、2 回押しは PC2 / CR2。側が無ければ日時だけ)。
     // 同じ秒に 2 つできたら _2, _3 … を付ける(2026-11-09 人の決定。台帳の行と 1 対 1)。
+    // 置き場は日付フォルダー SaveDirectory\yyyyMMdd\(2026-11-10 人の決定。日付は止めた時刻の日付)。
     public string BuildXdtPath(DateTime time, string sideCode)
     {
-        string stem = time.ToString("yyyyMMdd_HHmmss", System.Globalization.CultureInfo.InvariantCulture) +
-            (sideCode.Length == 0 ? "" : "_" + sideCode);
-        string path = Path.Combine(SaveDirectory, stem + ".xdt");
-        for (int n = 2; _fileExists(path); n++) path = Path.Combine(SaveDirectory, $"{stem}_{n}.xdt");
+        var culture = System.Globalization.CultureInfo.InvariantCulture;
+        string directory = Path.Combine(SaveDirectory, time.ToString("yyyyMMdd", culture));
+        string stem = time.ToString("yyyyMMdd_HHmmss", culture) + (sideCode.Length == 0 ? "" : "_" + sideCode);
+        string path = Path.Combine(directory, stem + ".xdt");
+        for (int n = 2; _fileExists(path); n++) path = Path.Combine(directory, $"{stem}_{n}.xdt");
         return path;
     }
+
+    // 台帳の「ファイル」列: 台帳のフォルダーからの相対パス(日付フォルダー\ファイル名)。
+    public static string LedgerFileText(string xdtPath) =>
+        Path.Combine(Path.GetFileName(Path.GetDirectoryName(xdtPath)) ?? "", Path.GetFileName(xdtPath));
 
     // LOGGER を止めた(sw4 か操作ボタン)。測定の行を書き、xdt の保存を停止待ちにする。
     public void MeasurementStopped(string side, string sideCode, string phase, string trigger)
@@ -108,17 +117,18 @@ internal sealed class As100201LearningSession
             Side = side,
             Phase = phase,
             StopTrigger = trigger,
-            File = Path.GetFileName(path),
+            File = LedgerFileText(path),
             Note = side.Length == 0 ? "位相の出し直しなし" : ""
         };
     }
 
     private void SaveWaveform(string path)
     {
+        if (Path.GetDirectoryName(path) is { Length: > 0 } directory) _createDirectory(directory);
         long result = _saveXdt(path);
         if (result != 0)
             throw new InvalidOperationException($"WAVE LOGGER が xdt を保存できませんでした（戻り値 {result}）：{path}");
-        Log?.Invoke("xdt を保存：" + Path.GetFileName(path));
+        Log?.Invoke("xdt を保存：" + LedgerFileText(path));
     }
 
     // パネルの行を 1 つ処理し、パネルへ返す行(ACK / NAK)を返す。
@@ -210,7 +220,7 @@ internal sealed class As100201LearningSession
     {
         try
         {
-            _ledger.Append(row);
+            AppendRow(row);
             nak = "";
             return true;
         }
@@ -224,7 +234,19 @@ internal sealed class As100201LearningSession
 
     // 測定の行。止まっていれば順番を守るため後ろに並べる。書けなければ覚えておいて止める。
     private void WriteOrQueue(string description, As100201LedgerRow row) =>
-        RunOrQueue(description, () => _ledger.Append(row));
+        RunOrQueue(description, () => AppendRow(row));
+
+    // 台帳への追記。保存先フォルダーが無ければ先に作る(消されていても次の行で作り直す)。
+    private void AppendRow(As100201LedgerRow row)
+    {
+        EnsureSaveDirectory();
+        _ledger.Append(row);
+    }
+
+    private void EnsureSaveDirectory()
+    {
+        if (SaveDirectory.Length > 0) _createDirectory(SaveDirectory);
+    }
 
     private void RunOrQueue(string description, Action write)
     {
@@ -254,6 +276,7 @@ internal sealed class As100201LearningSession
                 _pending.RemoveAt(0);
                 Log?.Invoke($"再試行：{item.Description}を書きました。");
             }
+            EnsureSaveDirectory();
             _ledger.EnsureWritable();
         }
         catch (Exception ex) when (IsWriteFailure(ex))

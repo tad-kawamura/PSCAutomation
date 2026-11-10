@@ -126,7 +126,10 @@ internal static class LearningChecks
         var operation = new As100201LedgerRow(time, As100201LedgerEventKind.Operation) { Operation = "ノズル P", Direction = "押し込む", Degree = "普通", Note = "完了の取消、直前の測定なし" };
         Check(operation.ToCsvLine() == "2026-11-09 13:05:07,操作,,,,ノズル P,押し込む,普通,,,完了の取消、直前の測定なし", "operation row");
         Check(new As100201LedgerRow(time, As100201LedgerEventKind.Done).KindText == "完了" && new As100201LedgerRow(time, As100201LedgerEventKind.Undo).KindText == "取消", "kind text");
-        Check(MainForm.SaveDirectoryForTemplate(@"C:\data\AS100-201\流量PC.xdt") == @"C:\data\AS100-201" && MainForm.LedgerFileName == "調整記録.csv", "save directory is not the template folder");
+        // 保存先は exe の隣の「学習データ」(2026-11-10。雛形のフォルダーではない)。台帳の「ファイル」列は日付フォルダー付き。
+        Check(MainForm.LearningDataDirectory(@"C:\apps\AS100201") == @"C:\apps\AS100201\学習データ" && MainForm.LedgerFileName == "調整記録.csv" &&
+            MainForm.TemplateFolderName == "雛形", "save directory is not next to the exe");
+        Check(As100201LearningSession.LedgerFileText(@"C:\apps\学習データ\20261110\20261110_133028_PC.xdt") == @"20261110\20261110_133028_PC.xdt", "ledger file column without date folder");
         Check(As100201LedgerRow.Quote("a,b") == "\"a,b\"" && As100201LedgerRow.Quote("say \"hi\"") == "\"say \"\"hi\"\"\"" && As100201LedgerRow.Quote("plain") == "plain" &&
             As100201LedgerRow.Quote("x\ny") == "\"x\ny\"", "CSV quoting");
         Check(measurement.ToFields().Length == As100201LedgerRow.Columns.Length, "field count differs from columns");
@@ -161,9 +164,26 @@ internal static class LearningChecks
             catch (DirectoryNotFoundException) { }
             try { missing.Append(operation); throw new Exception("append to missing directory succeeded"); }
             catch (IOException) { }
+
+            // 記録の状態は、保存先フォルダーが無ければ作ってから台帳に書く(2026-11-10。exe の隣の「学習データ」を最初の 1 行で作る)。
+            string data = Path.Combine(root, "学習データ");
+            var real = new As100201LearningSession(new As100201CsvLedger(Path.Combine(data, "調整記録.csv")), _ => 0) { SaveDirectory = data };
+            Check(real.HandleCommand(As100201PanelCommand.Parse("ACT:MAG")) == "ACK:ACT:MAG" && File.Exists(Path.Combine(data, "調整記録.csv")) && !real.Blocked, "save folder not created on first row");
+
+            // 自動で読み込む雛形: 「雛形」フォルダーの xdt がちょうど 1 つのときだけ。
+            string templates = Path.Combine(root, "雛形");
+            Check(MainForm.FindLearningTemplate(templates, out string reason) is null && reason.Contains("雛形フォルダーがありません"), "missing template folder");
+            Directory.CreateDirectory(templates);
+            File.WriteAllText(Path.Combine(templates, "メモ.txt"), "");
+            Check(MainForm.FindLearningTemplate(templates, out reason) is null && reason.Contains("xdt がありません"), "no template");
+            string first = Path.Combine(templates, "雛形_AS100_201流量調整用_650kPa_0_02Hz_10Vpp.xdt");
+            File.WriteAllText(first, "");
+            Check(MainForm.FindLearningTemplate(templates, out reason) == first && reason == "", "single template not found");
+            File.WriteAllText(Path.Combine(templates, "別の雛形.xdt"), "");
+            Check(MainForm.FindLearningTemplate(templates, out reason) is null && reason.Contains("2 つ"), "two templates accepted");
         }
         finally { try { Directory.Delete(root, true); } catch (IOException) { } }
-        Pass("ledger rows: 11 columns, RFC4180 quoting, CSV file with BOM + header once, append-only, locked/missing folder -> exception");
+        Pass("ledger rows: 11 columns, RFC4180 quoting, CSV file with BOM + header once, append-only, locked/missing folder -> exception; save folder next to exe, created on first row; template folder needs exactly one xdt");
     }
 
     private sealed class FakeLedger : IAs100201LearningLedger
@@ -175,7 +195,7 @@ internal static class LearningChecks
         public void EnsureWritable() { if (Fail) throw new IOException("fake ledger failure"); }
     }
 
-    private static (As100201LearningSession Session, FakeLedger Ledger, List<string> Saved, List<string> Logs, Func<long> SaveResult) NewSession(DateTime start)
+    private static (As100201LearningSession Session, FakeLedger Ledger, List<string> Saved, List<string> Logs, Func<long> SaveResult) NewSession(DateTime start, List<string>? created = null)
     {
         var ledger = new FakeLedger();
         var saved = new List<string>();
@@ -183,7 +203,7 @@ internal static class LearningChecks
         long saveResult = 0;
         DateTime now = start;
         var session = new As100201LearningSession(ledger, path => { if (saveResult != 0) return saveResult; saved.Add(path); return 0; },
-            () => now = now.AddSeconds(1), path => saved.Contains(path))
+            () => now = now.AddSeconds(1), path => saved.Contains(path), path => created?.Add(path))
         { SaveDirectory = @"C:\fake" };
         session.Log += logs.Add;
         return (session, ledger, saved, logs, () => saveResult);
@@ -192,7 +212,8 @@ internal static class LearningChecks
     // 3. 完了・取消・完了の取消(1 個体の流れ)
     private static void SessionFlowChecks()
     {
-        var (s, ledger, saved, logs, _) = NewSession(new DateTime(2026, 11, 9, 9, 0, 0));
+        var created = new List<string>();
+        var (s, ledger, saved, logs, _) = NewSession(new DateTime(2026, 11, 9, 9, 0, 0), created);
         var mag = As100201PanelCommand.Parse("ACT:MAG");
         var nozzle = As100201PanelCommand.Parse("ACT:NOZZLE:P:IN:2");
         var done = As100201PanelCommand.Parse("DONE");
@@ -201,18 +222,20 @@ internal static class LearningChecks
         // 起動直後に操作: 「直前の測定なし」。測定: sw4 で止めて行、停止に戻ってから xdt。
         Check(s.HandleCommand(mag) == "ACK:ACT:MAG" && ledger.Rows[^1].Kind == As100201LedgerEventKind.Operation && ledger.Rows[^1].Note == "直前の測定なし", "first operation without measurement");
         s.MeasurementStopped("PC", "PC", "0", As100201LearningSession.StopBySwitch);
-        Check(ledger.Rows[^1] is { Kind: As100201LedgerEventKind.Measurement, Side: "PC", Phase: "0", StopTrigger: "sw4", File: "20261109_090002_PC.xdt", Note: "" } && s.HasArmedWaveform && saved.Count == 0,
+        Check(ledger.Rows[^1] is { Kind: As100201LedgerEventKind.Measurement, Side: "PC", Phase: "0", StopTrigger: "sw4", File: @"20261109\20261109_090002_PC.xdt", Note: "" } && s.HasArmedWaveform && saved.Count == 0,
             "measurement row at stop, xdt not yet saved");
         s.MeasurementCompleted("PC", "PC", "0");
-        Check(!s.HasArmedWaveform && saved.SequenceEqual(new[] { @"C:\fake\20261109_090002_PC.xdt" }) && ledger.Rows.Count == 2, "xdt saved at completion, no extra row");
+        Check(!s.HasArmedWaveform && saved.SequenceEqual(new[] { @"C:\fake\20261109\20261109_090002_PC.xdt" }) && ledger.Rows.Count == 2, "xdt saved at completion, no extra row");
+        // 台帳の前に保存先を、xdt の前に日付フォルダーを作る(2026-11-10)。
+        Check(created.Contains(@"C:\fake") && created[^1] == @"C:\fake\20261109", "save folder / date folder not created before writing");
         // 操作 → 測定(操作ボタンで止めた) → 操作 → 測定(LOGGER が自動で止まった: 行と xdt を一緒に)
         Check(s.HandleCommand(nozzle) == "ACK:ACT:NOZZLE:P:IN:2" && ledger.Rows[^1] is { Operation: "ノズル P", Direction: "押し込む", Degree: "普通", Note: "" }, "operation after measurement");
         s.MeasurementStopped("CR（2回押し）", "CR2", "250", As100201LearningSession.StopByPanel);
         s.MeasurementCompleted("CR（2回押し）", "CR2", "250");
-        Check(ledger.Rows[^1] is { Kind: As100201LedgerEventKind.Measurement, Side: "CR（2回押し）", Phase: "250", StopTrigger: "操作ボタン", File: "20261109_090004_CR2.xdt" }, "measurement stopped by panel");
+        Check(ledger.Rows[^1] is { Kind: As100201LedgerEventKind.Measurement, Side: "CR（2回押し）", Phase: "250", StopTrigger: "操作ボタン", File: @"20261109\20261109_090004_CR2.xdt" }, "measurement stopped by panel");
         Check(s.HandleCommand(As100201PanelCommand.Parse("ACT:DEMAG:TAP")) == "ACK:ACT:DEMAG:TAP", "demag");
         s.MeasurementCompleted("CR", "CR", "140");
-        Check(ledger.Rows[^1] is { Kind: As100201LedgerEventKind.Measurement, StopTrigger: "LOGGER の停止", File: "20261109_090006_CR.xdt" } && saved[^1].EndsWith("20261109_090006_CR.xdt"), "auto-stopped measurement: row and xdt together");
+        Check(ledger.Rows[^1] is { Kind: As100201LedgerEventKind.Measurement, StopTrigger: "LOGGER の停止", File: @"20261109\20261109_090006_CR.xdt" } && saved[^1].EndsWith("20261109_090006_CR.xdt"), "auto-stopped measurement: row and xdt together");
         Check(s.MeasurementCount == 3 && s.OperationCount == 3 && !s.Completed, "counts");
 
         // 完了: 件数を備考に。2 回目は何もしない(NAK、行なし)。
@@ -237,10 +260,11 @@ internal static class LearningChecks
         // 完了 → 測定: 新しい個体(件数を 0 から)。
         Check(s.HandleCommand(done) == "ACK:DONE", "done 2");
         s.MeasurementStopped("", "", "", As100201LearningSession.StopBySwitch);
-        Check(ledger.Rows[^1] is { Side: "", Phase: "", Note: "位相の出し直しなし", File: "20261109_090015.xdt" } && s.MeasurementCount == 1 && s.OperationCount == 0 && !s.Completed, "new individual after done");
-        // 同じ秒に 2 つ目の xdt は _2。
+        Check(ledger.Rows[^1] is { Side: "", Phase: "", Note: "位相の出し直しなし", File: @"20261109\20261109_090015.xdt" } && s.MeasurementCount == 1 && s.OperationCount == 0 && !s.Completed, "new individual after done");
+        // 同じ秒に 2 つ目の xdt は _2。日付フォルダーは止めた時刻の日付(日をまたいだら次の日のフォルダー)。
         s.MeasurementCompleted("", "", "");
-        Check(s.BuildXdtPath(new DateTime(2026, 11, 9, 9, 0, 15), "") == @"C:\fake\20261109_090015_2.xdt", "duplicate name suffix");
+        Check(s.BuildXdtPath(new DateTime(2026, 11, 9, 9, 0, 15), "") == @"C:\fake\20261109\20261109_090015_2.xdt", "duplicate name suffix");
+        Check(s.BuildXdtPath(new DateTime(2026, 11, 10, 0, 0, 1), "PC") == @"C:\fake\20261110\20261110_000001_PC.xdt", "date folder after midnight");
         Check(ledger.Rows.All(r => r.KindText is "測定" or "操作" or "完了" or "取消") && !s.Blocked, "unexpected kinds or blocked");
         Pass("learning flow: first-op note, row at stop + xdt at completion, panel/auto stop triggers, done counts, double done, done-cancel note, single undo with state restore, new individual");
     }
@@ -253,7 +277,9 @@ internal static class LearningChecks
         var logs = new List<string>();
         long saveResult = 0;
         DateTime now = new(2026, 11, 9, 10, 0, 0);
-        var s = new As100201LearningSession(ledger, path => { if (saveResult != 0) return saveResult; saved.Add(path); return 0; }, () => now = now.AddSeconds(1))
+        bool folderFails = false;
+        var s = new As100201LearningSession(ledger, path => { if (saveResult != 0) return saveResult; saved.Add(path); return 0; }, () => now = now.AddSeconds(1),
+            createDirectory: _ => { if (folderFails) throw new UnauthorizedAccessException("fake folder failure"); })
         { SaveDirectory = @"C:\fake" };
         s.Log += logs.Add;
         var mag = As100201PanelCommand.Parse("ACT:MAG");
@@ -271,8 +297,8 @@ internal static class LearningChecks
         Check(!s.Retry() && s.Blocked && s.PendingCount == 2, "retry without fix");
         // 直して再試行: 待っていた行と xdt を順に書いて再開。
         ledger.Fail = false;
-        Check(s.Retry() && !s.Blocked && s.PendingCount == 0 && ledger.Rows.Count == 1 && ledger.Rows[0] is { Kind: As100201LedgerEventKind.Measurement, File: "20261109_100002_PC.xdt" } &&
-            saved.SequenceEqual(new[] { @"C:\fake\20261109_100002_PC.xdt" }), "retry writes pending in order");
+        Check(s.Retry() && !s.Blocked && s.PendingCount == 0 && ledger.Rows.Count == 1 && ledger.Rows[0] is { Kind: As100201LedgerEventKind.Measurement, File: @"20261109\20261109_100002_PC.xdt" } &&
+            saved.SequenceEqual(new[] { @"C:\fake\20261109\20261109_100002_PC.xdt" }), "retry writes pending in order");
         Check(s.HandleCommand(mag) == "ACK:ACT:MAG" && ledger.Rows[^1].Note == "", "resumed after retry");
 
         // xdt が保存できない(LOGGER の戻り値が 0 以外): 行は書けていて、xdt だけ待つ。再試行で SaveXdt し直す。
@@ -293,13 +319,22 @@ internal static class LearningChecks
         ledger.Fail = false;
         int rows = ledger.Rows.Count;
         Check(s.Retry() && ledger.Rows.Count == rows + 1 && saved.Count == 3 && saved[^1].EndsWith(ledger.Rows[^1].File), "row then xdt on retry");
+        // 保存先・日付フォルダーを作れない(2026-11-10): 台帳の行も xdt も書かずに止め、作れるようになったら再試行で書く。
+        folderFails = true;
+        rows = ledger.Rows.Count;
+        Check(s.HandleCommand(mag).StartsWith("NAK:台帳に書けません") && s.Blocked && s.BlockReason!.Contains("fake folder failure") && ledger.Rows.Count == rows, "folder failure did not block");
+        s.MeasurementStopped("PC", "PC", "0", As100201LearningSession.StopBySwitch);
+        s.MeasurementCompleted("PC", "PC", "0");
+        Check(!s.Retry() && s.PendingCount == 2 && saved.Count == 3, "retry succeeded while folder cannot be created");
+        folderFails = false;
+        Check(s.Retry() && !s.Blocked && ledger.Rows.Count == rows + 1 && saved.Count == 4, "retry after folder fixed");
         // 例外の種類: COM 例外も止める対象。引数の誤りは上へ出す。
-        var throwing = new As100201LearningSession(ledger, _ => throw new System.Runtime.InteropServices.COMException("fake COM"), () => now)
+        var throwing = new As100201LearningSession(ledger, _ => throw new System.Runtime.InteropServices.COMException("fake COM"), () => now, createDirectory: _ => { })
         { SaveDirectory = @"C:\fake" };
         throwing.MeasurementCompleted("PC", "PC", "0");
         Check(throwing.Blocked && throwing.BlockReason!.Contains("fake COM"), "COM exception blocks");
         Check(logs.Any(l => l.Contains("再試行") && l.Contains("再開")), "resume log missing");
-        Pass("write failures: operation NAK + block, measurement rows/xdt queued in order, retry fails until fixed, retry replays row then xdt, COM failures block");
+        Pass("write failures: operation NAK + block, measurement rows/xdt queued in order, retry fails until fixed, retry replays row then xdt, folder creation failure blocks, COM failures block");
     }
 
     private sealed class FakePanelLink : IAs100201SerialLink

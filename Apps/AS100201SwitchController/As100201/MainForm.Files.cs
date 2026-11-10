@@ -18,22 +18,23 @@ internal sealed partial class MainForm : Form
             e.Data?.GetData(DataFormats.FileDrop) is not string[] { Length: 1 } paths)
             return;
 
-        RunOperation("雛形読み込み", () =>
-        {
-            if (!File.Exists(paths[0])) throw new FileNotFoundException("雛形が見つかりません。", paths[0]);
-            // 対応形式は、選択した LOGGER の OpenFile の戻り値で判定する。
-            long result = _logger.OpenFile(paths[0]);
-            if (result != 0) throw new InvalidOperationException($"WAVE LOGGER が雛形を開けませんでした（戻り値 {result}）。");
-            _templatePath = paths[0];
-            _templateLoaded = true;
-            _measurementState.ReadAfter = 0;
-            // 学習モード: 保存先は雛形と同じフォルダー(通常モードでは何もしない)。
-            LearningTemplateLoaded(paths[0]);
-            RefreshLoggerState();
-            RefreshReadyLed();
-            CompletePreparationDisplay();
-            return $"成功 / {Path.GetFileName(paths[0])}";
-        });
+        RunOperation("雛形読み込み", () => LoadTemplate(paths[0]));
+    }
+
+    // 雛形を LOGGER で開いて登録する。ドロップと、学習モードの自動読み込み(MainForm.Learning.cs)で使う。
+    private string LoadTemplate(string path)
+    {
+        if (!File.Exists(path)) throw new FileNotFoundException("雛形が見つかりません。", path);
+        // 対応形式は、選択した LOGGER の OpenFile の戻り値で判定する。
+        long result = _logger.OpenFile(path);
+        if (result != 0) throw new InvalidOperationException($"WAVE LOGGER が雛形を開けませんでした（戻り値 {result}）。");
+        _templatePath = path;
+        _templateLoaded = true;
+        _measurementState.ReadAfter = 0;
+        RefreshLoggerState();
+        RefreshReadyLed();
+        CompletePreparationDisplay();
+        return $"成功 / {Path.GetFileName(path)}";
     }
 
     private void DeleteTemplateClicked(object? sender, EventArgs e)

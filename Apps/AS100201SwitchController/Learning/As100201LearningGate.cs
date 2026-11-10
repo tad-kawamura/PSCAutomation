@@ -7,7 +7,7 @@ internal static class As100201LearningGate
 {
     public const string NotReady = "接続確認と雛形読み込みが完了するまで操作できません。";
     public const string PanelLost = "タッチパネルの通信が途切れているため、測定を始められません（sw4 の停止だけ受け付けます）。";
-    public const string NoSaveDirectory = "雛形が未登録のため、学習モードでは測定を始められません（保存先は雛形と同じフォルダー）。";
+    public const string NoSaveDirectory = "保存先が決まっていないため、学習モードでは測定を始められません。";
     public const string SaveBlocked = "台帳か xdt を保存できるまで測定を始められません（保存先を直して「再試行」を押してください）。";
 
     public static bool Allows(string button, bool baseReady, bool panelReady, bool hasSession, bool saveBlocked, bool readyLedOn, out string refusal)
