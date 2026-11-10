@@ -48,7 +48,7 @@ dotnet publish Apps/AS110AllCheck/AS110AllCheck.csproj -p:PublishProfile=DataAdj
 
 - 版の上げ方: `Properties/PublishProfiles/DataAdjustment.pubxml` の `PublishDir`（`bin\データ調整verX.YY\`）・`AssemblyName`・`AssemblyTitle`・`Product` を同じ名称にそろえ、`Version` を `X.0.YY`、`FileVersion` を `X.0.YY.0` にします。次の版は小数第2位を1つ上げます（1.03→1.04）。上の桁を上げるときは人に確認します。同じ版の発行物を上書きしません。
 - 版を上げたプロファイルとこの README を commit・push してから発行し、発行フォルダーに `発行記録.txt`（発行元コミットID、版、同梱ファイルのSHA256、確認済み・未確認の範囲）を残します。
-- 現在の版は「データ調整ver2.02」（2026-11-10。データ調整・漏れ試験で LOGGER が前に出ないことがあるのを直した）。その前の ver2.01（2026-11-09）がこのリポジトリからの初めての発行で、移植と画面・校正の流れを大きく変えたため、人の指示で 1.03 から上の桁を上げた。ver1.03 は移植前の旧リポジトリで発行したもの。次に発行するときは ver2.03 にします。
+- 現在の版は「データ調整ver2.03」（2026-11-11。準備画面の最前面固定をやめ、LOGGER が前に残ったかを確かめて出し直す）。その前の ver2.02（2026-11-10）は LOGGER の前面化を強くした版で、実機ではメイン画面が LOGGER より前に出てうまくいかなかった。ver2.01（2026-11-09）がこのリポジトリからの初めての発行で、移植と画面・校正の流れを大きく変えたため、人の指示で 1.03 から上の桁を上げた。ver1.03 は移植前の旧リポジトリで発行したもの。次に発行するときは ver2.04 にします。
 - 旧「データ調整プロトタイプver1・ver2」の発行設定は移していません（旧リポジトリにあります）。
 
 ふつうの発行（exe 名 `AS110AllCheck.exe`、`bin\Release\publish\`）は `FolderProfile` です。
