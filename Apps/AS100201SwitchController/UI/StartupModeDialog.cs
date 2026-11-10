@@ -6,8 +6,12 @@ internal sealed class StartupModeDialog : Form
 {
     private readonly RadioButton _normal = new();
     private readonly RadioButton _learning = new();
+    private readonly RadioButton _learningVirtual = new();
 
     public As100201StartupMode SelectedMode { get; private set; } = As100201StartupMode.Normal;
+
+    // 開発用: Tab5 の代わりを画面に出す学習モード(--virtual-panel と同じ。2026-11-10 人の指摘で起動の窓にも出す)。
+    public bool SelectedVirtualPanel { get; private set; }
 
     public StartupModeDialog()
     {
@@ -40,12 +44,15 @@ internal sealed class StartupModeDialog : Form
 
         _normal.Text = "通常モード（今までどおり：スイッチで位相の出し直しと測定の開始・停止）";
         _learning.Text = "学習モード（タッチパネルで調整操作を記録し、測定のたびに xdt と台帳を保存）";
-        foreach (var radio in new[] { _normal, _learning })
+        _learningVirtual.Text = "学習モード（開発用：タッチパネルの代わりを画面に出す。Tab5 が無くても試せます）";
+        _learningVirtual.ForeColor = Color.SteelBlue;
+        foreach (var radio in new[] { _normal, _learning, _learningVirtual })
         {
             radio.AutoSize = true;
             radio.Margin = new Padding(4, 4, 4, 4);
             layout.Controls.Add(radio);
         }
+        _learningVirtual.Margin = new Padding(4, 12, 4, 4);
         _normal.Checked = true;
 
         layout.Controls.Add(new Label
@@ -59,7 +66,11 @@ internal sealed class StartupModeDialog : Form
 
         var buttons = new FlowLayoutPanel { AutoSize = true, FlowDirection = FlowDirection.RightToLeft, Dock = DockStyle.Fill };
         var ok = new Button { Text = "開始", AutoSize = true, MinimumSize = new Size(120, 36), DialogResult = DialogResult.OK };
-        ok.Click += (_, _) => SelectedMode = _learning.Checked ? As100201StartupMode.Learning : As100201StartupMode.Normal;
+        ok.Click += (_, _) =>
+        {
+            SelectedMode = _learning.Checked || _learningVirtual.Checked ? As100201StartupMode.Learning : As100201StartupMode.Normal;
+            SelectedVirtualPanel = _learningVirtual.Checked;
+        };
         buttons.Controls.Add(ok);
         layout.Controls.Add(buttons);
         AcceptButton = ok;
@@ -67,10 +78,10 @@ internal sealed class StartupModeDialog : Form
         Controls.Add(layout);
     }
 
-    // 窓を出して選ばれたモードを返す。× で閉じたら通常モード。
-    public static As100201StartupMode Ask()
+    // 窓を出して選ばれたモードと、開発用の代わりを使うかを返す。× で閉じたら通常モード。
+    public static (As100201StartupMode Mode, bool VirtualPanel) Ask()
     {
         using var dialog = new StartupModeDialog();
-        return dialog.ShowDialog() == DialogResult.OK ? dialog.SelectedMode : As100201StartupMode.Normal;
+        return dialog.ShowDialog() == DialogResult.OK ? (dialog.SelectedMode, dialog.SelectedVirtualPanel) : (As100201StartupMode.Normal, false);
     }
 }

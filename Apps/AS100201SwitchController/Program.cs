@@ -14,8 +14,8 @@ internal static class Program
             Application.Run(new MainForm(As100201StartupMode.Learning, virtualPanel: true));
             return;
         }
-        // 起動時に通常モード / 学習モードを選ぶ(× は通常モード)。通常モードは今までと同じ動き。
-        As100201StartupMode mode = StartupModeDialog.Ask();
-        Application.Run(new MainForm(mode));
+        // 起動時に通常モード / 学習モード / 学習モード(開発用の代わり)を選ぶ(× は通常モード)。通常モードは今までと同じ動き。
+        var (mode, virtualPanel) = StartupModeDialog.Ask();
+        Application.Run(new MainForm(mode, virtualPanel));
     }
 }

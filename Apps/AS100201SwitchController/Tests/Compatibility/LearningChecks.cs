@@ -398,7 +398,7 @@ internal static class LearningChecks
     {
         Check(default(As100201StartupMode) == As100201StartupMode.Normal, "default mode is not Normal");
         using (var dialog = new StartupModeDialog())
-            Check(dialog.SelectedMode == As100201StartupMode.Normal, "dialog initial selection is not Normal");
+            Check(dialog.SelectedMode == As100201StartupMode.Normal && !dialog.SelectedVirtualPanel, "dialog initial selection is not Normal");
         Check(As100201Application.GetWindowTitle(As100201StartupMode.Normal) == As100201Application.WindowTitle &&
             As100201Application.WindowTitle == "AS100-201 スイッチ制御" &&
             As100201Application.GetWindowTitle(As100201StartupMode.Learning).Contains("学習モード"), "window titles");

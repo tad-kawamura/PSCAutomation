@@ -132,7 +132,8 @@ internal sealed partial class MainForm : Form
         timer.Stop();
         foreach (string detail in details) AppendLog(detail.Replace("Arduino内訳", "タッチパネル内訳"));
         AppendLog($"処理時間：タッチパネル接続確認 = {timer.Elapsed.TotalSeconds:F3} 秒" + (error is null ? "（成功）" : "（失敗）"));
-        return error is null ? null : "タッチパネル: " + error.Message + "（学習モードはタッチパネルがないと動きません。通常モードで起動し直せば今までどおり使えます）";
+        return error is null ? null : "タッチパネル: " + error.Message + "（学習モードはタッチパネルがないと動きません。通常モードで起動し直せば今までどおり使えます。" +
+            "Tab5 が無いまま試すときは、起動の窓で「学習モード（開発用：タッチパネルの代わり…）」を選んでください）";
     }
 
     private void PanelDisconnected()
