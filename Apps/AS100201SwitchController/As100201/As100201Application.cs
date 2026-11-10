@@ -13,6 +13,9 @@ internal static class As100201Application
     public const string LearningInstructions = "タッチパネルの操作ボタンは、手を動かす前に押してください。完了は盲栓確認が OK のとき、取消は直前の操作 1 件だけです。\r\n" +
         "測定が止まるたび（sw4・操作ボタン）に xdt を保存し、台帳（CSV）に 1 行ずつ追記します。保存できないときは READY LED を消して止まり、「再試行」で再開します。";
 
+    // 開発用(--virtual-panel)。タッチパネルの代わりを画面に出しているときのタイトルの後ろ。
+    public const string VirtualPanelTitleSuffix = "（開発用：タッチパネルの代わり）";
+
     public static string GetWindowTitle(As100201StartupMode mode) =>
         mode == As100201StartupMode.Learning ? LearningWindowTitle : WindowTitle;
 

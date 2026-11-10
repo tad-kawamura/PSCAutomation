@@ -1,6 +1,6 @@
 // 学習モード(SPEC_調整操作の記録.md、2026-11-09 承認)の模擬テスト。機器・LOGGER・タッチパネルは使わない。
 // グループ: パネルの行の読み取り / 台帳の行の組み立て / 完了・取消・完了の取消 / 書けないときの停止と再試行 /
-//           パネル途切れ中の受け付け / 通常モードを選んだとき今までと同じ
+//           パネル途切れ中の受け付け / 通常モードを選んだとき今までと同じ / タッチパネルの代わり(開発用)
 using PSCAutomation.Apps.AS100201SwitchController;
 using System.Text;
 
@@ -16,7 +16,75 @@ internal static class LearningChecks
         SessionFlowChecks();
         WriteFailureChecks();
         await PanelOutageChecks();
+        await VirtualPanelChecks();
+        // 画面(MainForm)を作るとこのスレッドに WinForms の SynchronizationContext が入り、以後の await が戻らなくなる。
+        // 画面を作る確認は await の後に置く(VirtualPanelChecks も画面の確認は最後で、その後に await しない)。
         NormalModeChecks();
+    }
+
+    // 7. タッチパネルの代わり(開発用、--virtual-panel、2026-11-10)。本物と同じ As100201PanelProtocol を通ること
+    private static async Task VirtualPanelChecks()
+    {
+        var link = new As100201VirtualPanelLink();
+        using var panel = new As100201PanelProtocol(link);
+        var received = new List<As100201PanelCommand>();
+        var sent = new List<string>();
+        var statuses = new List<string>();
+        int disconnected = 0;
+        panel.CommandReceived += received.Add;
+        panel.StatusChanged += statuses.Add;
+        panel.Disconnected += () => disconnected++;
+        link.LineSent += sent.Add;
+
+        // 並べる行は全部パネルの行として読め、重複がない(着磁 1・減磁 2・ノズル 12・スペーサー 4・完了・取消)。
+        var lines = As100201VirtualPanelLink.AllCommands.Select(c => c.Line).ToList();
+        Check(lines.Count == 21 && lines.Distinct().Count() == 21 && lines.Contains("ACT:NOZZLE:R:OUT:3") && lines.Contains("ACT:SPACER:P:DOWN") &&
+            lines[^2] == "DONE" && lines[^1] == "UNDO", "virtual panel command list");
+        Check(!link.Press("ACT:MAG") && received.Count == 0, "pressed before connection");
+
+        await panel.VerifyAsync();
+        Check(panel.IsConnected && !panel.InputReady, "virtual panel verified but ready before frames");
+        // 定期応答はアプリの中で 250ms ごとに出る。1 秒の安定確認のあとに受け付ける。
+        await Task.Delay(1600);
+        Check(panel.InputReady, "virtual panel frames did not make input ready");
+        Check(link.Press("ACT:NOZZLE:P:IN:2") && received.Count == 1 && received[0].DisplayName == "ノズル P 側（押し込む・普通）", "virtual press not delivered");
+        Check(panel.TrySend(As100201PanelProtocol.Ack(received[0])) && sent.SequenceEqual(new[] { "ACK:ACT:NOZZLE:P:IN:2" }), "reply to virtual panel not shown");
+
+        // 定期応答を止める: 1 秒で受け付けなくなり、押しても NAK。再開すると 1 秒後に戻る。
+        link.FramesPaused = true;
+        await Task.Delay(1300);
+        Check(!panel.InputReady, "paused frames still ready");
+        await panel.MaintainAsync();
+        Check(statuses.Count > 0 && statuses[^1].Contains("定期応答が停止"), "paused frames not reported");
+        Check(link.Press("ACT:MAG") && received.Count == 1 && sent[^1].StartsWith("NAK:"), "press during pause not refused");
+        link.FramesPaused = false;
+        await Task.Delay(1600);
+        Check(panel.InputReady, "not ready after frames resumed");
+
+        // USB を抜いた状態: 切断を知らせ、差し直すまで再接続に失敗し、差し直すと再接続する。
+        link.Unplugged = true;
+        Check(disconnected == 1 && !panel.IsConnected && !panel.InputReady && !link.Press("DONE"), "unplug not propagated");
+        await panel.MaintainAsync();
+        Check(!panel.IsConnected && statuses[^1].Contains("接続を待っています"), "reconnected while unplugged");
+        link.Unplugged = false;
+        await Task.Delay(2100);
+        await panel.MaintainAsync();
+        Check(panel.IsConnected && statuses[^1].Contains("再接続"), "not reconnected after replug");
+        await Task.Delay(1600);
+        Check(panel.InputReady && link.Press("DONE") && received[^1].Kind == As100201PanelCommandKind.Done, "not usable after replug");
+
+        // 代わりのパネルは --virtual-panel のときだけ。画面にはタイトル・帯・代わりのボタンが加わる。
+        Check(As100201VirtualPanelLink.CommandLineSwitch == "--virtual-panel", "command line switch");
+        using (var learning = new MainForm(As100201StartupMode.Learning))
+            Check(!learning.UsesVirtualPanel && learning.Controls.Count == 4, "virtual panel shown without the switch");
+        using (var normal = new MainForm(As100201StartupMode.Normal, virtualPanel: true))
+            Check(!normal.UsesVirtualPanel && !normal.IsLearningMode && normal.Controls.Count == 1, "virtual panel in normal mode");
+        using (var dev = new MainForm(As100201StartupMode.Learning, virtualPanel: true))
+        {
+            Check(dev.UsesVirtualPanel && dev.IsLearningMode && dev.Text == As100201Application.LearningWindowTitle + As100201Application.VirtualPanelTitleSuffix, "virtual panel title");
+            Check(dev.Controls.Count == 5 && FindLabels(dev).Any(l => l.Text.StartsWith("パネルへの返事")), "virtual panel controls missing");
+        }
+        Pass("virtual panel (--virtual-panel, dev only): 21 panel lines, same protocol path, 250 ms frames -> ready, ACK/NAK shown, pause -> stale + NAK, unplug/replug reconnect, only with the switch in learning mode");
     }
 
     // 1. パネルの行の読み取り

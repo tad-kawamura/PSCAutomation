@@ -26,11 +26,13 @@ internal sealed partial class MainForm : Form
     private void InitializeLearningMode()
     {
         if (!IsLearningMode) return;
-        _panel = new As100201PanelProtocol(new As100201SerialLink());
+        _panel = new As100201PanelProtocol(CreatePanelLink());
         _panel.CommandReceived += PanelCommandReceived;
         _panel.Disconnected += PanelDisconnected;
         _panel.StatusChanged += PanelStatusChanged;
         AppendLog("学習モードで起動しました。タッチパネルの操作を記録し、測定のたびに xdt と台帳を保存します。");
+        if (_useVirtualPanel)
+            AppendLog("開発用：タッチパネルの代わりを画面に出しています（" + As100201VirtualPanelLink.CommandLineSwitch + "）。COM ポートのタッチパネルは探しません。");
     }
 
     // 画面上部の「学習モード」の帯と、タッチパネルの接続状態・記録の状態・「再試行」。
@@ -90,12 +92,16 @@ internal sealed partial class MainForm : Form
             BackColor = Color.DarkOrange,
             ForeColor = Color.White,
             Font = new Font(Font.FontFamily, 13, FontStyle.Bold),
-            Text = As100201Application.LearningModeLabel + "　タッチパネルで調整操作を記録し、測定のたびに xdt と台帳を保存します"
+            Text = As100201Application.LearningModeLabel + (_useVirtualPanel
+                ? "（開発用：タッチパネルの代わり）　xdt と台帳は本番と同じく保存します"
+                : "　タッチパネルで調整操作を記録し、測定のたびに xdt と台帳を保存します")
         };
+        if (_useVirtualPanel) banner.BackColor = Color.SteelBlue;
 
-        // Dock は後に足したものから配置されるので、帯が最上部、その下に記録の状態、残りが今までの画面。
+        // Dock は後に足したものから配置されるので、帯が最上部、その下に記録の状態、(開発用の代わりのパネル、)残りが今までの画面。
         var padding = new Panel { Dock = DockStyle.Top, Height = 8 };
         Controls.Add(padding);
+        if (_useVirtualPanel) Controls.Add(BuildVirtualPanelUi());
         Controls.Add(group);
         Controls.Add(banner);
 

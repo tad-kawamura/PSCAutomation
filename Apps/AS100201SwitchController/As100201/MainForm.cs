@@ -52,9 +52,11 @@ internal sealed partial class MainForm : Form
     private As100201SwitchSettings _switchSettings;
 
     // mode: 起動時に選んだモード(通常 / 学習)。通常モードでは学習モードの部品を作らず、今までと同じ動き。
-    public MainForm(As100201StartupMode mode)
+    // virtualPanel: 開発用。学習モードでタッチパネルの代わりを画面に出す(--virtual-panel のときだけ)。
+    public MainForm(As100201StartupMode mode, bool virtualPanel = false)
     {
         _mode = mode;
+        _useVirtualPanel = virtualPanel && mode == As100201StartupMode.Learning;
         _nr500Connection = new Nr500Connection(_logger);
         _switchSettings = _switchSettingsStore.Load(out string? settingsMessage);
         _arduino.SetDoubleWait(_switchSettings.DoubleWaitMilliseconds);
@@ -66,7 +68,7 @@ internal sealed partial class MainForm : Form
         StartPcDelayObservation();
         _readyHeartbeat.Start();
 
-        Text = As100201Application.GetWindowTitle(mode);
+        Text = As100201Application.GetWindowTitle(mode) + (_useVirtualPanel ? As100201Application.VirtualPanelTitleSuffix : "");
         ClientSize = new Size(850, 820);
         MinimumSize = new Size(680, 680);
         StartPosition = FormStartPosition.CenterScreen;

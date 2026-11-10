@@ -1,0 +1,11 @@
+{
+  "profiles": {
+    "AS100201SwitchController": {
+      "commandName": "Project"
+    },
+    "学習モード（タッチパネルの代わり・開発用）": {
+      "commandName": "Project",
+      "commandLineArgs": "--virtual-panel"
+    }
+  }
+}
