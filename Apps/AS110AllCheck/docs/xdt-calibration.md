@@ -113,4 +113,6 @@ NR-XのYDTはCH2の編集構造を未検証のため今回のGUI校正対象外�
 
 確認：全体 `PSCAutomation.sln` の Release ビルド。`Common.Tests` に `BringToTop`・`IsAbove` の検査（通常の窓の一番上へ出し、最前面に固定しない）を足して成功。そのほかの `Wrappers/Tests`、Verification・AppShutdown・SaveAvailability（`--no-dialogs`、`--no-mainform-display --with-excel` 25 件）が成功。
 
-未確認：実機（M5Stack から始めたとき）で LOGGER が Excel の上に出ること。この開発 PC では Claude のアプリから起動したプロセスが前面の切り替えを許されるため、「切り替えを断られる」状況そのものは再現できていない（重なり順が上がることは、断られるかどうかに関係なく確認した）。キーボードの入力先は Excel のままになるので、LOGGER をキーボードで操作するときはクリックが要る。
+追加確認（2026-11-12、開発 PC で人の操作あり）：人が Excel 役の窓をクリックした直後（Windows が前面の切り替えを断る状態。現場の M5Stack 操作と同じ）に、人の操作を受けていないプロセスから LOGGER 役を前に出す実験をした。今の方法（`TryActivate` のみ、ver2.04）は戻り値 false で、LOGGER 役は Excel 役の後ろに残った（現場の失敗を再現）。新しい方法（`BringToTop` → `TryActivate`）は戻り値 false（入力先は Excel 役のまま）だが、LOGGER 役は Excel 役の上に出た。前に作業者が触らない間は Windows の制限が時間切れ（既定 200 秒）で外れるため、以前の実験では「断られる」状況を再現できていなかった。
+
+未確認：実機（実際の LOGGER・Excel・M5Stack）で LOGGER が Excel の上に出ること。キーボードの入力先は Excel のままになる（LOGGER はキーボードで操作しないので支障ない、人の確認）。
