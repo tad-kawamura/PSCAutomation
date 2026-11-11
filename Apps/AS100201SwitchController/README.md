@@ -149,7 +149,7 @@ Arduino と同じ 115200bps・LF の行単位。PC → `AS100201_PANEL_PING`、�
 
 - 「再試行」で、覚えていた測定の行と xdt が書けて再開すること(停止後の波形が次の Start まで LOGGER に残り `SaveXdt` で保存できること)。エラー停止(状態 11)のときの `SaveXdt`
 - 「完了」「取消」、「定期応答を止める」「USB を抜いた状態」での受け付け(開発用の代わりで確かめられる)
-- 測定中に LOGGER から値を取り出すこと(`Wrappers/Tests/WaveLogger.LiveReadCheck`、未実行)
+- 測定中に LOGGER から値を取り出すこと: 確認ツール(`Wrappers/Tests/WaveLogger.LiveReadCheck`)では 2026-11-11 に NR-500・旧 WAVE LOGGER で確認済み(遅れ平均 0.07 秒・最大 0.17 秒、保存した xdt と全点一致)。このアプリの画面からは未確認(アプリにはまだ入れていない)
 - タッチパネルの接続確認(Arduino と並べて 2 台の総当たり。Arduino の確認の後にパネルを確認する作りにした。Arduino が外れている間にパネルの確認が Arduino のポートを開いてリセットさせないか)
 - 本物のパネルでの `ACK` / `NAK` の表示
 - LOGGER が自動で止まったとき(sw4 なし)の行と xdt

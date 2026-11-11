@@ -32,7 +32,7 @@
 - 終了の扱いを選べる(`Lifecycle`): 既定は上の終了処理(`ManagedShutdown`)。`ReferenceOnly` は LOGGER を止めず COM 参照だけ解放する(AS100201SwitchController の使い方。移植後に NR-500・旧 WAVE LOGGER で実機確認)
 - LOGGER 本体ソフトの起動だけを先に始めておける(`BeginServerStartup` → `WaitForServerStartupAsync` → `Initialize`)。旧 WAVE LOGGER の起動は 7〜8 秒かかるので、画面を作る前に始めて画面準備・他の機器の確認と重ねる。`Initialize` は起動済みの参照を受け取るだけになる。使わないアプリは何も変わらない(AS110AllCheck で NR-500・旧 WAVE LOGGER を実機確認、2026-11-05)
 - 機器なしの模擬に差し替えるための薄い interface の例: AS110NoiseTest `Measurement/ILoggerDevice.cs`
-- **部品には無いがメーカー API にあるもの**: 保存せずに値を取り出す `GetArrayData` / `GetData` / `GetCurrentData`(測定中も使える、と説明書にある。換算前の値)。測定中に取り出せるか・速さ・保存した xdt と一致するかを確かめる確認ツール `Wrappers/Tests/WaveLogger.LiveReadCheck` を 2026-11-10 に作った(実機は未確認)。使うときは部品に関数を足す(全アプリに影響するので人に確認)
+- **部品には無いがメーカー API にあるもの**: 保存せずに値を取り出す `GetArrayData` / `GetData` / `GetCurrentData`(測定中も使える、と説明書にある。換算前の値)。測定中に取り出せるか・速さ・保存した xdt と一致するかを確かめる確認ツール `Wrappers/Tests/WaveLogger.LiveReadCheck` を 2026-11-10 に作った。**2026-11-11 に NR-500・旧 WAVE LOGGER で実機確認**: 測定中に `GetArrayData` で取り出せ、PC に届くまでの遅れは平均 0.07 秒・最大 0.17 秒(10ms 周期、200ms ごとに読み取り)、1 回の読み取りは平均 12ms、停止後に保存した xdt と全点一致、換算は雛形の係数で xdt と同じ値になる。WAVE LOGGER X・NR-X は未確認。使うときは部品に関数を足す(全アプリに影響するので人に確認)
 
 **制約**
 - WinForms の UI スレッド(STA)から使う。`Task.Run` や並列呼び出しは不可。非同期操作中はアプリ側で操作を排他する(事前起動だけは内部で別スレッドを使うが、受け取った後の操作は従来どおり UI スレッド)
