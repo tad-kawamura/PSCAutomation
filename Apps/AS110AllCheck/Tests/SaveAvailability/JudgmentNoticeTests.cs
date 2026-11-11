@@ -23,6 +23,9 @@ internal static class JudgmentNoticeTests
             var notice = Notice() ?? throw new Exception("Judgment notice missing");
             if (notice.Text != (pass ? "合格" : "不合格") || notice.Modal || !notice.TopMost)
                 throw new Exception("Wrong judgment notice behavior");
+            // 持ち主つきだと、ポップアップを前に出すたびにWindowsがメイン画面も一緒に前へ出す(2026-11-11)。
+            if (notice.Owner is not null || owner.OwnedForms.Contains(notice))
+                throw new Exception("Judgment notice must not be owned by the main screen");
             ForegroundProbe.AssertInput(notice);
             Call("KeepPreparationInFront");
             Call("ShowTransferredExcel");

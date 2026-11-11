@@ -53,7 +53,7 @@ internal sealed partial class MainForm : Form
     private bool RaisePreparationWindow()
     {
         // モーダル／モデルレスのどちらでも、表示中のポップアップから入力先を奪わない。
-        if (IsDisposed || OwnedForms.Any(form => form.Visible)) return false;
+        if (IsDisposed || PopupVisible) return false;
         if (WindowState == FormWindowState.Minimized) WindowState = FormWindowState.Normal;
         if (!IsHandleCreated) return false;
         // 一度だけ最前面にして重なり順を上げ、すぐ通常表示へ戻す(固定しない)。
@@ -95,8 +95,12 @@ internal sealed partial class MainForm : Form
         ShowLoggerInFront("参照波形読み込み操作完了", () => CanShowLoggerAfterReference && !_flow.Measuring);
     }
 
-    private bool CanShowLoggerAfterReference => !IsDisposed && !OwnedForms.Any(form => form.Visible) &&
+    private bool CanShowLoggerAfterReference => !IsDisposed && !PopupVisible &&
         _selectedReferencePath is not null && _templateLoaded && _calibrationApplied && _logger.IsInitialized;
+
+    // 表示中のポップアップ・ダイアログ。合否ポップアップは持ち主なしで出すため、OwnedFormsとは別に見る。
+    private bool PopupVisible => OwnedForms.Any(form => form.Visible) ||
+        _saveNotice is { IsDisposed: false, Visible: true };
 
     /// <summary>LOGGERを前面に出す。stillWantedを渡すと、少し後にLOGGERが前に残っているか確かめ、外れていれば1回だけ出し直す。</summary>
     private void ShowLoggerInFront(string operation, Func<bool>? stillWanted = null)

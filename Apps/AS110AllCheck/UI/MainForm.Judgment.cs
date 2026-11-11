@@ -45,8 +45,10 @@ internal sealed partial class MainForm : Form
         notice.FormClosed += (_, _) => { if (ReferenceEquals(_saveNotice, notice)) _saveNotice = null; };
         _saveNotice = notice;
         // モデルレスにしてPCの操作ボタンとM5Stackからも閉じられるようにする。
-        notice.Show(this);
-        // Showで検査アプリがExcelより上へ来る場合も、背後の判定シートを表示し直す。
+        // 持ち主(MainForm)を付けない。持ち主つきだとポップアップを前に出すたびにWindowsがメイン画面も一緒に前へ出し、
+        // 設定後は見ないメイン画面がExcel・LOGGERより前に出る(2026-11-11、人の指示で変更)。最前面指定で単独でも前に出る。
+        notice.Show();
+        // Showで入力先がポップアップへ移っても、背後の判定シートを表示し直す。
         ShowTransferredExcel();
         notice.Update();
         AppendLog($"Excel転送時間：合否ポップアップ表示処理（Excel前面表示を含む）={displayTimer.Elapsed.TotalMilliseconds:F0}ms");

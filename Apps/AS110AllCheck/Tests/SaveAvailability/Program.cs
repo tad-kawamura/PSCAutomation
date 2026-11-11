@@ -9,7 +9,8 @@ internal static class Program
     {
         if (args.Contains("--foreground-target")) { ForegroundProbe.RunTarget(); return; }
         if (args.Contains("--calibration-foreground")) { DialogForegroundTests.RunCalibrationOnly(); return; }
-        if (!args.Contains("--no-dialogs")) DialogForegroundTests.Run();
+        // --no-mainform-display: 実MainFormを表示する検証(機器の初期化が始まり、機器のないPCでは止まる)だけを飛ばし、合否ポップアップの検証は行う。
+        if (!args.Contains("--no-dialogs") && !args.Contains("--no-mainform-display")) DialogForegroundTests.Run();
         var assembly=Assembly.Load("AS110AllCheck");
         CalibrationDialogTests.Run(assembly);
         var type=assembly.GetType("PSCAutomation.Apps.AS110AllCheck.MainForm")!;

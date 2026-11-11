@@ -13,6 +13,8 @@ internal sealed partial class MainForm
         e.Cancel = true;
         base.OnFormClosing(e);
         _closeRequested = true;
+        // 合否ポップアップは持ち主なしで出しているので、メイン画面と一緒には閉じない。ここで閉じる。
+        CloseJudgmentNotice();
         _statusHeartbeat.Stop();
         Enabled = false;
         if (_shutdownStarted) return;
