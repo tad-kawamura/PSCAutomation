@@ -20,8 +20,12 @@ internal static class As100201Application
     public static string GetWindowTitle(As100201StartupMode mode) =>
         mode == As100201StartupMode.Learning ? LearningWindowTitle : WindowTitle;
 
-    // タッチパネルの異常種別(PANEL_*)は学習モードだけで起きる。通常モードの異常ログは今までと同じ。
+    // タッチパネルの異常種別(PANEL_*)と測定中の取り込みの失敗(LIVE_CAPTURE_FAILED、2026-11-11)は学習モードだけで起きる。
+    // 通常モードの異常ログは今までと同じ。
     public static void ConfigureDiagnostics() => ArduinoDiagnosticLog.Configure(
         "AS100201SwitchController", "HEARTBEAT_STALE", "FRAME_GAP", "PROTOCOL_RECOVERY",
-        "PANEL_HEARTBEAT_STALE", "PANEL_FRAME_GAP", "PANEL_RECOVERY", "PANEL_VERSION", "PANEL_SEND_ERROR");
+        "PANEL_HEARTBEAT_STALE", "PANEL_FRAME_GAP", "PANEL_RECOVERY", "PANEL_VERSION", "PANEL_SEND_ERROR",
+        LiveCaptureFailedIncident);
+
+    public const string LiveCaptureFailedIncident = "LIVE_CAPTURE_FAILED";
 }

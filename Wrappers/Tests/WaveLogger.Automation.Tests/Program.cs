@@ -33,6 +33,7 @@ await ProcessLifetimeTests.RunAsync(assembly, control, session);
 await SessionContractTests.RunAsync(assembly, control);
 await MergedApiTests.RunAsync(control);
 await PrestartTests.RunAsync(control);
+DataReadTests.Run(control);
 Console.WriteLine("WaveLogger.Automation: all checks passed.");
 public class FakeLogger
 {

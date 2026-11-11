@@ -25,6 +25,8 @@ internal sealed partial class MainForm : Form
     private string LoadTemplate(string path)
     {
         if (!File.Exists(path)) throw new FileNotFoundException("雛形が見つかりません。", path);
+        // 学習モード: 測定中の取り込みに使うチャンネルと換算係数を、LOGGER で開く前に読む(通常モードでは何もしない)。
+        PrepareLiveCaptureTemplate(path);
         // 対応形式は、選択した LOGGER の OpenFile の戻り値で判定する。
         long result = _logger.OpenFile(path);
         if (result != 0) throw new InvalidOperationException($"WAVE LOGGER が雛形を開けませんでした（戻り値 {result}）。");
@@ -58,6 +60,7 @@ internal sealed partial class MainForm : Form
         KeepPreparationInFront();
         _templateLoaded = false;
         _templatePath = null;
+        ClearLiveCaptureTemplate();
         _measurementState.State = null;
         _measurementState.MeasurementStarted = false;
         _measurementState.ReadAfter = 0;

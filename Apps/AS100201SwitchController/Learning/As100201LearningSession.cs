@@ -26,6 +26,8 @@ internal sealed class As100201LearningSession
     public const string StopBySwitch = "sw4";
     public const string StopByPanel = "操作ボタン";
     public const string StopByLogger = "LOGGER の停止";
+    // 測定中の取り込みに失敗して、アプリが LOGGER を止めた(SPEC_測定中の取り込み.md、2026-11-11)。
+    public const string StopByCapture = "取り込み異常";
 
     public As100201LearningSession(IAs100201LearningLedger ledger, Func<string, long> saveXdt,
         Func<DateTime>? clock = null, Func<string, bool>? fileExists = null, Action<string>? createDirectory = null)
@@ -86,7 +88,9 @@ internal sealed class As100201LearningSession
     }
 
     // LOGGER の状態が停止に戻った。止めてあった測定の xdt を保存する。止めていなければ(自動で止まった)行も書く。
-    public void MeasurementCompleted(string side, string sideCode, string phase)
+    // features: 測定中に取り込んで加工した値(SPEC_測定中の取り込み.md)。xdt の後に、同じ名前の .csv で書く。
+    // 書けなければ xdt と同じく覚えておいて止め、「再試行」で書き直す。
+    public void MeasurementCompleted(string side, string sideCode, string phase, As100201FeatureTable? features = null)
     {
         string? path = _armedXdtPath;
         if (path is null)
@@ -98,6 +102,21 @@ internal sealed class As100201LearningSession
         _armedXdtPath = null;
         string target = path;
         RunOrQueue("xdt の保存", () => SaveWaveform(target));
+        if (features is not null)
+        {
+            string csv = FeaturesPath(target);
+            RunOrQueue("取り込みの CSV", () => SaveFeatures(features, csv));
+        }
+    }
+
+    // 取り込みの CSV: xdt と同じフォルダー・同じ名前で拡張子だけ .csv。
+    public static string FeaturesPath(string xdtPath) => Path.ChangeExtension(xdtPath, ".csv");
+
+    private void SaveFeatures(As100201FeatureTable features, string path)
+    {
+        if (Path.GetDirectoryName(path) is { Length: > 0 } directory) _createDirectory(directory);
+        features.Write(path);
+        Log?.Invoke($"取り込みの CSV を保存：{LedgerFileText(path)}（{features.Rows.Count} 行）");
     }
 
     private As100201LedgerRow BuildMeasurementRow(DateTime now, string side, string phase, string trigger, string path)

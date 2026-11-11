@@ -38,5 +38,7 @@
     <ProjectReference Include="..\..\Wrappers\Arduino\Arduino.csproj" />
     <!-- WF1973 の連続出力(NI-VISA が要る) -->
     <ProjectReference Include="..\..\Wrappers\Instruments\Instruments.csproj" />
+    <!-- 学習モードの測定中の取り込み(2026-11-11): 雛形の xdt からチャンネル・換算係数を読む -->
+    <ProjectReference Include="..\..\Wrappers\LoggerFiles\LoggerFiles.csproj" />
   </ItemGroup>
 </Project>

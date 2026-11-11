@@ -37,6 +37,7 @@ internal sealed partial class MainForm : Form
             SaveDirectory = directory
         };
         _learning.Log += AppendLog;
+        InitializeLiveCapture();
         AppendLog("学習モードで起動しました。タッチパネルの操作を記録し、測定のたびに xdt と台帳を保存します。");
         AppendLog($"学習モードの保存先：{directory}（台帳 {LedgerFileName}、xdt は日付フォルダー yyyyMMdd\\yyyyMMdd_HHmmss_側.xdt）");
         if (_useVirtualPanel)
@@ -241,7 +242,9 @@ internal sealed partial class MainForm : Form
     {
         if (_learning is null) return;
         var (side, code, phase) = DescribeCurrentWaveform();
-        _learning.MeasurementCompleted(side, code, phase);
+        // 測定中に取り込んでいたら、残りを取り出して xdt の後に CSV を書く(SPEC_測定中の取り込み.md)。
+        var features = FinishLiveCapture(side, phase);
+        _learning.MeasurementCompleted(side, code, phase, features);
         AfterLearningChange();
     }
 
@@ -288,6 +291,7 @@ internal sealed partial class MainForm : Form
 
     private void DisposeLearningMode()
     {
+        DisposeLiveCapture();
         if (_panel is null) return;
         _panel.CommandReceived -= PanelCommandReceived;
         _panel.Disconnected -= PanelDisconnected;

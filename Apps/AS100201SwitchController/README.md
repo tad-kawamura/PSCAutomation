@@ -9,7 +9,7 @@ AS100-201 のスイッチ制御・測定アプリ。治具の Arduino のスイ�
 
 ## 開く・ビルドする
 
-Visual Studio ではリポジトリのルートの `AS100201SwitchController.slnf` を開く(アプリ・互換テスト・使う wrapper 4 つ)。
+Visual Studio ではリポジトリのルートの `AS100201SwitchController.slnf` を開く(アプリ・互換テスト・使う wrapper 5 つ)。
 
 ```powershell
 dotnet build AS100201SwitchController.slnf
@@ -28,11 +28,11 @@ NI-VISA が入っていない PC ではビルドできない(`Wrappers/Instrumen
 | `As100201/As100201Application.cs` | 画面の文言、異常ログのアプリ名と固有の異常種別 |
 | `As100201/MainForm.*.cs` | 接続確認・雛形の登録・スイッチの処理・定期確認・前面表示・終了 |
 | `UI/` | 画面の組み立て、操作の共通処理、PC 遅延観測、起動時のモード選択の窓(`StartupModeDialog`) |
-| `Learning/` | 学習モード(2026-11-09 承認の追加仕様)。起動モード、タッチパネルの行の読み取り(`As100201PanelCommand`)と取り決め(`As100201PanelProtocol`、Arduino と同じ見張り)、CSV 台帳(`As100201LearningLedger`)、記録の状態管理(`As100201LearningSession`: 測定・操作・完了・取消、書けないときの停止と再試行)、受け付けの決まり(`As100201LearningGate`)、画面への組み込み(`MainForm.Learning.cs`)、開発用のタッチパネルの代わり(`As100201VirtualPanelLink` / `MainForm.VirtualPanel.cs`、`--virtual-panel`) |
-| `Tests/Compatibility/` | 互換テスト(模擬の機器で、送るコマンドと順番・LOGGER の呼び方・状態判定・異常ログの設定を確かめる)。`LearningChecks.cs` は学習モードの 7 グループ |
+| `Learning/` | 学習モード(2026-11-09 承認の追加仕様)。起動モード、タッチパネルの行の読み取り(`As100201PanelCommand`)と取り決め(`As100201PanelProtocol`、Arduino と同じ見張り)、CSV 台帳(`As100201LearningLedger`)、記録の状態管理(`As100201LearningSession`: 測定・操作・完了・取消、書けないときの停止と再試行)、受け付けの決まり(`As100201LearningGate`)、画面への組み込み(`MainForm.Learning.cs`)、開発用のタッチパネルの代わり(`As100201VirtualPanelLink` / `MainForm.VirtualPanel.cs`、`--virtual-panel`)。測定中の取り込み(2026-11-11): 加工の計算(`As100201LiveFeatures`)、取り込みと失敗の判断(`As100201LiveCapture`)、xdt との突き合わせ(`As100201FeatureComparison`)、画面への組み込み(`MainForm.LiveCapture.cs`) |
+| `Tests/Compatibility/` | 互換テスト(模擬の機器で、送るコマンドと順番・LOGGER の呼び方・状態判定・異常ログの設定を確かめる)。`LearningChecks.cs` は学習モードの 7 グループ、`LiveCaptureChecks.cs` は測定中の取り込みの 4 グループ |
 | `firmware/` | Arduino スケッチ(旧 `_arduino/`) |
 
-使う wrapper: `WaveLogger.Automation`(LOGGER、`ReferenceOnly`)、`Common`(NR-500 の本体確認・エラー表示・PC 遅延観測)、`Arduino`(シリアル通信・異常ログ)、`Instruments`(`Wf1973ContinuousSession`)。
+使う wrapper: `WaveLogger.Automation`(LOGGER、`ReferenceOnly`)、`Common`(NR-500 の本体確認・エラー表示・PC 遅延観測)、`Arduino`(シリアル通信・異常ログ)、`Instruments`(`Wf1973ContinuousSession`)、`LoggerFiles`(学習モードの測定中の取り込みで、雛形の xdt からチャンネル・換算係数を読む。2026-11-11)。
 
 ## 操作
 
@@ -56,7 +56,7 @@ dotnet build Apps/AS100201SwitchController/Tests/Compatibility/AS100201.Regressi
 Apps/AS100201SwitchController/Tests/Compatibility/bin/Debug/net9.0-windows/AS100201.RegressionTests.exe
 ```
 
-機器・LOGGER は使わない。22 グループすべて PASS で終了コード 0(2026-11-10 にタッチパネルの代わり(開発用)の 1 グループを追加。2026-11-09 に 2 回押しの 5 グループを追加: スイッチの行の読み取り、スケッチの版、設定の初期値・位相の選び方、設定ファイル、2 回押しの位相での出し直しのコマンド。同日、学習モードの 6 グループを追加: パネルの行の読み取り、台帳の行の組み立て、完了・取消・完了の取消、書けないときの停止と再試行、パネル途切れ中の受け付け、通常モードを選んだとき今までと同じ)。スケッチの 2 回押しの判定そのものは模擬で確かめられない(実機で確認する)。学習モードのテストは定期応答の時間(1 秒・2 秒)を実時間で待つので、約 20 秒かかる。
+機器・LOGGER は使わない。26 グループすべて PASS で終了コード 0(2026-11-11 に測定中の取り込みの 4 グループを追加: 加工の計算、取り込みの流れと失敗の判断、xdt から計算した値との一致、CSV の保存と再試行。2026-11-10 にタッチパネルの代わり(開発用)の 1 グループを追加。2026-11-09 に 2 回押しの 5 グループを追加: スイッチの行の読み取り、スケッチの版、設定の初期値・位相の選び方、設定ファイル、2 回押しの位相での出し直しのコマンド。同日、学習モードの 6 グループを追加: パネルの行の読み取り、台帳の行の組み立て、完了・取消・完了の取消、書けないときの停止と再試行、パネル途切れ中の受け付け、通常モードを選んだとき今までと同じ)。スケッチの 2 回押しの判定そのものは模擬で確かめられない(実機で確認する)。学習モードのテストは定期応答の時間(1 秒・2 秒)を実時間で待つので、約 20 秒かかる。
 
 ## 発行
 
@@ -149,7 +149,7 @@ Arduino と同じ 115200bps・LF の行単位。PC → `AS100201_PANEL_PING`、�
 
 - 「再試行」で、覚えていた測定の行と xdt が書けて再開すること(停止後の波形が次の Start まで LOGGER に残り `SaveXdt` で保存できること)。エラー停止(状態 11)のときの `SaveXdt`
 - 「完了」「取消」、「定期応答を止める」「USB を抜いた状態」での受け付け(開発用の代わりで確かめられる)
-- 測定中に LOGGER から値を取り出すこと: 確認ツール(`Wrappers/Tests/WaveLogger.LiveReadCheck`)では 2026-11-11 に NR-500・旧 WAVE LOGGER で確認済み(遅れ平均 0.07 秒・最大 0.17 秒、保存した xdt と全点一致)。このアプリの画面からは未確認(アプリにはまだ入れていない)
+- 測定中に LOGGER から値を取り出すこと: 2026-11-11 にアプリへ入れた(下の「測定中の取り込み」)。確認ツールでは NR-500・旧 WAVE LOGGER で確認済み。アプリの画面からは未確認
 - タッチパネルの接続確認(Arduino と並べて 2 台の総当たり。Arduino の確認の後にパネルを確認する作りにした。Arduino が外れている間にパネルの確認が Arduino のポートを開いてリセットさせないか)
 - 本物のパネルでの `ACK` / `NAK` の表示
 - LOGGER が自動で止まったとき(sw4 なし)の行と xdt
@@ -158,6 +158,24 @@ Arduino と同じ 115200bps・LF の行単位。PC → `AS100201_PANEL_PING`、�
 - 静電容量タッチの反応(素手・作業手袋)
 - 「確認」ボタンや「雛形を削除」を測定中に押したとき、その測定は記録されない(LOGGER を止めるだけ)。記録が要るなら決める
 - exe の置き場が書き込み禁止(ネットワークの読み取り専用など)のとき、最初の記録で「保存できません」の停止になる(`学習データ\` を作れない)。exe を書けるフォルダーに置き直す
+
+## 測定中の取り込み(学習モード、2026-11-11 承認・実装、アプリでの実機は未確認)
+
+仕様は [SPEC_測定中の取り込み.md](../../specs/AS100201SwitchController/SPEC_測定中の取り込み.md)。ゆくゆく AI が測定中に「今どの操作をするのが完成に最も近づくか」を出すための下地で、**今は取り込んで加工し、CSV に残すだけ**(助言は出さない。画面にも値を出さない)。通常モードは何も変えていない。
+
+- 雛形を LOGGER で開く前に、雛形の xdt からチャンネルと換算係数を読む(ログに「測定中の取り込み：雛形のチャンネル …」)。読めない雛形では F8 を受け付けない
+- F8 で測定を始めると、0.2 秒ごとに LOGGER から続きの点を取り出し(共通部品 `WaveLoggerSession.ReadRawData`)、換算して、大きさ・傾きなど(1 行 167 欄。SPEC の「加工する値」)を計算する。熟練者の判断を前提にしない一般的な値で、xdt が残るので後から変えて計算し直せる
+- LOGGER が停止に戻ったら残りを取り出し、xdt の後に、同じ日付フォルダー・同じ名前の CSV(例: `学習データ\20261111\20261111_101530_PC.csv`、UTF-8 BOM 付き)を書く。書けなければ xdt と同じく止めて「再試行」。ログに「測定中の取り込み：N 回、M 点、K 行」
+- 取り込みに失敗したら(LOGGER の例外、点数が減った、無効値、測定中なのに点数が 2 秒増えない)、LOGGER を止め、台帳に測定の行(停止のきっかけ「取り込み異常」)、xdt と、そこまでの CSV を残し、最前面の窓で知らせる。異常ログ(`Logs\`)に `LIVE_CAPTURE_FAILED`。次の F8 でまた取り込む
+- 取り込みは画面のスレッドで行う(1 回 5 CH で平均 6ms・最大 18ms、確認ツールの実測)。その間に押された PC_go / CR_go の出し直しは、その分だけ遅れることがある
+- CSV と xdt の突き合わせ(実機確認用): `Tests/Compatibility/bin/Debug/net9.0-windows/AS100201.RegressionTests.exe --compare-features <xdt>`。同じ名前の CSV の各行の点数で xdt の先頭を切り出して計算し直し、全欄一致で `OK`(終了コード 0)
+
+確かめたこと(2026-11-11):
+
+- 全体の `.sln` のビルド(エラー・警告なし)、`Wrappers/` のテスト全部、互換テスト 26 グループ(模擬。xdt の値を少しずつ渡して計算した値が、xdt から計算し直した値と全欄一致することを含む)
+- 共通部品の `ReadRawData` を NR-500・旧 WAVE LOGGER の実機で確認(確認ツール、10 秒・1012 点、保存した xdt と全点一致、1 回平均 6.1ms)
+
+**実機では未確認**(アプリの画面から): F8 → 取り込み → sw4 / 操作ボタン / 自動停止で CSV ができ、`--compare-features` で一致すること。取り込み中の PC_go / CR_go の遅れ(ログの時刻)。LOGGER の USB を抜いたときに「取り込み異常」で止まること。2026-11-11 に開発用のタッチパネルの代わりで試そうとしたが、WF1973 の接続確認が 120 秒で失敗し(NI-VISA の機器の一覧の取得から応答しなかった。今回の変更より前からある接続確認の部分)、測定まで進めなかった。WF1973 と USB を確かめてからやり直す
 
 ## 2 回押し(試用中)と位相の入力(2026-11-09)
 

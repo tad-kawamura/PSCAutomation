@@ -53,7 +53,8 @@ dotnet run --project Wrappers/Tests/WaveLogger.LiveReadCheck -- --template "<雛
 
 ## 作りの注意
 
-- 部品(`WaveLoggerSession`)は変えていない。値の取り出しは部品に無いので、部品が持っている LOGGER の参照をリフレクションで借りてメーカー API を呼んでいる。**確認用だけの手段**で、アプリでは使わない。使えると分かったら、部品に関数を足す(全アプリに影響するので人に確認してから)
+- 2026-11-11 に部品(`WaveLoggerSession`)へ `ReadRawData` / `GetCurrentRawValue` を足した(人の承認)。まとめて取る既定の読み取りと最新値は、その関数を使う。表の「GetDataCount」は 1 点ずつのときだけ数え、まとめて取るときは「値の取り出し」に含まれる
+- 1 点ずつの `GetData`(`--per-point` と、まとめて取れないときの切り替え)と、まとめて取った値の先頭・末尾を `GetData` で照合する部分は、部品に無いので今も LOGGER の参照をリフレクションで借りている(**確認用だけの手段**で、アプリでは使わない)
 - 読み取りは LOGGER の部品と同じ画面のスレッド(STA)から `await Task.Delay` をはさんで呼ぶ。アプリでタイマーから呼ぶときと同じ条件
 - 取り出す値は換算前(電圧など)。助言に使うときは雛形の換算係数(`XdtFile` の `ChannelInfo.Gain` / `Offset`)で換算する
 
@@ -68,3 +69,4 @@ dotnet run --project Wrappers/Tests/WaveLogger.LiveReadCheck -- --template "<雛
   - 停止後に保存した xdt(2020 点)と、測定中に取り出した値が 5 CH とも全点一致。雛形の換算係数で換算した値と xdt の換算値の差は 0
   - 弁・エア・発振器はつないでいない(値は 0 付近のノイズ)。ノイズでも点ごとに値が変わるので突き合わせにはなるが、大きく動く波形では見ていない
   - 未確認: WAVE LOGGER X、NR-X、雛形の最後(約 51 秒)まで記録して自動で止まったとき、AS100201SwitchController の画面(Arduino・WF1973 の処理と同じ UI スレッド)から読んだとき、読み取り間隔を短く(例: 50ms)したとき
+- 2026-11-11(部品に関数を足したあと): 同じ条件で `--stop-after 10`。部品の `ReadRawData` でまとめて取れ、`GetData` との照合も合った。`ReadRawData` 1 回(5 CH)平均 6.1ms・最大 17.8ms、遅れ平均 0.07 秒・最大 0.14 秒、保存した xdt(1012 点)と 5 CH 全点一致。終了コード 0。`GetCurrentRawValue` は 1 チャンネルごとにアクティブなファイルを取り直すので、5 CH で平均 7.5ms(前は 1.9ms。アプリでは使っていない)

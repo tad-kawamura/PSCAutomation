@@ -21,8 +21,9 @@ namespace PSCAutomation.Wrappers.WaveLogger.LiveReadCheck;
 //   3. LOGGER が止まったら xdt を保存し、測定中に取り出した値と 1 点ずつ突き合わせる
 //      雛形の換算(スケーリング)で換算した値と、保存した xdt の換算値も比べる
 //
-// 部品(WaveLoggerSession)は変えない。値の取り出しは部品に無いので、部品が持っている LOGGER の参照を
-// リフレクションで借りてメーカー API を呼ぶ(確認用だけの手段。使えると分かったら部品に関数を足す相談をする)。
+// 2026-11-10 の作成時は部品に値の取り出しが無かったので、部品が持っている LOGGER の参照をリフレクションで借りてメーカー API を呼んだ。
+// 2026-11-11 に部品へ ReadRawData / GetCurrentRawValue を足したので、既定(まとめて取る)はその関数を使う。
+// GetData の 1 点ずつ(--per-point と、まとめて取れないときの切り替え)と、GetArrayData と GetData の照合は、部品に無いので今も参照を借りる。
 //
 //   WaveLogger.LiveReadCheck --template <xdt> [--interval 200] [--stop-after 秒] [--max-seconds 120]
 //                            [--unit 1] [--per-point] [--out <フォルダ>] [--logger legacy|x|auto] [--usb-id 0]
@@ -30,7 +31,7 @@ namespace PSCAutomation.Wrappers.WaveLogger.LiveReadCheck;
 internal static class Program
 {
     // GetData / GetCurrentData は異常時に 3.4×10^38 を返す(説明書 7.4.2.3 / 7.4.2.4)
-    private const float InvalidThreshold = 3.0e38f;
+    private const float InvalidThreshold = WaveLoggerSession.InvalidRawValueThreshold;
 
     private sealed class Options
     {
@@ -104,6 +105,7 @@ internal static class Program
         TimeSpan interval = templateFile.SampleInterval
             ?? throw new InvalidDataException("雛形からサンプリング周期を読めません。");
         var channels = templateFile.Channels.Select(c => new Channel(c.Info)).ToList();
+        int[] apiChannels = channels.Select(c => c.ComChannel).ToArray();
 
         Console.WriteLine($"雛形: {template}");
         Console.WriteLine($"  形式 {templateFile.Info.Format} / 周期 {interval.TotalMilliseconds:0.###}ms / 雛形の点数 {templateFile.SampleCount}");
@@ -177,41 +179,79 @@ internal static class Program
 
                 long count = 0, added = 0;
                 double countMs = 0, readMs = 0, currentMs = 0;
-                WithDocument<int>(app, doc =>
+                bool done = false;
+                if (useArray)
                 {
+                    // 部品の ReadRawData(GetDataCount と全チャンネルの GetArrayData を 1 回で)。時間は「値の取り出し」に入れる。
                     sw.Restart();
-                    count = Convert.ToInt64(doc.GetDataCount());
-                    countMs = sw.Elapsed.TotalMilliseconds;
-                    tCount.Add(countMs);
-
-                    if (count < readPos)
+                    LoggerRawDataBlock? block = null;
+                    try { block = logger.ReadRawData(opts.Unit, apiChannels, readPos); }
+                    catch (Exception ex)
                     {
-                        notes.Add($"{now:F2} 秒: 点数が減った({readPos} → {count})。ここから読み直す");
-                        foreach (var c in channels) c.Values.Clear();
-                        readPos = 0;
+                        notes.Add($"{now:F2} 秒: ReadRawData で例外({ex.GetType().Name}: {ex.Message})。以後 1 点ずつ取る");
+                        useArray = false;
                     }
-                    if (count > readPos)
+                    if (block is not null)
                     {
-                        sw.Restart();
-                        added = count - readPos;
-                        foreach (var c in channels)
-                            c.Values.AddRange(ReadRange((object)doc, opts.Unit, c, readPos, (int)added, ref useArray, notes, now));
                         readMs = sw.Elapsed.TotalMilliseconds;
                         tRead.Add(readMs);
-                        readPos = count;
-                        increments.Add((now, added));
+                        count = block.TotalCount;
+                        if (count < readPos)
+                        {
+                            notes.Add($"{now:F2} 秒: 点数が減った({readPos} → {count})。ここから読み直す");
+                            foreach (var c in channels) c.Values.Clear();
+                            readPos = 0;
+                            done = true;
+                        }
+                        else if (block.Count > 0 && !MatchesPerPoint(app, opts.Unit, channels, block, notes, now))
+                        {
+                            useArray = false;   // 照合が合わなければ、この回の分から 1 点ずつ取り直す
+                        }
+                        else
+                        {
+                            added = block.Count;
+                            for (int i = 0; i < channels.Count; i++) channels[i].Values.AddRange(block.Values[i]);
+                            readPos = count;
+                            if (added > 0) increments.Add((now, added));
+                            done = true;
+                        }
                     }
-
-                    sw.Restart();
-                    foreach (var c in channels)
+                }
+                if (!done)
+                {
+                    WithDocument<int>(app, doc =>
                     {
-                        float v = Convert.ToSingle(doc.GetCurrentData(opts.Unit, c.ComChannel));
-                        c.Current = v >= InvalidThreshold ? null : v;
-                    }
-                    currentMs = sw.Elapsed.TotalMilliseconds;
-                    tCurrent.Add(currentMs);
-                    return 0;
-                });
+                        sw.Restart();
+                        count = Convert.ToInt64(doc.GetDataCount());
+                        countMs = sw.Elapsed.TotalMilliseconds;
+                        tCount.Add(countMs);
+
+                        if (count < readPos)
+                        {
+                            notes.Add($"{now:F2} 秒: 点数が減った({readPos} → {count})。ここから読み直す");
+                            foreach (var c in channels) c.Values.Clear();
+                            readPos = 0;
+                        }
+                        if (count > readPos)
+                        {
+                            sw.Restart();
+                            added = count - readPos;
+                            foreach (var c in channels)
+                                c.Values.AddRange(ReadPerPoint((object)doc, opts.Unit, c, readPos, (int)added));
+                            readMs = sw.Elapsed.TotalMilliseconds;
+                            tRead.Add(readMs);
+                            readPos = count;
+                            increments.Add((now, added));
+                        }
+                        return 0;
+                    });
+                }
+
+                // 部品の GetCurrentRawValue(無効値は null)。
+                sw.Restart();
+                foreach (var c in channels) c.Current = logger.GetCurrentRawValue(opts.Unit, c.ComChannel);
+                currentMs = sw.Elapsed.TotalMilliseconds;
+                tCurrent.Add(currentMs);
                 tTick.Add(tick.Elapsed.TotalMilliseconds);
 
                 // PC に届くまでの遅れ: 記録開始からの時間で本来あるはずの点数と、届いている点数の差
@@ -294,36 +334,27 @@ internal static class Program
         finally { if (Marshal.IsComObject(doc)) Marshal.ReleaseComObject(doc); }
     }
 
-    // まず GetArrayData でまとめて取り、先頭と末尾を GetData と比べて正しく受け取れたか確かめる。
-    // 受け取れない(例外・戻り値が負・値が合わない)ときは、以後 GetData で 1 点ずつ取る。
-    private static float[] ReadRange(object document, int unit, Channel c, long start, int count, ref bool useArray, List<string> notes, double now)
+    // 部品の ReadRawData で取った値の先頭と末尾を、GetData の 1 点と比べて正しく受け取れたか確かめる(部品に GetData は無い)。
+    private static bool MatchesPerPoint(object app, int unit, List<Channel> channels, LoggerRawDataBlock block, List<string> notes, double now) =>
+        WithDocument(app, doc =>
+        {
+            for (int i = 0; i < channels.Count; i++)
+            {
+                var c = channels[i];
+                float[] values = block.Values[i];
+                float first = Convert.ToSingle(doc.GetData(unit, c.ComChannel, (int)block.Start));
+                float last = Convert.ToSingle(doc.GetData(unit, c.ComChannel, (int)(block.Start + values.Length - 1)));
+                if (first == values[0] && last == values[^1]) continue;
+                notes.Add($"{now:F2} 秒 {c.Label}: ReadRawData(GetArrayData)の値が GetData と合わない(先頭 {values[0]} / {first}、末尾 {values[^1]} / {last})。以後 1 点ずつ取る");
+                return false;
+            }
+            return true;
+        });
+
+    // GetData で 1 点ずつ取る(--per-point と、まとめて取れないときの切り替え)。
+    private static float[] ReadPerPoint(object document, int unit, Channel c, long start, int count)
     {
         dynamic doc = document;
-        if (useArray)
-        {
-            try
-            {
-                float[] buffer = new float[count];
-                long got = Convert.ToInt64(doc.GetArrayData(unit, c.ComChannel, (int)start, count, ref buffer, 0));
-                if (got == count && buffer.Length >= count)
-                {
-                    float first = Convert.ToSingle(doc.GetData(unit, c.ComChannel, (int)start));
-                    float last = Convert.ToSingle(doc.GetData(unit, c.ComChannel, (int)(start + count - 1)));
-                    if (first == buffer[0] && last == buffer[count - 1]) return buffer[..count];
-                    notes.Add($"{now:F2} 秒 {c.Label}: GetArrayData の値が GetData と合わない(先頭 {buffer[0]} / {first}、末尾 {buffer[count - 1]} / {last})。以後 1 点ずつ取る");
-                }
-                else
-                {
-                    notes.Add($"{now:F2} 秒 {c.Label}: GetArrayData の戻り値 {got}(要求 {count})。以後 1 点ずつ取る");
-                }
-            }
-            catch (Exception ex)
-            {
-                notes.Add($"{now:F2} 秒 {c.Label}: GetArrayData で例外({ex.GetType().Name}: {ex.Message})。以後 1 点ずつ取る");
-            }
-            useArray = false;
-        }
-
         var values = new float[count];
         for (int i = 0; i < count; i++)
         {

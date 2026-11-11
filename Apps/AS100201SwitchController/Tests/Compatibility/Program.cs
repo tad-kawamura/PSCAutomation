@@ -18,15 +18,30 @@ internal static class Program
     internal static void Pass(string message) { ++_passed; Console.WriteLine("PASS " + message); }
 
     [STAThread]
-    private static void Main()
+    private static int Main(string[] args)
     {
+        // 実機確認用: 学習モードが残した取り込みの CSV と、同じ名前の xdt から計算し直した値を突き合わせる(2026-11-11)。
+        //   AS100201.RegressionTests.exe --compare-features <xdt> [<csv>]   (csv を省くと xdt と同じ名前の .csv)
+        if (args.Length is 2 or 3 && args[0] == "--compare-features")
+        {
+            string xdt = args[1];
+            string csv = args.Length == 3 ? args[2] : As100201LearningSession.FeaturesPath(xdt);
+            var problems = As100201FeatureComparison.Compare(xdt, csv);
+            foreach (var p in problems.Take(20)) Console.WriteLine("NG " + p);
+            Console.WriteLine(problems.Count == 0 ? $"OK 取り込みの CSV と xdt から計算した値が一致: {csv}" : $"NG {problems.Count} 件: {csv}");
+            return problems.Count == 0 ? 0 : 1;
+        }
+
         GeneratorChecks().GetAwaiter().GetResult();
         LoggerChecks();
         ProtocolAndLogChecks();
         DoublePressChecks().GetAwaiter().GetResult();
+        // 測定中の取り込みと加工(2026-11-11 承認の追加仕様)。LiveCaptureChecks.cs の 4 グループ。
+        LiveCaptureChecks.Run();
         // 学習モード(2026-11-09 承認の追加仕様)。LearningChecks.cs の 6 グループ。
         LearningChecks.Run().GetAwaiter().GetResult();
         Console.WriteLine($"All {_passed} compatibility groups passed. No device or LOGGER application was opened.");
+        return 0;
     }
 
     private static async Task GeneratorChecks()

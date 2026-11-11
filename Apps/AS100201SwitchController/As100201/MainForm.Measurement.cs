@@ -25,6 +25,8 @@ internal sealed partial class MainForm : Form
 
     private void StartMeasurement()
     {
+        // 学習モード: 雛形から取り込みの情報を読めていなければ始めない(通常モードでは何もしない)。
+        EnsureLiveCaptureReady();
         var timer = System.Diagnostics.Stopwatch.StartNew();
         long result = _logger.Start();
         if (result != 0)
@@ -32,6 +34,7 @@ internal sealed partial class MainForm : Form
         _measurementStarted = true;
         _measurementState.State = 2;
         _measurementState.ReadAfter = Environment.TickCount64 + 500;
+        BeginLiveCapture();
         AppendLog("WAVE LOGGER 測定開始");
         AppendLog($"処理時間：LOGGER測定開始 = {timer.Elapsed.TotalMilliseconds:F1} ms");
     }
