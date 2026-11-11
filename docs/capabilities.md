@@ -27,7 +27,7 @@
 - 本体の検出: NR-500 を USB で、NR-X を USB / LAN / Wi-Fi で確認する
 - 雛形ファイル(xdt / ydt)を開く・閉じる、記録開始(`StartAsync` トリガ付き / `StartSingleAcquisition` 1 回収集 / `Start` 素の Start。違いは `Wrappers/WaveLogger.Automation/README.md`)、停止、状態取得(`GetState`、状態番号の意味は `LoggerMeasurementState`)
 - 保存: xdt、CSV
-- 参照波形の読み込み、横軸拡大、LOGGER 画面の復元・前面表示(`BringToFront`)。`BringToFront` は Windows に 1 回頼むだけで、M5Stack など外部入力から呼んだときやほかのアプリが前面のときは拒否されやすい。確実に前に出すときは `GetMainWindowHandle`(画面のハンドルを返すだけ、2026-11-10 追加)を `WindowActivation.TryActivate` に渡す(AS110AllCheck が使う)
+- 参照波形の読み込み、横軸拡大、LOGGER 画面の復元・前面表示(`BringToFront`)。`BringToFront` は Windows に 1 回頼むだけで、M5Stack など外部入力から呼んだときやほかのアプリが前面のときは拒否されやすい。確実に前に出すときは `GetMainWindowHandle`(画面のハンドルを返すだけ、2026-11-10 追加)を `WindowActivation.BringToTop` と `WindowActivation.TryActivate` に渡す(AS110AllCheck が使う。`BringToTop` を先に呼ぶと、入力先の切り替えを断られても画面は上に出る)
 - 終了処理: × 検知、停止・Quit・COM 解放、対象プロセスだけを終了(別プロセスは守る)
 - 終了の扱いを選べる(`Lifecycle`): 既定は上の終了処理(`ManagedShutdown`)。`ReferenceOnly` は LOGGER を止めず COM 参照だけ解放する(AS100201SwitchController の使い方。移植後に NR-500・旧 WAVE LOGGER で実機確認)
 - LOGGER 本体ソフトの起動だけを先に始めておける(`BeginServerStartup` → `WaitForServerStartupAsync` → `Initialize`)。旧 WAVE LOGGER の起動は 7〜8 秒かかるので、画面を作る前に始めて画面準備・他の機器の確認と重ねる。`Initialize` は起動済みの参照を受け取るだけになる。使わないアプリは何も変わらない(AS110AllCheck で NR-500・旧 WAVE LOGGER を実機確認、2026-11-05)
@@ -151,7 +151,7 @@ WAVE LOGGER を起動せずに、出力ファイルを直接読み書きする�
 
 - `ErrorNotification`: 警告・エラーのメッセージボックスを最前面に表示(LOGGER の後ろに隠れない)
 - `PcDelayObservation`: PC の処理遅延(タイマーの遅れ)を監視して記録。書き込み先は `Start(write)` で渡す(例: Arduino の異常ログ)
-- `WindowActivation`: 他プロセスの窓を前面にする
+- `WindowActivation`: 他プロセスの窓を前面にする(`TryActivate`。重なり順と入力先の両方を移す)。人の操作を受けていないアプリ(M5Stack など外部入力から呼んだとき)は Windows に入力先の切り替えを断られ、`TryActivate` だけでは前面の窓(Excel など)の後ろに残る。画面だけでも確実に上に出すときは、先に `BringToTop`(一度だけ最前面にしてすぐ戻す。入力先は変えない、2026-11-11 追加)を呼ぶ。`IsAbove` で 2 つの窓の重なり順を比べられる(2026-11-11 追加)。AS110AllCheck の LOGGER 前面表示が使う
 - `NrDeviceConnections` / `SingleAdapterWifiManager`: NR-X の接続先(USB / LAN / Wi-Fi)の整理と、Wi-Fi プロファイル切替。SSID 一覧は wrapper に持たず、アプリ側に置く(置き場はアプリを作るときに AI が聞く。`AGENTS.md`「仕様決め」)
 
 **NR-X を Wi-Fi で使うとき**(USB なら以下は要らない)

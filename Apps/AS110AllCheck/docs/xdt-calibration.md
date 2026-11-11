@@ -104,3 +104,13 @@ NR-XのYDTはCH2の編集構造を未検証のため今回のGUI校正対象外�
 確認：SaveAvailability に「合否ポップアップに持ち主がない」検査を足し、修正前のコードで失敗・修正後で成功。実 MainForm を表示する検証だけを飛ばす `--no-mainform-display` を足し、この PC で合否ポップアップの検証（入力先・Enter・自動で閉じる・再実行の確認）と実 Excel を使う検証（`--with-excel`）25 件が成功。Verification・AppShutdown・SaveAvailability（`--no-dialogs`）も成功。
 
 未確認：実際の LOGGER・Excel・M5Stack をつないだ Excel 転送で、メイン画面が前に出ないこと。
+
+### M5Stack から始めると LOGGER が Excel の後ろに残る（2026-11-11、ver2.04 の実機確認から）
+
+経緯：ver2.04 の実機で、M5Stack の B ボタンで漏れ試験を始めたとき、ログに「漏れチェック：Windowsが切り替えを許可しませんでした（前面=EXCEL「work.xlsx - Excel」）」、約0.5秒後の出し直しも「Windowsに拒否されました」と出て、LOGGER が前に出なかった（人の報告と画面の写真）。データ調整でも同じ状態（人の報告）。M5Stack からの操作ではアプリが人の操作を受けていないので、Windows が入力先の切り替えを断り、入力スレッドをつなぐ回り込みも効かなかった。さらに、`TryActivate` の最初の手順（重なり順を HWND_TOP へ）だけでは、前面の Excel の上に出ないことをこの PC の実験で確認した（PowerShell で 2 つの窓を作り、Excel 役を前面にしたまま LOGGER 役に HWND_TOP → 重なり順は変わらず。最前面にしてすぐ戻す → Excel 役の上に出て、入力先は Excel 役のまま）。
+
+変更：共通部品 `WindowActivation` に `BringToTop`（一度だけ最前面にしてすぐ戻す。入力先は変えない）と `IsAbove`（重なり順の比較）を足した（人の確認済み。既存の関数は変えていない）。LOGGER の前面表示（データ調整開始・漏れ試験実施・参照波形の読み込み後）は、先に `BringToTop` で画面を上に出し、そのうえで `TryActivate` で入力先の切替を試す。入力先を断られても LOGGER が前面の窓より上に見えていれば「LOGGERを前に出しました（…キーボードの入力先は〜のまま）」とログに出す。約0.5秒後の確認も、LOGGER が前面の窓より上に見えていれば出し直さない。
+
+確認：全体 `PSCAutomation.sln` の Release ビルド。`Common.Tests` に `BringToTop`・`IsAbove` の検査（通常の窓の一番上へ出し、最前面に固定しない）を足して成功。そのほかの `Wrappers/Tests`、Verification・AppShutdown・SaveAvailability（`--no-dialogs`、`--no-mainform-display --with-excel` 25 件）が成功。
+
+未確認：実機（M5Stack から始めたとき）で LOGGER が Excel の上に出ること。この開発 PC では Claude のアプリから起動したプロセスが前面の切り替えを許されるため、「切り替えを断られる」状況そのものは再現できていない（重なり順が上がることは、断られるかどうかに関係なく確認した）。キーボードの入力先は Excel のままになるので、LOGGER をキーボードで操作するときはクリックが要る。

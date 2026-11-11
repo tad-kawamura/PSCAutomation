@@ -109,11 +109,15 @@ internal sealed partial class MainForm : Form
         try
         {
             // M5Stackのボタンから始めたときや、前回のExcelが前面のときは、アプリが直前の操作を受けていないため
-            // 単純な前面要求はWindowsに拒否されやすい。Excelと同じく重なり順の変更と入力先の切替を両方行う。
-            bool activated = WindowActivation.TryActivate(_logger.GetMainWindowHandle());
-            AppendLog(activated
-                ? $"{operation}：LOGGERを最前面に表示しました。"
-                : $"{operation}：Windowsが切り替えを許可しませんでした（前面={DescribeForegroundWindow()}）。LOGGER画面をクリックしてください。");
+            // Windowsに前面の切り替え(入力先の切替)を断られる(ver2.04 の実機で確認)。断られても画面は上に出るよう、
+            // 先に最前面を経由して重なり順を上げ、そのうえで入力先の切替を試す。
+            IntPtr logger = _logger.GetMainWindowHandle();
+            AppendLog(RaiseLogger(logger) switch
+            {
+                LoggerRaise.Activated => $"{operation}：LOGGERを最前面に表示しました。",
+                LoggerRaise.OnTopOnly => $"{operation}：LOGGERを前に出しました（Windowsが入力先の切り替えを許可しないため、キーボードの入力先は{DescribeForegroundWindow()}のまま）。",
+                _ => $"{operation}：Windowsが切り替えを許可しませんでした（前面={DescribeForegroundWindow()}）。LOGGER画面をクリックしてください。",
+            });
         }
         catch (Exception ex)
         {
@@ -132,7 +136,8 @@ internal sealed partial class MainForm : Form
             if (IsDisposed || _closeRequested || !stillWanted()) return;
             IntPtr logger = _logger.GetMainWindowHandle();
             IntPtr foreground = GetForegroundWindow();
-            if (foreground == logger) return;
+            // 入力先が移らなくても、LOGGERが前面の窓より上に見えていればよい。
+            if (foreground == logger || WindowActivation.IsAbove(logger, foreground)) return;
             string front = DescribeForegroundWindow();
             // 警告などアプリのポップアップが出ているときは、その入力先を奪わない。
             if (foreground != Handle && IsOwnProcessWindow(foreground))
@@ -140,15 +145,24 @@ internal sealed partial class MainForm : Form
                 AppendLog($"{operation}：LOGGERの前に{front}があるため、出し直しませんでした。");
                 return;
             }
-            bool activated = WindowActivation.TryActivate(logger);
-            AppendLog(activated
-                ? $"{operation}：LOGGERの前に{front}が出たため、LOGGERを出し直しました。"
-                : $"{operation}：LOGGERの前に{front}が出ており、出し直しもWindowsに拒否されました。LOGGER画面をクリックしてください。");
+            AppendLog(RaiseLogger(logger) == LoggerRaise.Failed
+                ? $"{operation}：LOGGERの前に{front}が出ており、出し直しもできませんでした。LOGGER画面をクリックしてください。"
+                : $"{operation}：LOGGERの前に{front}が出たため、LOGGERを出し直しました。");
         }
         catch (Exception ex)
         {
             AppendLog($"{operation}のLOGGER前面確認：" + ex.Message);
         }
+    }
+
+    private enum LoggerRaise { Activated, OnTopOnly, Failed }
+
+    // 重なり順を上げてから入力先の切替を試す。入力先を断られても、前面の窓より上に出ていればOnTopOnly。
+    private static LoggerRaise RaiseLogger(IntPtr logger)
+    {
+        WindowActivation.BringToTop(logger);
+        if (WindowActivation.TryActivate(logger)) return LoggerRaise.Activated;
+        return WindowActivation.IsAbove(logger, GetForegroundWindow()) ? LoggerRaise.OnTopOnly : LoggerRaise.Failed;
     }
 
     // 前面の窓をログ用の言葉にする。原因の切り分け用(アプリの画面か、ほかのプロセスか)。

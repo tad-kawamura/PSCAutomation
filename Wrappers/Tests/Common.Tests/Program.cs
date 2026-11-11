@@ -37,7 +37,27 @@ Console.WriteLine("PASS NrXConnection: Wi-Fi の接続・復帰を切替クラ�
 // WindowActivation: 無効なウィンドウでは何もしない
 Check(!WindowActivation.TryActivate(IntPtr.Zero), "無効なハンドルで true");
 Console.WriteLine("PASS WindowActivation: 無効なハンドルでは false");
+
+// WindowActivation.BringToTop / IsAbove: 入力先を変えずに通常の窓の一番上へ出し、最前面には固定しない
+Check(!WindowActivation.BringToTop(IntPtr.Zero) && !WindowActivation.IsAbove(IntPtr.Zero, IntPtr.Zero), "BringToTop/IsAbove: 無効なハンドルで true");
+using (var lower = new System.Windows.Forms.Form { Text = "Common.Tests lower", ShowInTaskbar = false })
+using (var upper = new System.Windows.Forms.Form { Text = "Common.Tests upper", ShowInTaskbar = false })
+{
+    lower.Show(); upper.Show();
+    System.Windows.Forms.Application.DoEvents();
+    Check(WindowActivation.IsAbove(upper.Handle, lower.Handle) && !WindowActivation.IsAbove(lower.Handle, upper.Handle), "IsAbove: 後から出した窓が上にない");
+    Check(!WindowActivation.IsAbove(upper.Handle, upper.Handle), "IsAbove: 同じ窓で true");
+    Check(WindowActivation.BringToTop(lower.Handle), "BringToTop: false");
+    System.Windows.Forms.Application.DoEvents();
+    Check(WindowActivation.IsAbove(lower.Handle, upper.Handle), "BringToTop: 上に出ていない");
+    Check(!lower.TopMost && (GetWindowLongPtr(lower.Handle, -20).ToInt64() & 0x8) == 0, "BringToTop: 最前面のまま残った");
+}
+Console.WriteLine("PASS WindowActivation: BringToTop は通常の窓の一番上へ出し、最前面に固定しない。IsAbove で重なり順を比べる");
 Console.WriteLine("Common: all checks passed.");
+
+// 窓の拡張スタイル(WS_EX_TOPMOST=0x8 を見る)
+[System.Runtime.InteropServices.DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW")]
+static extern IntPtr GetWindowLongPtr(IntPtr window, int index);
 
 internal sealed class FakeWifi : IWifiConnectionManager
 {
