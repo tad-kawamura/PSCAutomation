@@ -116,6 +116,25 @@ internal static class LeakCheckTests
 
         // 1 点も読めなければ判定できない。
         Check(new LeakJudge(1.0).Finish()==LeakOutcome.Unmeasurable,"no values means unmeasurable");
+        Check(new LeakJudge(1.0,530.0).Finish()==LeakOutcome.Unmeasurable,"no values means unmeasurable even with a lower limit");
+
+        // 最大値の下限(AS110-035 は 530 kPa、2026-11-12 続き): 試験を終えた時点で最大値が届かなければ不合格。ちょうどは合格。
+        j=new LeakJudge(1.0,530.0);
+        foreach(double v in new[]{529.5,529.9,529.4})Check(!j.Add(v),"values below the lower limit do not stop the test (judged at the end)");
+        Check(j.Decided is null && j.Finish()==LeakOutcome.Fail && j.Problem!.Contains("529.900") && j.Problem.Contains("530.0"),
+            "maximum below the lower limit fails at the end");
+        j=new LeakJudge(1.0,530.0);
+        j.Add(529.5);j.Add(530.0);j.Add(529.6);
+        Check(j.Finish()==LeakOutcome.Pass,"maximum exactly at the lower limit passes");
+        j=new LeakJudge(1.0,530.0);
+        j.Add(530.0f);j.Add(529.9995f);
+        Check(j.Finish()==LeakOutcome.Pass && j.Maximum==530.0,"float-rounded maximum at the lower limit passes");
+        j=new LeakJudge(1.0,530.0);
+        j.Add(529.5);
+        Check(j.Add(528.0) && j.Finish()==LeakOutcome.Fail && j.Problem!.Contains("しきい値"),"difference failure during the test is kept (not replaced by the lower limit)");
+        j=new LeakJudge(1.0,530.0);
+        foreach(double v in new[]{539.900,540.314,540.100,539.672,539.700})j.Add(v);
+        Check(j.Finish()==LeakOutcome.Pass,"example from the LOGGER screen passes with the AS110-035 lower limit");
 
         // 換算前の値の換算と無効値。
         var channel=new LeakPressureChannel(2,100,-1);
@@ -230,6 +249,24 @@ internal static class LeakCheckTests
         Check(LeakTestInput.Validate("1","10",out _,out t) is null && t==10.0 && LeakTestInput.Validate("60","0.1",out _,out _) is null,"range limits are valid");
         foreach(var (sec,th) in new[]{("0","1.0"),("61","1.0"),("9.5","1.0"),("","1.0"),("abc","1.0"),("-1","1.0"),("10","0"),("10","0.05"),("10","10.1"),("10","1.05"),("10","x"),("10","-1"),("10","")})
             Check(LeakTestInput.Validate(sec,th,out _,out _) is not null,$"invalid input rejected: seconds '{sec}', threshold '{th}'");
+        Check(LeakTestInput.ValidateLowerLimit("530","AS110-035",out double limit) is null && limit==530.0
+            && LeakTestInput.ValidateLowerLimit(" 529.9 ","AS110-035",out limit) is null && limit==529.9
+            && LeakTestInput.ValidateLowerLimit("0.1","m",out _) is null && LeakTestInput.ValidateLowerLimit("1000.0","m",out _) is null,"lower limit inputs are valid");
+        Check(LeakTestInput.ValidateLowerLimit("","AS110-135B",out _)!.Contains("AS110-135B の最大値の下限が入っていません"),"blank lower limit names the model");
+        foreach(string text in new[]{"0","1000.1","530.05","x","-1"})
+            Check(LeakTestInput.ValidateLowerLimit(text,"m",out _) is not null,$"invalid lower limit rejected: '{text}'");
+        Check(LeakTestInput.ValidateFailDisplay("2.0",out double display) is null && display==2.0
+            && LeakTestInput.ValidateFailDisplay("0.5",out _) is null && LeakTestInput.ValidateFailDisplay("10",out _) is null,"fail display inputs are valid");
+        foreach(string text in new[]{"0.4","10.1","2.05","","x"})
+            Check(LeakTestInput.ValidateFailDisplay(text,out _) is not null,$"invalid fail display rejected: '{text}'");
+        // 設定の既定値: AS110-035 の下限 530 kPa、不合格の表示 2 秒。古い設定ファイル(項目なし)を読んでも同じ。
+        var defaults=System.Text.Json.JsonSerializer.Deserialize<TransferSettings>("{\"LeakTestSeconds\":12}")!;
+        Check(defaults.LeakTestSeconds==12 && defaults.LeakFailDisplaySeconds==2.0 && defaults.LeakMaximumLowerLimitKpa.Count==1
+            && defaults.LeakMaximumLowerLimitKpa["AS110-035"]==530.0,"old settings files get the AS110-035 lower limit and 2 s display");
+        var saved=new TransferSettings();saved.LeakMaximumLowerLimitKpa["AS110-135B"]=480.5;saved.LeakFailDisplaySeconds=3.5;
+        var reloaded=System.Text.Json.JsonSerializer.Deserialize<TransferSettings>(System.Text.Json.JsonSerializer.Serialize(saved))!;
+        Check(reloaded.LeakMaximumLowerLimitKpa["AS110-135B"]==480.5 && reloaded.LeakMaximumLowerLimitKpa["AS110-035"]==530.0 && reloaded.LeakFailDisplaySeconds==3.5,
+            "lower limits per model and display seconds are remembered");
     }
 
     // 工程: 最後の漏れ試験が合格・判定なし(NR-X)なら合格にできる。不合格・判定できないは回避が要る。試験を始めたら前の結果は使わない。
@@ -260,16 +297,19 @@ internal static class LeakCheckTests
         try
         {
             var at=new DateTime(2026,11,12,10,0,0);
-            var fail=new LeakTestResult(at,LeakOutcome.Fail,10,1.0,540.314,539.2,1.114,321,"差 1.114 kPa がしきい値 1.0 kPa を超えました");
+            var fail=new LeakTestResult(at,LeakOutcome.Fail,10,1.0,540.314,539.2,1.114,321,"差 1.114 kPa がしきい値 1.0 kPa を超えました",530.0);
             string path=LeakTestRecordFile.Append(root,"00100","AS110-035",fail);
             LeakTestRecordFile.Append(root,"00100","AS110-035",new LeakTestResult(at.AddMinutes(1),LeakOutcome.NotJudged,10,1.0,double.NaN,double.NaN,double.NaN,0,"NR-X は自動判定なし"));
             LeakTestRecordFile.AppendOverride(root,"00100","AS110-035",fail,at.AddMinutes(2));
             byte[] bytes=File.ReadAllBytes(path);
             string[] lines=File.ReadAllLines(path,System.Text.Encoding.UTF8);
             Check(path==Path.Combine(root,"漏れ試験記録.txt") && bytes[0]==0xEF && bytes[1]==0xBB && bytes[2]==0xBF,"record file is UTF-8 with BOM in the save folder");
-            Check(lines.Length==4 && lines[0]==LeakTestRecordFile.Header && lines.All(l=>l.Split('\t').Length==11),"header and one tab-separated line per test (11 columns)");
-            Check(lines[1]=="2026-11-12 10:00:00\t00100\tAS110-035\t不合格\t10\t1.0\t540.314\t539.200\t1.114\t321\t差 1.114 kPa がしきい値 1.0 kPa を超えました","failed test line has values");
-            Check(lines[2].Split('\t')[3]=="判定なし（人が判断）" && lines[2].Split('\t')[6]=="-" && lines[2].Split('\t')[9]=="-","NR-X line has no values");
+            Check(lines.Length==4 && lines[0]==LeakTestRecordFile.Header && lines.All(l=>l.Split('\t').Length==12),"header and one tab-separated line per test (12 columns)");
+            Check(lines[0].Split('\t')[10]=="備考" && lines[0].Split('\t')[11]=="最大値の下限(kPa)","lower limit column is added at the end (earlier columns keep their position)");
+            Check(lines[1]=="2026-11-12 10:00:00\t00100\tAS110-035\t不合格\t10\t1.0\t540.314\t539.200\t1.114\t321\t差 1.114 kPa がしきい値 1.0 kPa を超えました\t530.0","failed test line has values");
+            Check(lines[2].Split('\t')[3]=="判定なし（人が判断）" && lines[2].Split('\t')[6]=="-" && lines[2].Split('\t')[9]=="-" && lines[2].Split('\t')[11]=="-","NR-X line has no values");
+            Check(lines[3].Split('\t')[11]=="530.0","override line keeps the lower limit of the previous test");
+            Check(new LeakTestResult(at,LeakOutcome.Pass,10,1.0,540.314,539.7,0.642,1000,"",530.0).Summary.Contains("最大値 540.314 kPa ≧ 下限 530.0 kPa"),"pass summary shows the lower limit");
             Check(lines[3].Split('\t')[3]=="人の判断で合格" && lines[3].Split('\t')[10].StartsWith("直前の判定：不合格"),"override line records the previous judgment");
             Check(!File.Exists(Path.Combine(root,"完了記録.txt")),"completion journal is not touched");
         }

@@ -34,6 +34,12 @@ internal sealed class TransferSettings
     public int LeakTestSeconds { get; set; } = 10;
     [Browsable(false)]
     public double LeakThresholdKpa { get; set; } = 1.0;
+    // 不合格・判定できないときに判定画面へ結果を出しておく秒数(合格は 0.5 秒のまま)。全型式で共通(2026-11-12 続き)。
+    [Browsable(false)]
+    public double LeakFailDisplaySeconds { get; set; } = 2.0;
+    // 圧力の最大値の下限(kPa)。型式ごとに覚える(2026-11-12 続き)。AS110-035 だけ初期値あり、ほかの型式は入れるまで無い。
+    [Browsable(false)]
+    public Dictionary<string,double> LeakMaximumLowerLimitKpa { get; set; } = new() { ["AS110-035"]=530.0 };
     // 移動平均はLOGGERのチャンネル設定をXdtReaderが適用する。
     public static string SettingsPath => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"AS110BoltCheck","ver3.json");
     public static TransferSettings Load() => File.Exists(SettingsPath)

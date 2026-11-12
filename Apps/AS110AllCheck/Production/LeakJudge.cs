@@ -7,6 +7,7 @@ namespace PSCAutomation.Apps.AS110AllCheck;
 // 漏れ試験の自動判定(specs/AS110AllCheck/SPEC.md「漏れ試験の自動判定」、2026-11-12 承認)。画面・機器に依存しない。
 // 人は LOGGER の画面で圧力 CH の「最大値 − 現在値 ≦ 1.0 kPa」なら合格としていた。試験中に読み出した全点で
 // 「収集開始からの最大値 − その点の値」を比べ、一度でもしきい値を超えたら不合格(その時点で打ち切る)。
+// 試験時間を終えた時点で最大値が下限(型式ごと。AS110-035 は 530 kPa)に届いていなければ不合格(2026-11-12 続き)。
 
 // 最後に行った漏れ試験の結果。NotJudged は自動判定をしなかった(NR-X。人が判断する)。
 internal enum LeakOutcome { NotJudged, Pass, Fail, Unmeasurable }
@@ -53,13 +54,17 @@ internal sealed class LeakJudge
     // 丸めた値どうしの引き算の誤差で、ちょうどしきい値が「超えた」にならないための余裕。
     private const double Tolerance = 1e-9;
 
-    public LeakJudge(double thresholdKpa)
+    // maximumLowerLimitKpa は最大値の下限(null は比べない)。
+    public LeakJudge(double thresholdKpa, double? maximumLowerLimitKpa = null)
     {
         if (!(thresholdKpa > 0) || !double.IsFinite(thresholdKpa)) throw new ArgumentOutOfRangeException(nameof(thresholdKpa));
+        if (maximumLowerLimitKpa is double limit && !double.IsFinite(limit)) throw new ArgumentOutOfRangeException(nameof(maximumLowerLimitKpa));
         Threshold = thresholdKpa;
+        MaximumLowerLimit = maximumLowerLimitKpa;
     }
 
     public double Threshold { get; }
+    public double? MaximumLowerLimit { get; }
     public long Points { get; private set; }
     public double Maximum { get; private set; } = double.NaN;
     public double Latest { get; private set; } = double.NaN;
@@ -98,10 +103,15 @@ internal sealed class LeakJudge
         Problem = reason;
     }
 
-    // 試験時間を終えたときの結果。値を 1 点も読めなかったら判定できない。
+    // 試験時間を終えたときの結果。値を 1 点も読めなかったら判定できない。最大値が下限に届かなければ不合格(ちょうどは合格)。
     public LeakOutcome Finish()
     {
         if (Decided is null && Points == 0) MarkUnmeasurable("圧力の値を 1 点も読めませんでした");
+        if (Decided is null && MaximumLowerLimit is double limit && Maximum < limit - Tolerance)
+        {
+            Decided = LeakOutcome.Fail;
+            Problem = $"最大値 {Format(Maximum)} kPa が下限 {Format(limit, 1)} kPa に届きません";
+        }
         return Decided ?? LeakOutcome.Pass;
     }
 
@@ -127,10 +137,10 @@ internal sealed class LeakMonitor
     private readonly List<double> _scaled = [];
     private int _judged;
 
-    public LeakMonitor(LeakPressureChannel channel, double thresholdKpa, Func<int, IReadOnlyList<int>, long, LoggerRawDataBlock> read)
+    public LeakMonitor(LeakPressureChannel channel, double thresholdKpa, Func<int, IReadOnlyList<int>, long, LoggerRawDataBlock> read, double? maximumLowerLimitKpa = null)
     {
         Channel = channel;
-        Judge = new LeakJudge(thresholdKpa);
+        Judge = new LeakJudge(thresholdKpa, maximumLowerLimitKpa);
         _read = read;
     }
 
@@ -201,10 +211,13 @@ internal sealed class LeakMonitor
 }
 
 // 画面で入れる試験秒数としきい値(SPEC: 秒数 1〜60 の整数、しきい値 0.1〜10.0 kPa を 0.1 刻み)。
+// 最大値の下限は 0.1〜1000.0 kPa、不合格の表示は 0.5〜10.0 秒(どちらも 0.1 刻み。2026-11-12 続き)。
 internal static class LeakTestInput
 {
     public const int MinSeconds = 1, MaxSeconds = 60;
     public const double MinThreshold = 0.1, MaxThreshold = 10.0;
+    public const double MinLowerLimit = 0.1, MaxLowerLimit = 1000.0;
+    public const double MinFailDisplay = 0.5, MaxFailDisplay = 10.0;
 
     // 正しければ null、だめなら理由。
     public static string? Validate(string secondsText, string thresholdText, out int seconds, out double threshold)
@@ -217,5 +230,28 @@ internal static class LeakTestInput
             return $"しきい値は {MinThreshold:F1}〜{MaxThreshold:F1} kPa を 0.1 刻みで入力してください（今：「{thresholdText.Trim()}」）。";
         threshold = Math.Round(threshold, 1);
         return null;
+    }
+
+    // 最大値の下限(型式ごと)。空欄はだめ(自動判定しないときは呼ばない)。
+    public static string? ValidateLowerLimit(string text, string modelName, out double lowerLimit)
+    {
+        if (TryParseTenths(text, MinLowerLimit, MaxLowerLimit, out lowerLimit)) return null;
+        return text.Trim().Length == 0
+            ? $"{modelName} の最大値の下限が入っていません。{MinLowerLimit:F1}〜{MaxLowerLimit:F1} kPa を 0.1 刻みで入力してください。"
+            : $"最大値の下限は {MinLowerLimit:F1}〜{MaxLowerLimit:F1} kPa を 0.1 刻みで入力してください（今：「{text.Trim()}」）。";
+    }
+
+    // 不合格・判定できないの表示秒数。
+    public static string? ValidateFailDisplay(string text, out double seconds) =>
+        TryParseTenths(text, MinFailDisplay, MaxFailDisplay, out seconds) ? null
+            : $"不合格の表示は {MinFailDisplay:F1}〜{MaxFailDisplay:F1} 秒を 0.1 刻みで入力してください（今：「{text.Trim()}」）。";
+
+    private static bool TryParseTenths(string text, double min, double max, out double value)
+    {
+        if (!double.TryParse(text.Trim(), NumberStyles.AllowDecimalPoint, CultureInfo.InvariantCulture, out value)
+            || value < min - 1e-9 || value > max + 1e-9 || Math.Abs(value * 10 - Math.Round(value * 10)) > 1e-6)
+        { value = 0; return false; }
+        value = Math.Round(value, 1);
+        return true;
     }
 }

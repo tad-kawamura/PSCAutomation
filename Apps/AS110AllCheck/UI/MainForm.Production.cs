@@ -305,7 +305,8 @@ internal sealed partial class MainForm : Form
         _savePathPanel.Visible=_chooseSaveRootButton.Visible=_rootBox.Visible=_releaseSerialButton.Visible=production;
         _saveButton.Visible=_leakOutputButton.Visible=_leakButton.Visible=_completeButton.Visible=production;
         _leakSettingsPanel.Visible=production;
-        _leakSecondsBox.Enabled=_leakThresholdBox.Enabled=!_leakRunning;
+        _leakSecondsBox.Enabled=_leakThresholdBox.Enabled=_leakLowerLimitBox.Enabled=_leakFailDisplayBox.Enabled=!_leakRunning;
+        RefreshLeakLowerLimitBox();
         _rangePanel.Visible=_rangeStartLabel.Visible=_rangeStartBox.Visible=_lastSerialLabel.Visible=_lastSerialBox.Visible=production;
         _serialPanel.Visible=_serialLabel.Visible=_serialBox.Visible=production;
         _saveRootWarningLabel.Text=production?SaveFolder.CheckRange(_rootBox.Text,_serialBox.Text.Trim()):"";
