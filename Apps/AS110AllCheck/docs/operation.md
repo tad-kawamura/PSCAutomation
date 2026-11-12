@@ -12,7 +12,7 @@ AS110 ver3 / 2026-10-19
    これまで使っていたIvi.Visa.Interop等の参照を指定し直してください。
 4. 元の「雛形」フォルダから、LOGGER用.xdt/.ydtと各型式の参照波形.xybをコピーします。
    LOGGER雛形は拡張子ごとに1件です。データ取りは2ms・6500点に設定してください。
-   Excel雛形は型式ごとに「<型式名>雛形.xlsx」です（同梱はAS110-035雛形.xlsx・AS110-015雛形.xlsx・AS110-116B雛形.xlsx）。
+   Excel雛形は型式ごとに「<型式名>雛形.xlsx」です（同梱はAS110-035雛形.xlsx・AS110-015雛形.xlsx・AS110-116B雛形.xlsx・AS110-135B雛形.xlsx）。
 5. firmware/AS110M5Stack/AS110M5Stack.inoをM5Stack Basic V2.7へ書き込みます。
    Arduino IDEの場合：ボードM5Core（esp32 3.x。古い版ではM5Stack-Core-ESP32）、ライブラリM5Unifiedを選びます。
    準備の詳しい手順は m5stack-arduino-ide-setup.md を参照してください。
