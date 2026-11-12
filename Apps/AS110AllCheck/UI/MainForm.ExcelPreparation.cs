@@ -7,14 +7,19 @@ internal sealed partial class MainForm : Form
     private System.Windows.Forms.Timer? _excelPreparationTimer;
     private bool _excelPreparing;
 
-    private string ExcelTemplatePath
+    // Excel 雛形は型式ごとに「<型式名>雛形.xlsx」(例: AS110-035雛形.xlsx)。無い型式はほかの型式の判定式で判定しないよう止める
+    // (2026-11-12、人の指示。それまでは「<型式名>.xlsx」が無ければ AS110-035 用の「雛形.xlsx」を使っていた)。
+    private static string ExcelTemplateFileName(ProductModel model) => model.Name + "雛形.xlsx";
+
+    private static string ExcelTemplatePathFor(ProductModel model)
     {
-        get
-        {
-            string specific = Path.Combine(TemplateFolderPath, _flow.Model.Name + ".xlsx");
-            return File.Exists(specific) ? specific : Path.Combine(TemplateFolderPath, "雛形.xlsx");
-        }
+        string path = Path.Combine(TemplateFolderPath, ExcelTemplateFileName(model));
+        if (!File.Exists(path))
+            throw new FileNotFoundException($"{ExcelTemplateFileName(model)} がありません。雛形フォルダーに置いてください。", path);
+        return path;
     }
+
+    private string ExcelTemplatePath => ExcelTemplatePathFor(_flow.Model);
 
     private string ExcelWorkPath => Path.Combine(_sessionFolder, "work.xlsx");
 

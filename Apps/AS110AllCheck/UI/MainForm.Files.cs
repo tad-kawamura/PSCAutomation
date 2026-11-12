@@ -141,6 +141,8 @@ internal sealed partial class MainForm : Form
                     throw new InvalidOperationException($"参照波形「{reference.DisplayName}」に対応する型式がありません。ファイル名に型式名（{string.Join("・", ProductModel.All.Select(m => m.Name))}）を含めてください。");
                 if (!CanChangeSetup && model != _flow.Model)
                     throw new InvalidOperationException("測定結果が残っている間は型式（参照波形）を変えられません。「設定変更（測定を破棄）」を先に押してください。");
+                // Excel 雛形の無い型式は、測る前に止める(転送してから気づかないように)。
+                ExcelTemplatePathFor(model);
                 _selectedModel = model;
                 if (CanChangeSetup) ConfigureProduct(requireSaveRoot: false);
             }
