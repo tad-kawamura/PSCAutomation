@@ -37,13 +37,23 @@ internal sealed class TransferSettings
     // 不合格・判定できないときに判定画面へ結果を出しておく秒数(合格は 0.5 秒のまま)。全型式で共通(2026-11-12 続き)。
     [Browsable(false)]
     public double LeakFailDisplaySeconds { get; set; } = 2.0;
-    // 圧力の最大値の下限(kPa)。型式ごとに覚える(2026-11-12 続き)。AS110-035 だけ初期値あり、ほかの型式は入れるまで無い。
+    // 圧力の最大値の下限(kPa)。型式ごとに覚える(2026-11-12 続き)。初期値があるのは下の型式だけ、ほかの型式は入れるまで無い。
+    // 初期値: AS110-035 は 530 kPa、AS110-015 は 550 kPa(2026-11-12、人の指示)。
+    public static IReadOnlyDictionary<string,double> DefaultLeakMaximumLowerLimitKpa { get; } =
+        new Dictionary<string,double> { ["AS110-035"]=530.0, ["AS110-015"]=550.0 };
     [Browsable(false)]
-    public Dictionary<string,double> LeakMaximumLowerLimitKpa { get; set; } = new() { ["AS110-035"]=530.0 };
+    public Dictionary<string,double> LeakMaximumLowerLimitKpa { get; set; } = new(DefaultLeakMaximumLowerLimitKpa);
     // 移動平均はLOGGERのチャンネル設定をXdtReaderが適用する。
     public static string SettingsPath => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"AS110BoltCheck","ver3.json");
-    public static TransferSettings Load() => File.Exists(SettingsPath)
-        ? JsonSerializer.Deserialize<TransferSettings>(File.ReadAllText(SettingsPath)) ?? new() : new();
+    public static TransferSettings Load() => File.Exists(SettingsPath) ? FromJson(File.ReadAllText(SettingsPath)) : new();
+    // 保存済みの設定ファイルは下限の表ごと読み込まれ、後から初期値を足した型式が抜ける。無い型式にだけ初期値を足す(人が入れた値は変えない)。
+    internal static TransferSettings FromJson(string json)
+    {
+        var settings=JsonSerializer.Deserialize<TransferSettings>(json) ?? new();
+        settings.LeakMaximumLowerLimitKpa ??= new();
+        foreach(var (model,limit) in DefaultLeakMaximumLowerLimitKpa) settings.LeakMaximumLowerLimitKpa.TryAdd(model,limit);
+        return settings;
+    }
     public void Save() { Directory.CreateDirectory(Path.GetDirectoryName(SettingsPath)!); File.WriteAllText(SettingsPath,JsonSerializer.Serialize(this,new JsonSerializerOptions { WriteIndented=true })); }
     // NR-X は LOGGER の標準 CSV を読む。列番号は上の NR-X CSV 列(0 は見出しの「電流」「圧力」・CH 番号から自動検出)。
     // 読み取りは Wrappers/LoggerFiles の LoggerCsvReader(移植前は Conversion/LoggerCsvReader.cs。判定の中身は同じ)。

@@ -47,7 +47,7 @@ internal sealed partial class MainForm : Form
     }
 
     // 下限の欄に、いまの型式(参照波形で決まる)の値を出す。型式が替わったときだけ入れ替える(入力中の値を消さない)。
-    // AS110-035 以外は覚えた値が無ければ空欄(SPEC: 入れるまで自動判定の漏れ試験を始めない)。
+    // 初期値の無い型式(AS110-035・015 以外)は覚えた値が無ければ空欄(SPEC: 入れるまで自動判定の漏れ試験を始めない)。
     private void RefreshLeakLowerLimitBox()
     {
         string model=_flow.Model.Name;
