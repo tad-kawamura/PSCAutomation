@@ -7,7 +7,7 @@ namespace PSCAutomation.Apps.AS110AllCheck;
 // 漏れ試験の自動判定(specs/AS110AllCheck/SPEC.md「漏れ試験の自動判定」、2026-11-12 承認)。画面・機器に依存しない。
 // 人は LOGGER の画面で圧力 CH の「最大値 − 現在値 ≦ 1.0 kPa」なら合格としていた。試験中に読み出した全点で
 // 「収集開始からの最大値 − その点の値」を比べ、一度でもしきい値を超えたら不合格(その時点で打ち切る)。
-// 試験時間を終えた時点で最大値が下限(型式ごと。AS110-035 は 530 kPa)に届いていなければ不合格(2026-11-12 続き)。
+// 最大値の下限(型式ごと。AS110-035 は 530 kPa)も点ごとに比べ、届いていなければその時点で不合格(2026-11-12 続き)。
 
 // 最後に行った漏れ試験の結果。NotJudged は自動判定をしなかった(NR-X。人が判断する)。
 internal enum LeakOutcome { NotJudged, Pass, Fail, Unmeasurable }
@@ -93,6 +93,14 @@ internal sealed class LeakJudge
             Problem = $"差 {Format(difference)} kPa がしきい値 {Format(Threshold, 1)} kPa を超えました";
             return true;
         }
+        // 最大値の下限も試験の始めから点ごとに比べる(人の指示、2026-11-12 続き)。ちょうど下限は合格。
+        // 最大値は上がるだけなので、実際には始めの点が下限に届いていないとすぐ不合格になる。
+        if (MaximumLowerLimit is double limit && Maximum < limit - Tolerance)
+        {
+            Decided = LeakOutcome.Fail;
+            Problem = $"最大値 {Format(Maximum)} kPa が下限 {Format(limit, 1)} kPa に届きません（{Points} 点目）";
+            return true;
+        }
         return false;
     }
 
@@ -103,15 +111,10 @@ internal sealed class LeakJudge
         Problem = reason;
     }
 
-    // 試験時間を終えたときの結果。値を 1 点も読めなかったら判定できない。最大値が下限に届かなければ不合格(ちょうどは合格)。
+    // 試験時間を終えたときの結果。値を 1 点も読めなかったら判定できない。
     public LeakOutcome Finish()
     {
         if (Decided is null && Points == 0) MarkUnmeasurable("圧力の値を 1 点も読めませんでした");
-        if (Decided is null && MaximumLowerLimit is double limit && Maximum < limit - Tolerance)
-        {
-            Decided = LeakOutcome.Fail;
-            Problem = $"最大値 {Format(Maximum)} kPa が下限 {Format(limit, 1)} kPa に届きません";
-        }
         return Decided ?? LeakOutcome.Pass;
     }
 

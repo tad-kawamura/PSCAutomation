@@ -118,20 +118,20 @@ internal static class LeakCheckTests
         Check(new LeakJudge(1.0).Finish()==LeakOutcome.Unmeasurable,"no values means unmeasurable");
         Check(new LeakJudge(1.0,530.0).Finish()==LeakOutcome.Unmeasurable,"no values means unmeasurable even with a lower limit");
 
-        // 最大値の下限(AS110-035 は 530 kPa、2026-11-12 続き): 試験を終えた時点で最大値が届かなければ不合格。ちょうどは合格。
+        // 最大値の下限(AS110-035 は 530 kPa、2026-11-12 続き): 試験の始めから点ごとに比べ、届いていなければその時点で不合格。ちょうどは合格。
         j=new LeakJudge(1.0,530.0);
-        foreach(double v in new[]{529.5,529.9,529.4})Check(!j.Add(v),"values below the lower limit do not stop the test (judged at the end)");
-        Check(j.Decided is null && j.Finish()==LeakOutcome.Fail && j.Problem!.Contains("529.900") && j.Problem.Contains("530.0"),
-            "maximum below the lower limit fails at the end");
+        Check(j.Add(529.9) && j.Decided==LeakOutcome.Fail && j.Points==1 && j.Problem!.Contains("529.900") && j.Problem.Contains("530.0") && j.Problem.Contains("1 点目"),
+            "maximum below the lower limit fails at once (real-time)");
+        Check(j.Add(540.0) && j.Finish()==LeakOutcome.Fail,"after a lower limit failure further values are ignored");
         j=new LeakJudge(1.0,530.0);
-        j.Add(529.5);j.Add(530.0);j.Add(529.6);
-        Check(j.Finish()==LeakOutcome.Pass,"maximum exactly at the lower limit passes");
+        Check(!j.Add(530.0) && !j.Add(529.6) && !j.Add(529.2) && j.Finish()==LeakOutcome.Pass,"maximum exactly at the lower limit passes (later values only need the difference)");
         j=new LeakJudge(1.0,530.0);
-        j.Add(530.0f);j.Add(529.9995f);
-        Check(j.Finish()==LeakOutcome.Pass && j.Maximum==530.0,"float-rounded maximum at the lower limit passes");
+        Check(!j.Add(530.0f) && !j.Add(529.9995f) && j.Finish()==LeakOutcome.Pass && j.Maximum==530.0,"float-rounded maximum at the lower limit passes");
         j=new LeakJudge(1.0,530.0);
-        j.Add(529.5);
-        Check(j.Add(528.0) && j.Finish()==LeakOutcome.Fail && j.Problem!.Contains("しきい値"),"difference failure during the test is kept (not replaced by the lower limit)");
+        Check(j.Add(529.999f) && j.Decided==LeakOutcome.Fail,"0.001 kPa below the lower limit fails");
+        j=new LeakJudge(1.0,530.0);
+        j.Add(531.0);
+        Check(j.Add(529.5) && j.Problem!.Contains("しきい値"),"after reaching the lower limit, a drop is judged by the difference");
         j=new LeakJudge(1.0,530.0);
         foreach(double v in new[]{539.900,540.314,540.100,539.672,539.700})j.Add(v);
         Check(j.Finish()==LeakOutcome.Pass,"example from the LOGGER screen passes with the AS110-035 lower limit");
@@ -174,6 +174,19 @@ internal static class LeakCheckTests
         data.AddRange([540f,540f]);m.Poll(TimeSpan.FromMilliseconds(50));
         data.AddRange([539.1f,538.9f,540f]);
         Check(m.Poll(TimeSpan.FromMilliseconds(60)) && m.Judge.Decided==LeakOutcome.Fail && m.Judge.Points==4,"failure inside a block stops at that point");
+
+        // 最大値の下限は読み出しの途中で比べ、届いていなければその場で打ち切る(移動平均 7 点なら 4 点読んだところで 1 点目を判定)。
+        data.Clear();
+        m=new LeakMonitor(new LeakPressureChannel(2,1,0,7),1.0,Read,530.0);
+        data.AddRange([529.6f,529.7f,529.8f]);
+        Check(!m.Poll(TimeSpan.FromMilliseconds(30)) && m.Judge.Points==0,"lower limit waits for the moving-average window like other checks");
+        data.AddRange([529.9f]);
+        Check(m.Poll(TimeSpan.FromMilliseconds(40)) && m.Judge.Decided==LeakOutcome.Fail && m.Judge.Points==1 && m.Judge.Problem!.Contains("下限"),
+            "start below the lower limit stops the test during reading");
+        data.Clear();
+        m=new LeakMonitor(new LeakPressureChannel(2,1,0,7),1.0,Read,530.0);
+        data.AddRange([539.9f,540.0f,539.8f,539.9f,539.7f]);
+        Check(!m.Poll(TimeSpan.FromMilliseconds(50)) && m.Judge.Decided is null && m.Finish()==LeakOutcome.Pass,"AS110-035 pressure above the lower limit keeps passing");
 
         m=new LeakMonitor(channel,1.0,(_,_,_)=>throw new InvalidOperationException("COM error"));
         Check(m.Poll(TimeSpan.Zero) && m.Judge.Decided==LeakOutcome.Unmeasurable && m.Judge.Problem!.Contains("COM error"),"read exception is unmeasurable");
