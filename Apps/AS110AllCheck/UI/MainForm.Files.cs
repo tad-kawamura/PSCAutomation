@@ -143,6 +143,8 @@ internal sealed partial class MainForm : Form
                     throw new InvalidOperationException("測定結果が残っている間は型式（参照波形）を変えられません。「設定変更（測定を破棄）」を先に押してください。");
                 // Excel 雛形の無い型式は、測る前に止める(転送してから気づかないように)。
                 ExcelTemplatePathFor(model);
+                // 型式が替わったら供給圧力は 490 kPa(データ取り)に戻す(出荷データの工程は型式ごとのため)。
+                if (model != _selectedModel) _shippingDataSelected = false;
                 _selectedModel = model;
                 if (CanChangeSetup) ConfigureProduct(requireSaveRoot: false);
             }

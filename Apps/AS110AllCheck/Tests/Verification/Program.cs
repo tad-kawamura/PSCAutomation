@@ -6,6 +6,7 @@ await LeakCheckTests.RunAsync();
 CalibrationTests.Run();
 CalibrationRecordTests.Run();
 await SupplyPressureTests.RunAsync();
+ShippingDataTests.Run();
 foreach (var isMotion in new[] { true, false })
 {
     double oldFrequency = isMotion ? 0.2 : 0.04;

@@ -195,6 +195,18 @@ internal sealed class ExcelWorkSession : IDisposable
     public void SaveCopies(string excel,string pdf)
     {
         if(!IsPass()) throw new InvalidOperationException("E21・L21の両方がOKのときだけ保存できます。");
+        SaveCopiesCore(excel,pdf);
+    }
+    // 判定しない出荷データ(AS110-116B350)の保存。計算は終わらせるが、E21・L21 は見ない(2026-11-12、SPEC「AS110-116B350 の出荷データ」)。
+    public void SaveCopiesWithoutJudgment(string excel,string pdf)
+    {
+        if(Closed || _book is null) throw new InvalidOperationException("作業用Excelが閉じられています。再転送してください。");
+        _book.CalculateSheets(_dataSheet);
+        if(_app!.IsCalculating) throw new InvalidOperationException("Excelが計算中です。しばらく待って再操作してください。");
+        SaveCopiesCore(excel,pdf);
+    }
+    private void SaveCopiesCore(string excel,string pdf)
+    {
         _book!.SaveCopyAs(excel);
         using var sheet=_book.Sheet(HeaderSheet);
         sheet.ExportAsPdf(pdf);

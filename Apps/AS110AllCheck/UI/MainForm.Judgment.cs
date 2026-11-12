@@ -3,7 +3,8 @@ namespace PSCAutomation.Apps.AS110AllCheck;
 internal sealed partial class MainForm : Form
 {
     private bool _repeatConfirmationShown;
-    private bool NeedsRepeatConfirmation => _flow.Mode == TestMode.Production && _flow.HasTransfer && _lastExcelPass;
+    // 出荷データは判定しないので「合格しているけど」の確認は出さない。
+    private bool NeedsRepeatConfirmation => _flow.Mode == TestMode.Production && !_flow.ShippingData && _flow.HasTransfer && _lastExcelPass;
 
     private void CloseJudgmentNotice()
     {
@@ -13,7 +14,8 @@ internal sealed partial class MainForm : Form
 
     private void ShowJudgmentNotice()
     {
-        if (_closeRequested || _repeatConfirmationShown || !_flow.HasTransfer || _reviewStage || _flow.Mode == TestMode.Motion) return;
+        // 出荷データ(判定しない)は合否のポップアップを出さない(転送後は Excel を前に出すだけ)。
+        if (_closeRequested || _repeatConfirmationShown || !_flow.HasTransfer || _reviewStage || _flow.Mode == TestMode.Motion || _flow.ShippingData) return;
         var displayTimer=System.Diagnostics.Stopwatch.StartNew();
         CloseJudgmentNotice();
         string result = _lastExcelPass ? "合格" : "不合格";

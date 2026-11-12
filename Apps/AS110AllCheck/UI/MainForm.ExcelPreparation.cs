@@ -19,7 +19,8 @@ internal sealed partial class MainForm : Form
         return path;
     }
 
-    private string ExcelTemplatePath => ExcelTemplatePathFor(_flow.Model);
+    // 出荷データ(AS110-116B350)は判定した型式(AS110-116B)の雛形に転送する(TemplateModel)。
+    private string ExcelTemplatePath => ExcelTemplatePathFor(_flow.TemplateModel);
 
     private string ExcelWorkPath => Path.Combine(_sessionFolder, "work.xlsx");
 

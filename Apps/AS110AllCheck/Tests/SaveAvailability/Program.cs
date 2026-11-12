@@ -258,6 +258,8 @@ internal static class Program
                 throw new Exception("Save button / M5Stack C mask mismatch: "+signature);
             Console.WriteLine("PASS actual MainForm and M5Stack C mask: "+signature);
         }
+        // AS110-116B の供給圧力と、350 kPa の出荷データ(データ取り２)。
+        ShippingDataFormTests.Run(form, type, assembly);
         string[] fileArgs = args.Where(arg => !arg.StartsWith("--", StringComparison.Ordinal)).ToArray();
         if(fileArgs.Length==2)
         {
