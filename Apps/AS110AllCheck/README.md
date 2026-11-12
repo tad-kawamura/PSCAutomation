@@ -22,7 +22,7 @@ dotnet run --project Apps/AS110AllCheck/Tests/Verification/AS110AllCheck.Verific
 | `Program.cs` | 起動入口。異常ログの設定（`As110/As110Application.cs`）のあと MainForm を開く。MainForm は画面を作る前に LOGGER 本体ソフトの起動だけ先に始め（`BeginLoggerStartup`）、画面準備・発振器確認と重ねる |
 | `UI/` | MainForm、画面配置、接続・測定・保存の操作、校正画面 |
 | `As110/` | AS110の設定、測定定義、M5Stack通信、校正値と校正記録、NR-X の Wi-Fi プロファイル一覧（`As110ConnectionSettings.cs`） |
-| `Production/` | 工程状態、保存・漏れチェック・完了S/Nの保護 |
+| `Production/` | 工程状態、保存・漏れチェック・完了S/Nの保護。供給圧力の設定(`SupplyPressure.cs`。将来アプリからレギュレーターを設定するときの部品で、今はどこからも呼ばない。`specs/AS110AllCheck/SPEC.md`「供給圧力の設定」) |
 | `Excel/` | 作業ブックの操作（`ExcelWorkSession`。Excel の操作は `Wrappers/Excel` の部品）、転送設定、点数圧縮 |
 | `GlobalUsings.cs` | 使う wrapper の名前空間 |
 | `Tests/Verification/` | 実機・Excel を使わない工程・校正・変換の検証 |
