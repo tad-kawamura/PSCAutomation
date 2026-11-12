@@ -7,7 +7,9 @@ internal enum As100201LedgerEventKind
     Measurement,
     Operation,
     Done,
-    Undo
+    Undo,
+    // PC_go / CR_go で WF1973 を出し直した(2026-11-12 追加。SPEC_測定中の取り込み.md「押した瞬間の記録」)。
+    Pressed
 }
 
 // CSV 台帳の 1 行(1 出来事)。列は SPEC_調整操作の記録.md「CSV 台帳」の案のとおり。
@@ -32,6 +34,7 @@ internal sealed record As100201LedgerRow(DateTime Time, As100201LedgerEventKind 
         As100201LedgerEventKind.Measurement => "測定",
         As100201LedgerEventKind.Operation => "操作",
         As100201LedgerEventKind.Done => "完了",
+        As100201LedgerEventKind.Pressed => "押した",
         _ => "取消"
     };
 

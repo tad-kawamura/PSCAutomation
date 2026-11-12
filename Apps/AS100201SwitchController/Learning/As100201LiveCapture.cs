@@ -40,6 +40,10 @@ internal sealed class As100201LiveCapture
     public long PointCount => _readPos;
     public int RowCount => _rows.Count;
 
+    // F8 (Begin) からの秒。取り込み中でなければ null(押した行の備考に使う、2026-11-12)。
+    public double? SecondsSinceBegin(long nowTimestamp) =>
+        Active ? Stopwatch.GetElapsedTime(_beganAt, nowTimestamp).TotalSeconds : null;
+
     public void Begin(As100201CaptureTemplate template, long nowTimestamp)
     {
         _template = template;

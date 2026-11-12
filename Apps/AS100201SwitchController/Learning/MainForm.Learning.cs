@@ -228,6 +228,34 @@ internal sealed partial class MainForm : Form
         return (isDouble ? side + "（2回押し）" : side, isDouble ? side + "2" : side, phase.ToString(System.Globalization.CultureInfo.InvariantCulture));
     }
 
+    // WF1973 の出し直しが終わった(PC_go / CR_go)。学習モードなら「押した」行を書く(2026-11-12)。
+    // 波形が実際に変わった時点で書く(処理中に次の押下で上書きされた押下・失敗した押下は書かない)。
+    // 測定中なら F8 からの秒と LOGGER の点数(xdt の何点目か)も残す。LOGGER に届くまでの遅れ(平均 0.07 秒)はそのまま。
+    private void LearningWaveformRestarted()
+    {
+        if (_learning is null) return;
+        try
+        {
+            var (side, _, phase) = DescribeCurrentWaveform();
+            double? seconds = null;
+            long? count = null;
+            string? problem = null;
+            if (_measurementStarted && _logger.IsInitialized)
+            {
+                seconds = _capture?.SecondsSinceBegin(Stopwatch.GetTimestamp());
+                try { count = _logger.GetDataCount(); }
+                catch (Exception ex) { problem = ex.Message; }
+            }
+            _learning.WaveformRestarted(side, phase, seconds, count, problem);
+        }
+        catch (Exception ex)
+        {
+            // 押した行が書けなくても、波形の出し直しは済んでいるので失敗扱いにしない。
+            AppendLog("押した行を記録できません：" + ex.Message);
+        }
+        AfterLearningChange();
+    }
+
     // LOGGER を止めた(sw4 / 操作ボタン)。学習モードなら測定の行を書く。
     private void LearningMeasurementStopped(string trigger)
     {

@@ -153,6 +153,8 @@ internal sealed partial class MainForm : Form
                     _lastWaveform = (pressed, phase);
                     AppendLog($"WF1973 出力開始：{name}（位相 {phase}°）");
                     AppendLog($"処理時間：WF1973位相再開始 = {restartTimer.Elapsed.TotalMilliseconds:F1} ms");
+                    // 学習モード: 押した瞬間を台帳に残す(2026-11-12。通常モードでは何もしない)。
+                    LearningWaveformRestarted();
                 }
             }
         }

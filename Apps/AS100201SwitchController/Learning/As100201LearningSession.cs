@@ -109,6 +109,32 @@ internal sealed class As100201LearningSession
         }
     }
 
+    // PC_go / CR_go で WF1973 を出し直した(2026-11-12。SPEC_測定中の取り込み.md「押した瞬間の記録」)。
+    // 区間をあとで切り出せるよう、押すたびに「押した」行を足す。細かい値は「備考」に書く(形は試しながら変える。AI の仮決め)。
+    //   secondsSinceStart / pointCount: 測定中なら F8 からの秒と、そのときの LOGGER の点数。測定していなければ null
+    //   countProblem: 測定中なのに点数を読めなかったときの理由
+    // 押した行は個体の数え方・「直前の測定なし」・取消の対象を変えない(調整の操作ではないため)。
+    // 書けなければ測定の行と同じく覚えておいて止め、「再試行」で書き直す。
+    public void WaveformRestarted(string side, string phase, double? secondsSinceStart, long? pointCount, string? countProblem = null)
+    {
+        DateTime now = _clock();
+        var culture = System.Globalization.CultureInfo.InvariantCulture;
+        var notes = new List<string> { now.ToString("HH:mm:ss.fff", culture) };
+        if (secondsSinceStart is double seconds) notes.Add("F8 から " + seconds.ToString("0.000", culture) + " 秒");
+        else notes.Add("測定していないとき");
+        if (pointCount is long count) notes.Add($"点数 {count}（xdt の {count + 1} 点目から後）");
+        else if (countProblem is not null) notes.Add("点数を読めず：" + countProblem);
+        var row = new As100201LedgerRow(now, As100201LedgerEventKind.Pressed)
+        {
+            Side = side,
+            Phase = phase,
+            Note = string.Join("、", notes)
+        };
+        WriteOrQueue("押した行", row);
+        // 書けなかった(待たせた)ときは WriteOrQueue / Block がログを出す。
+        if (!Blocked) Log?.Invoke($"押した {(side.Length == 0 ? "（側なし）" : side)}（位相 {phase}°）を台帳に記録：{row.Note}");
+    }
+
     // 取り込みの CSV: xdt と同じフォルダー・同じ名前で拡張子だけ .csv。
     public static string FeaturesPath(string xdtPath) => Path.ChangeExtension(xdtPath, ".csv");
 

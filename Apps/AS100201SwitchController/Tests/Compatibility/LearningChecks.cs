@@ -15,6 +15,7 @@ internal static class LearningChecks
         LedgerRowChecks();
         SessionFlowChecks();
         WriteFailureChecks();
+        PressedRowChecks();
         await PanelOutageChecks();
         await VirtualPanelChecks();
         // 画面(MainForm)を作るとこのスレッドに WinForms の SynchronizationContext が入り、以後の await が戻らなくなる。
@@ -335,6 +336,50 @@ internal static class LearningChecks
         Check(throwing.Blocked && throwing.BlockReason!.Contains("fake COM"), "COM exception blocks");
         Check(logs.Any(l => l.Contains("再試行") && l.Contains("再開")), "resume log missing");
         Pass("write failures: operation NAK + block, measurement rows/xdt queued in order, retry fails until fixed, retry replays row then xdt, folder creation failure blocks, COM failures block");
+    }
+
+    // 8. 押した行(PC_go / CR_go で WF1973 を出し直した瞬間、2026-11-12。SPEC_測定中の取り込み.md「押した瞬間の記録」)
+    private static void PressedRowChecks()
+    {
+        var (s, ledger, saved, logs, _) = NewSession(new DateTime(2026, 11, 12, 9, 0, 0));
+        var mag = As100201PanelCommand.Parse("ACT:MAG");
+        var undo = As100201PanelCommand.Parse("UNDO");
+
+        // 測定していないとき(F8 の前): 側・位相と時刻(ミリ秒まで)。点数と F8 からの秒は無い。
+        s.WaveformRestarted("PC", "0", null, null);
+        Check(ledger.Rows[^1] is { Kind: As100201LedgerEventKind.Pressed, KindText: "押した", Side: "PC", Phase: "0", StopTrigger: "", File: "", Note: "09:00:01.000、測定していないとき" },
+            "pressed row before F8: " + ledger.Rows[^1].Note);
+        // 測定中: F8 からの秒(ミリ秒まで)と、点数(xdt の何点目から後か)。2 回押しの側は測定の行と同じ書き方。
+        s.WaveformRestarted("CR（2回押し）", "250", 12.3456, 1234);
+        Check(ledger.Rows[^1] is { Kind: As100201LedgerEventKind.Pressed, Side: "CR（2回押し）", Phase: "250" } &&
+            ledger.Rows[^1].Note == "09:00:02.000、F8 から 12.346 秒、点数 1234（xdt の 1235 点目から後）", "pressed row while measuring: " + ledger.Rows[^1].Note);
+        Check(ledger.Rows[^1].ToCsvLine() == "2026-11-12 09:00:02,押した,CR（2回押し）,250,,,,,,,09:00:02.000、F8 から 12.346 秒、点数 1234（xdt の 1235 点目から後）",
+            "pressed row CSV: " + ledger.Rows[^1].ToCsvLine());
+        // 点数を読めなかった: 理由を残す。
+        s.WaveformRestarted("PC", "0", 3.5, null, "fake COM");
+        Check(ledger.Rows[^1].Note == "09:00:03.000、F8 から 3.500 秒、点数を読めず：fake COM", "count failure note: " + ledger.Rows[^1].Note);
+        Check(s.MeasurementCount == 0 && s.OperationCount == 0 && logs[^1].Contains("押した PC（位相 0°）"), "pressed row changed counts or no log");
+
+        // 押した行は「直前の測定なし」・取消の対象・個体の数え方を変えない。
+        s.MeasurementStopped("PC", "PC", "0", As100201LearningSession.StopBySwitch);
+        s.MeasurementCompleted("PC", "PC", "0");
+        s.WaveformRestarted("CR", "140", null, null);
+        Check(s.HandleCommand(mag) == "ACK:ACT:MAG" && ledger.Rows[^1].Note == "", "press between measurement and operation added 直前の測定なし");
+        s.WaveformRestarted("PC", "0", null, null);
+        Check(s.HandleCommand(undo) == "ACK:UNDO" && ledger.Rows[^1].Note.EndsWith(" 着磁"), "press blocked undo of the operation");
+        Check(s.MeasurementCount == 1 && s.OperationCount == 0 && saved.Count == 1, "counts after press/undo");
+
+        // 書けない: 測定の行と同じく覚えて止め、再試行で書く(順番を守る)。
+        ledger.Fail = true;
+        int rows = ledger.Rows.Count;
+        s.WaveformRestarted("CR", "140", 1.0, 100);
+        Check(s.Blocked && s.PendingCount == 1 && ledger.Rows.Count == rows, "pressed row failure did not block");
+        s.MeasurementStopped("CR", "CR", "140", As100201LearningSession.StopBySwitch);
+        Check(s.PendingCount == 2, "measurement row not queued behind pressed row");
+        ledger.Fail = false;
+        Check(s.Retry() && ledger.Rows.Count == rows + 2 && ledger.Rows[rows].Kind == As100201LedgerEventKind.Pressed &&
+            ledger.Rows[rows + 1].Kind == As100201LedgerEventKind.Measurement, "retry did not write pressed row then measurement row");
+        Pass("pressed rows: kind 押した, side/phase, ms time + F8 seconds + point count in note, count failure reason, no effect on counts/undo/直前の測定なし, queued and retried in order");
     }
 
     private sealed class FakePanelLink : IAs100201SerialLink
