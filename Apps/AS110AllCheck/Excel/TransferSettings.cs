@@ -26,6 +26,14 @@ internal sealed class TransferSettings
     public string PressureCell { get; set; } = "B4";
     [DisplayName("保存先フォルダ")]
     public string SaveRoot { get; set; } = "";
+    // 漏れ試験の自動判定(2026-11-12)。PC ごとに覚える。古い版はこの項目を読み飛ばす。
+    // 回避のチェックは転送設定の画面の下に置く(表の中には出さない)。秒数・しきい値はメイン画面の記入欄。
+    [Browsable(false)]
+    public bool AllowLeakOverride { get; set; }
+    [Browsable(false)]
+    public int LeakTestSeconds { get; set; } = 10;
+    [Browsable(false)]
+    public double LeakThresholdKpa { get; set; } = 1.0;
     // 移動平均はLOGGERのチャンネル設定をXdtReaderが適用する。
     public static string SettingsPath => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"AS110BoltCheck","ver3.json");
     public static TransferSettings Load() => File.Exists(SettingsPath)

@@ -1,0 +1,221 @@
+using System.Globalization;
+using PSCAutomation.Wrappers.LoggerFiles;
+using PSCAutomation.Wrappers.WaveLogger.Automation;
+
+namespace PSCAutomation.Apps.AS110AllCheck;
+
+// 漏れ試験の自動判定(specs/AS110AllCheck/SPEC.md「漏れ試験の自動判定」、2026-11-12 承認)。画面・機器に依存しない。
+// 人は LOGGER の画面で圧力 CH の「最大値 − 現在値 ≦ 1.0 kPa」なら合格としていた。試験中に読み出した全点で
+// 「収集開始からの最大値 − その点の値」を比べ、一度でもしきい値を超えたら不合格(その時点で打ち切る)。
+
+// 最後に行った漏れ試験の結果。NotJudged は自動判定をしなかった(NR-X。人が判断する)。
+internal enum LeakOutcome { NotJudged, Pass, Fail, Unmeasurable }
+
+internal static class LeakOutcomeText
+{
+    public static string Of(LeakOutcome outcome) => outcome switch
+    {
+        LeakOutcome.Pass => "合格",
+        LeakOutcome.Fail => "不合格",
+        LeakOutcome.Unmeasurable => "判定できません",
+        _ => "判定なし（人が判断）",
+    };
+}
+
+// 圧力のチャンネル。換算は校正を適用した作業用 xdt の係数(XdtChannel.ReadScaledValues と同じ式、float に丸める)。
+// AverageWindow は LOGGER のチャンネル設定の移動平均の点数(なしは 1)。今の雛形の圧力は 7 点(docs/operation.md)。
+// 判定には移動平均をかけた値を使う(Excel 転送・LOGGER の波形と同じ値。XdtChannel.ReadProcessedValues と同じ中心の窓)。
+internal sealed record LeakPressureChannel(int Number, double Gain, double Offset, int AverageWindow = 1)
+{
+    // メーカー API のチャンネル番号(xdt の CH 番号 − 1)。
+    public int ApiChannel => Number - 1;
+
+    // 無効値(振り切れ・未接続などで LOGGER が返す 3.4×10^38)・非数値は null。
+    public double? Scale(float raw)
+    {
+        if (!float.IsFinite(raw) || raw >= WaveLoggerSession.InvalidRawValueThreshold) return null;
+        double value = (float)(Gain * raw + Offset);
+        return double.IsFinite(value) ? value : null;
+    }
+
+    public static LeakPressureChannel FromXdt(string path, int channelNumber)
+    {
+        var info = XdtFile.Load(path).GetChannel(channelNumber).Info;
+        return new LeakPressureChannel(info.Number, info.Gain, info.Offset, info.MovingAverage && info.Window > 1 ? info.Window : 1);
+    }
+}
+
+internal sealed class LeakJudge
+{
+    // 値は LOGGER の画面と同じ 0.001 kPa に丸めてから比べる(人が画面の数字で見ていた判定と合わせる。
+    // float の値どうしの差は 540 kPa 付近で 0.00006 kPa ほどずれ、画面で差 1.000 でも 1.00006 になり得るため)。
+    public const int Digits = 3;
+    // 丸めた値どうしの引き算の誤差で、ちょうどしきい値が「超えた」にならないための余裕。
+    private const double Tolerance = 1e-9;
+
+    public LeakJudge(double thresholdKpa)
+    {
+        if (!(thresholdKpa > 0) || !double.IsFinite(thresholdKpa)) throw new ArgumentOutOfRangeException(nameof(thresholdKpa));
+        Threshold = thresholdKpa;
+    }
+
+    public double Threshold { get; }
+    public long Points { get; private set; }
+    public double Maximum { get; private set; } = double.NaN;
+    public double Latest { get; private set; } = double.NaN;
+    // 今の差(最大値 − 最新の値)。
+    public double Difference => Points == 0 ? double.NaN : Maximum - Latest;
+    // 試験中で一番大きかった差。
+    public double MaxDifference { get; private set; } = double.NaN;
+    // 不合格・判定できないが決まったら値が入り、以後は値を受け付けない。
+    public LeakOutcome? Decided { get; private set; }
+    public string? Problem { get; private set; }
+
+    // 換算後(移動平均の後)の値を 1 点渡す。不合格が決まったら true。
+    public bool Add(double value)
+    {
+        if (Decided is not null) return true;
+        if (!double.IsFinite(value)) { MarkUnmeasurable($"{Points + 1} 点目が非数値です"); return true; }
+        value = Math.Round(value, Digits, MidpointRounding.AwayFromZero);
+        Points++;
+        Latest = value;
+        if (Points == 1 || value > Maximum) Maximum = value;
+        double difference = Maximum - value;
+        if (double.IsNaN(MaxDifference) || difference > MaxDifference) MaxDifference = difference;
+        if (difference > Threshold + Tolerance)
+        {
+            Decided = LeakOutcome.Fail;
+            Problem = $"差 {Format(difference)} kPa がしきい値 {Format(Threshold, 1)} kPa を超えました";
+            return true;
+        }
+        return false;
+    }
+
+    public void MarkUnmeasurable(string reason)
+    {
+        if (Decided is not null) return;
+        Decided = LeakOutcome.Unmeasurable;
+        Problem = reason;
+    }
+
+    // 試験時間を終えたときの結果。値を 1 点も読めなかったら判定できない。
+    public LeakOutcome Finish()
+    {
+        if (Decided is null && Points == 0) MarkUnmeasurable("圧力の値を 1 点も読めませんでした");
+        return Decided ?? LeakOutcome.Pass;
+    }
+
+    public static string Format(double value, int digits = 3) =>
+        double.IsFinite(value) ? value.ToString("F" + digits, CultureInfo.InvariantCulture) : "-";
+}
+
+// 試験中の読み出しと判定。LOGGER から前回の続きの点を取り出し、換算・移動平均をして LeakJudge に渡す
+// (取り出しは関数で受け取る。機器なしで確かめられる)。
+// 移動平均は中心の窓なので、窓の右半分(7 点なら 3 点 = 30 ms)がそろった点から判定する。最後(Finish)は残りを窓を縮めて判定する。
+// 値が取れない(例外・点数が減った・無効値・点数が 2 秒増えない)ときは「判定できない」にして打ち切る。
+internal sealed class LeakMonitor
+{
+    // メーカー API のユニット番号(NR-500 は 1。AS100201SwitchController の取り込みと同じ)。
+    public const int Unit = 1;
+    // 測定中なのに点数が増えないまま、この秒数たったら判定できない(実機の遅れは最大 0.17 秒、2026-11-11 NR-500)。
+    public static readonly TimeSpan StallLimit = TimeSpan.FromSeconds(2);
+
+    private readonly Func<int, IReadOnlyList<int>, long, LoggerRawDataBlock> _read;
+    private long _readPos;
+    private TimeSpan _lastProgress = TimeSpan.Zero;
+    // 換算した値(移動平均の前)と、判定に渡し終えた点数。
+    private readonly List<double> _scaled = [];
+    private int _judged;
+
+    public LeakMonitor(LeakPressureChannel channel, double thresholdKpa, Func<int, IReadOnlyList<int>, long, LoggerRawDataBlock> read)
+    {
+        Channel = channel;
+        Judge = new LeakJudge(thresholdKpa);
+        _read = read;
+    }
+
+    public LeakPressureChannel Channel { get; }
+    public LeakJudge Judge { get; }
+
+    // elapsed は LOGGER 開始からの時間。打ち切るとき true。
+    public bool Poll(TimeSpan elapsed)
+    {
+        if (Judge.Decided is not null) return true;
+        LoggerRawDataBlock block;
+        try { block = _read(Unit, [Channel.ApiChannel], _readPos); }
+        catch (Exception ex) { Judge.MarkUnmeasurable("LOGGER から値を取り出せません：" + ex.Message); return true; }
+        if (block.TotalCount < _readPos) { Judge.MarkUnmeasurable($"LOGGER の点数が減りました（{_readPos} → {block.TotalCount}）"); return true; }
+        long expected = block.TotalCount - _readPos;
+        if (block.Values.Count != 1 || block.Values[0].Length != expected)
+        {
+            Judge.MarkUnmeasurable($"取り出した点数が合いません（{string.Join("・", block.Values.Select(v => v.Length))} / {expected}）");
+            return true;
+        }
+        if (expected > 0)
+        {
+            _readPos = block.TotalCount;
+            _lastProgress = elapsed;
+            foreach (float raw in block.Values[0])
+            {
+                if (Channel.Scale(raw) is not double value)
+                {
+                    Judge.MarkUnmeasurable($"CH{Channel.Number} の {_scaled.Count + 1} 点目が無効値です（振り切れ・未接続）");
+                    return true;
+                }
+                _scaled.Add(value);
+            }
+            return JudgeAvailable(final: false);
+        }
+        if (elapsed - _lastProgress >= StallLimit)
+        {
+            Judge.MarkUnmeasurable($"測定中なのに点数が {StallLimit.TotalSeconds:0} 秒増えません（{_readPos} 点のまま）");
+            return true;
+        }
+        return false;
+    }
+
+    // 試験時間を終えたときの結果。移動平均の窓がそろわず残っていた最後の点も判定してから決める。
+    public LeakOutcome Finish()
+    {
+        if (Judge.Decided is null) JudgeAvailable(final: true);
+        return Judge.Finish();
+    }
+
+    // XdtChannel.ReadProcessedValues と同じ式(i 点目は [i − 窓/2, i − 窓/2 + 窓) の平均、端は窓を縮める、float に丸める)。
+    private bool JudgeAvailable(bool final)
+    {
+        int window = Math.Max(1, Channel.AverageWindow), half = window / 2;
+        while (_judged < _scaled.Count)
+        {
+            int right = _judged - half + window;
+            if (!final && right > _scaled.Count) return false;
+            right = Math.Min(right, _scaled.Count);
+            int left = Math.Max(0, _judged - half);
+            double sum = 0;
+            for (int k = left; k < right; k++) sum += _scaled[k];
+            _judged++;
+            if (Judge.Add((float)(sum / (right - left)))) return true;
+        }
+        return false;
+    }
+}
+
+// 画面で入れる試験秒数としきい値(SPEC: 秒数 1〜60 の整数、しきい値 0.1〜10.0 kPa を 0.1 刻み)。
+internal static class LeakTestInput
+{
+    public const int MinSeconds = 1, MaxSeconds = 60;
+    public const double MinThreshold = 0.1, MaxThreshold = 10.0;
+
+    // 正しければ null、だめなら理由。
+    public static string? Validate(string secondsText, string thresholdText, out int seconds, out double threshold)
+    {
+        threshold = 0;
+        if (!int.TryParse(secondsText.Trim(), NumberStyles.None, CultureInfo.InvariantCulture, out seconds) || seconds < MinSeconds || seconds > MaxSeconds)
+            return $"試験秒数は {MinSeconds}〜{MaxSeconds} の整数で入力してください（今：「{secondsText.Trim()}」）。";
+        if (!double.TryParse(thresholdText.Trim(), NumberStyles.AllowDecimalPoint, CultureInfo.InvariantCulture, out threshold)
+            || threshold < MinThreshold - 1e-9 || threshold > MaxThreshold + 1e-9 || Math.Abs(threshold * 10 - Math.Round(threshold * 10)) > 1e-9)
+            return $"しきい値は {MinThreshold:F1}〜{MaxThreshold:F1} kPa を 0.1 刻みで入力してください（今：「{thresholdText.Trim()}」）。";
+        threshold = Math.Round(threshold, 1);
+        return null;
+    }
+}

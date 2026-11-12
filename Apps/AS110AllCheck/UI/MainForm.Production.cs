@@ -206,8 +206,9 @@ internal sealed partial class MainForm : Form
         var mainActions=Row(_transferButton,_saveButton,_leakOutputButton,_leakButton);
         // 「設定変更（測定を破棄）」は校正欄の「校正値を変更」の隣(BuildCalibrationPanel)。
         var subActions=Row(_completeButton,_retryCaptureButton);
-        _actionPanel=new TableLayoutPanel { AutoSize=true,AutoSizeMode=AutoSizeMode.GrowAndShrink,ColumnCount=1,RowCount=2,Margin=Padding.Empty };
-        _actionPanel.Controls.Add(mainActions,0,0);_actionPanel.Controls.Add(subActions,0,1);
+        _actionPanel=new TableLayoutPanel { AutoSize=true,AutoSizeMode=AutoSizeMode.GrowAndShrink,ColumnCount=1,RowCount=3,Margin=Padding.Empty };
+        // 漏れ試験の試験秒数・しきい値(データ取りだけ表示。MainForm.LeakJudgment.cs)。
+        _actionPanel.Controls.Add(mainActions,0,0);_actionPanel.Controls.Add(BuildLeakSettingsRow(),0,1);_actionPanel.Controls.Add(subActions,0,2);
         Control[] rows=[_savePathPanel,_saveRootWarningLabel,_rangePanel,_serialPanel,_protectionPanel,_actionPanel,_flowLabel];
         _productionPanel.RowCount=rows.Length;
         for(int i=0;i<rows.Length;i++){ _productionPanel.RowStyles.Add(new RowStyle(SizeType.AutoSize)); _productionPanel.Controls.Add(rows[i],0,i); }
@@ -303,6 +304,8 @@ internal sealed partial class MainForm : Form
         _protectionPanel.Visible=_actionPanel.Visible=_remeasureButton.Visible=excelMode;
         _savePathPanel.Visible=_chooseSaveRootButton.Visible=_rootBox.Visible=_releaseSerialButton.Visible=production;
         _saveButton.Visible=_leakOutputButton.Visible=_leakButton.Visible=_completeButton.Visible=production;
+        _leakSettingsPanel.Visible=production;
+        _leakSecondsBox.Enabled=_leakThresholdBox.Enabled=!_leakRunning;
         _rangePanel.Visible=_rangeStartLabel.Visible=_rangeStartBox.Visible=_lastSerialLabel.Visible=_lastSerialBox.Visible=production;
         _serialPanel.Visible=_serialLabel.Visible=_serialBox.Visible=production;
         _saveRootWarningLabel.Text=production?SaveFolder.CheckRange(_rootBox.Text,_serialBox.Text.Trim()):"";
@@ -324,12 +327,13 @@ internal sealed partial class MainForm : Form
         }
         _leakOutputButton.Enabled=ready && _reviewStage && _flow.Mode==TestMode.Production && _flow.HasSaved && !_leakOutputReady;
         _leakButton.Enabled=ready && _reviewStage && _flow.Mode==TestMode.Production && _flow.HasSaved && _leakOutputReady;
-        _completeButton.Enabled=idle && !_leakOutputReady && _flow.CanComplete && _arduino.MeasurementInputReady && ConnectionsReady;
+        // 漏れ判定が不合格・判定できなかったときは、転送設定で回避を許したときだけ押せる(押すと確認する)。
+        _completeButton.Enabled=idle && !_leakOutputReady && (_flow.CanComplete || (_flow.LeakNeedsOverride && _transferSettings.AllowLeakOverride)) && _arduino.MeasurementInputReady && ConnectionsReady;
         _remeasureButton.Text=_flow.HasSaved?"再測定へ戻る":"設定変更（測定を破棄）";
         _remeasureButton.Enabled=idle && (_reviewStage || _flow.HasCapture) && !_flow.SaveFailed;
         _retryCaptureButton.Visible=_flow.CaptureFailed;_retryCaptureButton.Enabled=idle && _flow.CaptureFailed && ConnectionsReady;
         string identity = _flow.Mode == TestMode.Adjustment ? "データ調整（保存・S/N設定なし）" : _flow.SerialMissing ? "測定開始S/N 未入力" : _flow.LastSerial.Length > 0 ? $"S/N {_flow.Serial}（最後 {_flow.LastSerial}）" : $"S/N {_flow.Serial}";
-        _flowLabel.Text=$"{identity}　{(_leakRunning?"漏れチェック中":_flow.Measuring?"測定中":_flow.CaptureFailed?"一時保存失敗：再試行してください":_flow.SaveFailed?"保存失敗：同じ番号で再保存してください":_flow.HasSaved?$"一式保存済み／漏れチェック {_flow.LeakChecks}回":_flow.HasTransfer?$"Excel転送済み：{_excelJudgmentStatus}":_flow.HasCapture?"一時保存済み：Excel転送できます":_excelPreparing?"測定待ち（Excel準備中）":"測定待ち")}";
+        _flowLabel.Text=$"{identity}　{(_leakRunning?"漏れチェック中":_flow.Measuring?"測定中":_flow.CaptureFailed?"一時保存失敗：再試行してください":_flow.SaveFailed?"保存失敗：同じ番号で再保存してください":_flow.HasSaved?$"一式保存済み／漏れチェック {_flow.LeakChecks}回"+(_flow.LastLeakOutcome is LeakOutcome last?$"（最後：{LeakOutcomeText.Of(last)}）":""):_flow.HasTransfer?$"Excel転送済み：{_excelJudgmentStatus}":_flow.HasCapture?"一時保存済み：Excel転送できます":_excelPreparing?"測定待ち（Excel準備中）":"測定待ち")}";
         if (_flow.Mode == TestMode.Motion) _flowLabel.Text = _flow.Measuring ? "動き検査中" : "動き検査：保存・S/N設定なし";
         if (_flow.SerialRangeFinished && !_flow.Measuring && !_flow.HasCapture)
             _flowLabel.Text = $"{identity}　最後のS/N {_flow.LastSerial} を超えています：保存先と測定開始S/Nを確認してください（測定開始できません）";
@@ -408,7 +412,10 @@ internal sealed partial class MainForm : Form
         if(_reviewStage)
         {
             if(_leakOutputReady)return "+30mA 出力中です。「漏れ試験実施」を押してください";
-            if(_flow.CanComplete)return "漏れ試験が済みました。「合格」を押してください（もう一度なら「+30mA」）";
+            if(_flow.CanComplete)return $"漏れ試験が済みました（{LastLeakText()}）。「合格」を押してください（もう一度なら「+30mA」）";
+            if(_flow.LeakNeedsOverride)return _transferSettings.AllowLeakOverride
+                ? $"漏れ判定：{LastLeakText()}。やり直すなら「+30mA」→「漏れ試験実施」。人の判断で合格にするなら「合格」（確認が出ます）"
+                : $"漏れ判定：{LastLeakText()}。「+30mA」→「漏れ試験実施」でやり直してください（「合格」は押せません）";
             return "一式保存済みです。「+30mA」→「漏れ試験実施」→「合格」の順に進めてください（やり直すなら「再測定へ戻る」）";
         }
         if(!_arduino.MeasurementInputReady)return "M5Stack からの状態通知が途切れています。M5Stack の表示とケーブルを確認してください";
@@ -667,34 +674,7 @@ internal sealed partial class MainForm : Form
         _generatorOutputAlertShown=true;
         ErrorNotification.Show(this,message,"発振器の出力状態不明",MessageBoxButtons.OK,MessageBoxIcon.Warning);
     }
-    private async Task LeakCheckAsync()
-    {
-        if(!_leakButton.Enabled)return;
-        await RunOperationAsync("漏れチェック",async ()=> {
-            if(!_flow.HasSaved || !_leakOutputReady)throw new InvalidOperationException("最新データ一式を保存し、+30mAを押してください。");
-            if(_logger.GetState()!=1)throw new InvalidOperationException("LOGGERの完全停止を確認してから漏れチェックしてください。");
-            _leakRunning=true;_leakCancel=new CancellationTokenSource();UpdateControls();
-            try
-            {
-                ShowLoggerInFront("漏れチェック",()=>_leakRunning);
-                try
-                {
-                    await LeakCheckSequence.RunAsync(
-                        ()=>{long result=_logger.StartSingleAcquisition();AppendLog($"漏れチェック LOGGER Start：戻り値={result}");return result;},
-                        StopLeakOutput,
-                        StopLeakLoggerAsync,_leakCancel.Token);
-                }
-                catch(OperationCanceledException) when(_closeAfterLeak) { return "アプリ終了のため発振器出力とLOGGER収集を停止しました。"; }
-                if(!ConnectionsReady || !_arduino.MeasurementInputReady)throw new IOException("通信を確認できません。漏れチェックをやり直してください。");
-                _flow.LeakSucceeded();return "出力中のままLOGGER収集を開始し、収集開始から10秒で出力と収集を停止しました。";
-            }
-            finally
-            {
-                _leakRunning=false;_leakCancel?.Dispose();_leakCancel=null;
-            }
-        });
-        if(_closeAfterLeak && !IsDisposed) BeginInvoke((Action)Close);
-    }
+    // 漏れ試験の実施(LeakCheckAsync)は MainForm.LeakJudgment.cs。
     private async Task StopLeakLoggerAsync()
     {
         _logger.Stop();
@@ -715,8 +695,13 @@ internal sealed partial class MainForm : Form
     {
         if(!_completeButton.Enabled)return;
         RunOperation("合格確定",()=> {
-            if(!_flow.CanComplete || _excel is null)throw new InvalidOperationException("最新結果の保存と漏れチェックが必要です。");
+            bool overriding=!_flow.CanComplete && _flow.LeakNeedsOverride && _transferSettings.AllowLeakOverride;
+            if((!_flow.CanComplete && !overriding) || _excel is null)throw new InvalidOperationException(_flow.LeakNeedsOverride
+                ? $"漏れ判定が合格していません（{LastLeakText()}）。「+30mA」から漏れ試験をやり直してください。"
+                : "最新結果の保存と漏れチェックが必要です。");
             var store=Store;using var held=store.Lock();if(store.IsComplete(_flow.Serial))throw new IOException("このS/Nは完了済みです。");
+            // 初期運用の回避(SPEC「漏れ試験の自動判定」5): 人に確かめ、漏れ試験記録に残してから合格にする。
+            if(overriding && !ConfirmLeakOverride())return "漏れ判定が合格していないため、合格にしませんでした。";
             // 閉じる処理が失敗したら記録・加算しない。人が Excel(またはブック)を先に閉じていたときは閉じた扱いで進める(2026-11-06。以前は COM の切断エラーで合格が止まっていた)。
             bool excelAlreadyClosed=_excel.CloseVerifiedOrAlreadyClosed();
             if(excelAlreadyClosed)AppendLog("合格確定：Excel は先に閉じられていました（閉じた扱いで記録します）。");
@@ -792,9 +777,15 @@ internal sealed partial class MainForm : Form
         using var dialog=new Form {Text="Excel転送設定",ClientSize=new Size(480,300),StartPosition=FormStartPosition.CenterParent,TopMost=true};
         _flow.TransferFailed();
         var grid=new PropertyGrid {Dock=DockStyle.Fill,SelectedObject=_transferSettings,ToolbarVisible=false,PropertySort=PropertySort.NoSort};
-        var ok=new Button{Text="設定保存",Dock=DockStyle.Bottom,Height=40,DialogResult=DialogResult.OK};dialog.Controls.AddRange([grid,ok]);
+        var ok=new Button{Text="設定保存",Dock=DockStyle.Bottom,Height=40,DialogResult=DialogResult.OK};
+        // 漏れ試験の初期運用の回避(SPEC「漏れ試験の自動判定」5)。軌道に乗ったら外す(人の方針)。
+        var allowLeakOverride=new CheckBox{Text="漏れ判定が不合格でも、人の判断で合格にできる（初期運用）",Dock=DockStyle.Bottom,Height=32,Padding=new Padding(8,0,0,0),Checked=_transferSettings.AllowLeakOverride};
+        dialog.Controls.AddRange([grid,allowLeakOverride,ok]);
         string previousSaveRoot=_transferSettings.SaveRoot;
-        if(dialog.ShowDialog(this)==DialogResult.OK)RunOperation("転送設定保存",()=>{_transferSettings.Save();return "設定しました。";});
+        if(dialog.ShowDialog(this)==DialogResult.OK)RunOperation("転送設定保存",()=>{
+            bool overrideChanged=_transferSettings.AllowLeakOverride!=allowLeakOverride.Checked;
+            _transferSettings.AllowLeakOverride=allowLeakOverride.Checked;_transferSettings.Save();
+            return "設定しました。"+(overrideChanged?(allowLeakOverride.Checked?"漏れ判定の不合格を人の判断で合格にできます。":"漏れ判定の不合格では合格にできません。"):"");});
         UpdateControls();
         // 転送設定の「保存先フォルダ」を書き換えたときは、「保存先選択」で選んだのと同じ扱いにする(変えていなければ今の保存先のまま)。
         if(_transferSettings.SaveRoot!=previousSaveRoot && _transferSettings.SaveRoot.Length>0) SelectSaveRoot(_transferSettings.SaveRoot);

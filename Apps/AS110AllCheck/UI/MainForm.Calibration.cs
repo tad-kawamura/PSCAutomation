@@ -17,6 +17,8 @@ internal sealed partial class MainForm : Form
     private bool _calibrationApplied;
     private As110Calibration? _appliedCalibration;
     private CalibrationRecord? _appliedCalibrationRecord;
+    // LOGGER に読み込んだ作業用の雛形。漏れ試験の自動判定は、これが xdt のとき(NR-500)だけ圧力の換算係数を読んで行う。
+    private string? _workingTemplatePath;
     // 今の校正記録を書き終えた保存先。同じ保存先には 2 回書かない。
     private string? _calibrationRecordedRoot;
 
@@ -121,6 +123,7 @@ internal sealed partial class MainForm : Form
                 string result = LoadTemplateFile(workingPath);
                 RefreshLoggerState();
                 _calibrationApplied = true;
+                _workingTemplatePath = workingPath;
                 _appliedCalibration = calibration;
                 _appliedCalibrationRecord = calibration is null ? null :
                     new CalibrationRecord(DateTimeOffset.Now, calibration, _modeBox.Text, hardware, templateName);

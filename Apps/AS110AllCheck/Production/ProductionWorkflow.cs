@@ -29,10 +29,15 @@ internal sealed class ProductionWorkflow
     public bool SaveFailed { get; set; }
     public bool Measuring { get; private set; }
     public int LeakChecks { get; private set; }
+    // 最後に行った漏れ試験の結果(試験を始めたら空に戻す。合否は最後の試験で決める。2026-11-12)。
+    public LeakOutcome? LastLeakOutcome { get; private set; }
     public bool HasCapture => !Measuring && CapturedRevision == Revision && Revision > 0;
     public bool HasTransfer => HasCapture && TransferredRevision == Revision;
     public bool HasSaved => HasTransfer && SavedRevision == Revision && !SaveFailed;
-    public bool CanComplete => Mode == TestMode.Production && HasSaved && LeakChecks > 0;
+    // 最後の漏れ試験が合格、または自動判定なし(NR-X。人が判断)なら合格にできる。
+    public bool CanComplete => Mode == TestMode.Production && HasSaved && LeakChecks > 0 && LastLeakOutcome is LeakOutcome.Pass or LeakOutcome.NotJudged;
+    // 最後の漏れ試験が不合格・判定できなかった。設定で回避を許したときだけ、人の判断で合格にできる。
+    public bool LeakNeedsOverride => Mode == TestMode.Production && HasSaved && LeakChecks > 0 && LastLeakOutcome is LeakOutcome.Fail or LeakOutcome.Unmeasurable;
     public string BaseName => $"{Model.Name}_SN{Serial}_{MeasuredAt:yyyyMMdd}_6500";
     public void Configure(string serial, ProductModel model)
     {
@@ -60,7 +65,7 @@ internal sealed class ProductionWorkflow
     public void Invalidate()
     {
         Revision++; CapturedRevision = TransferredRevision = SavedRevision = -1;
-        CaptureFailed = SaveFailed = false; LeakChecks = 0; Measuring = false;
+        CaptureFailed = SaveFailed = false; LeakChecks = 0; LastLeakOutcome = null; Measuring = false;
     }
     public void BeginMeasurement(DateTime now)
     {
@@ -68,11 +73,16 @@ internal sealed class ProductionWorkflow
         Invalidate(); MeasuredAt = now; Measuring = true;
     }
     public void CaptureError() { Measuring = false; CaptureFailed = true; }
-    public void TransferFailed() { TransferredRevision = SavedRevision = -1; LeakChecks = 0; }
+    public void TransferFailed() { TransferredRevision = SavedRevision = -1; LeakChecks = 0; LastLeakOutcome = null; }
     public void CaptureSucceeded() { CapturedRevision = Revision; CaptureFailed = false; Measuring = false; }
-    public void TransferSucceeded() { if (!HasCapture) throw new InvalidOperationException("最新の測定がありません。"); TransferredRevision = Revision; SavedRevision = -1; SaveFailed = false; LeakChecks = 0; }
-    public void SaveSucceeded() { if (!HasTransfer) throw new InvalidOperationException("最新結果を転送してください。"); SavedRevision = Revision; SaveFailed = false; LeakChecks = 0; }
-    public void LeakSucceeded() { if (!HasSaved) throw new InvalidOperationException("一式保存が必要です。"); LeakChecks++; }
+    public void TransferSucceeded() { if (!HasCapture) throw new InvalidOperationException("最新の測定がありません。"); TransferredRevision = Revision; SavedRevision = -1; SaveFailed = false; LeakChecks = 0; LastLeakOutcome = null; }
+    public void SaveSucceeded() { if (!HasTransfer) throw new InvalidOperationException("最新結果を転送してください。"); SavedRevision = Revision; SaveFailed = false; LeakChecks = 0; LastLeakOutcome = null; }
+    // 漏れ試験を始めた。前の試験の結果では合格にさせない(この試験が正常に終わるまで「合格」を押せない)。
+    public void LeakStarted() { if (!HasSaved) throw new InvalidOperationException("一式保存が必要です。"); LastLeakOutcome = null; }
+    // 漏れ試験が正常に終わった(停止まで確認できた)。結果を覚える。
+    public void LeakFinished(LeakOutcome outcome) { if (!HasSaved) throw new InvalidOperationException("一式保存が必要です。"); LeakChecks++; LastLeakOutcome = outcome; }
+    // 自動判定なしで正常に終わった(従来の呼び方)。
+    public void LeakSucceeded() => LeakFinished(LeakOutcome.NotJudged);
     public void Advance() { Serial = (long.Parse(Serial, CultureInfo.InvariantCulture) + 1).ToString(CultureInfo.InvariantCulture).PadLeft(Serial.Length,'0'); Invalidate(); }
 }
 

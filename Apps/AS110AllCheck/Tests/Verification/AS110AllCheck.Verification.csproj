@@ -1,8 +1,8 @@
 <Project Sdk="Microsoft.NET.Sdk">
-  <!-- 実機を使わない工程・校正・変換の検査。機器・Excel なしで dotnet run できる -->
+  <!-- 実機を使わない工程・校正・変換・漏れ判定の検査。機器・Excel なしで dotnet run できる(LOGGER の部品の型を使うので net9.0-windows) -->
   <PropertyGroup>
     <OutputType>Exe</OutputType>
-    <TargetFramework>net9.0</TargetFramework>
+    <TargetFramework>net9.0-windows</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
   </PropertyGroup>
@@ -13,6 +13,8 @@
     <Compile Include="../../As110/As110MotionTest.cs" Link="App/As110MotionTest.cs" />
     <Compile Include="../../Production/ProductionWorkflow.cs" Link="App/ProductionWorkflow.cs" />
     <Compile Include="../../Production/LeakCheckSequence.cs" Link="App/LeakCheckSequence.cs" />
+    <Compile Include="../../Production/LeakJudge.cs" Link="App/LeakJudge.cs" />
+    <Compile Include="../../Production/LeakTestRecordFile.cs" Link="App/LeakTestRecordFile.cs" />
     <Compile Include="../../Production/SaveFolder.cs" Link="App/SaveFolder.cs" />
     <Compile Include="../../Excel/TransferSettings.cs" Link="App/TransferSettings.cs" />
     <!-- 発振器の設定値の型だけを使う(Instruments は NI-VISA を要るので参照しない) -->
@@ -22,6 +24,8 @@
     <!-- xdt の読み取り・校正の書き換え・NR-X の CSV、雛形への書き込み(どちらも net9.0、機器・Excel 不要) -->
     <ProjectReference Include="../../../../Wrappers/LoggerFiles/LoggerFiles.csproj" />
     <ProjectReference Include="../../../../Wrappers/Excel/Excel.csproj" />
+    <!-- 漏れ判定の取り出し結果の型(LoggerRawDataBlock)と無効値のしきい値だけを使う(COM は呼ばない) -->
+    <ProjectReference Include="../../../../Wrappers/WaveLogger.Automation/WaveLogger.Automation.csproj" />
   </ItemGroup>
   <ItemGroup>
     <Content Include="../../雛形/*.xdt" Link="Fixtures/%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />

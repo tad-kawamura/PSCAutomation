@@ -13,6 +13,7 @@ internal static class Program
         if (!args.Contains("--no-dialogs") && !args.Contains("--no-mainform-display")) DialogForegroundTests.Run();
         var assembly=Assembly.Load("AS110AllCheck");
         CalibrationDialogTests.Run(assembly);
+        LeakJudgeWindowTests.Run(assembly);
         var type=assembly.GetType("PSCAutomation.Apps.AS110AllCheck.MainForm")!;
         using var form=(Form)Activator.CreateInstance(type)!;
         object Field(string name)=>type.GetField(name,Private)!.GetValue(form)!;
