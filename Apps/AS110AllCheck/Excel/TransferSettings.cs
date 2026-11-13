@@ -64,6 +64,20 @@ internal sealed class TransferSettings
         copy.Compression=Compression*factor;
         return copy;
     }
+    // 転送設定の画面の表で直すための写し。表で直した値はこの写しに入り、元の設定は「設定保存」を押すまで変わらない
+    // (2026-11-13、全体見直し。以前は表が元の設定をその場で書き換え、× で閉じても戻らなかった)。
+    public TransferSettings CreateDraft() => (TransferSettings)MemberwiseClone();
+    // 写しで直した値を取り込む。取り込むのは表に出る項目だけ(表に出さない漏れ試験の設定は、メイン画面の欄や回避のチェックが別に持つ)。
+    // 項目を足しても漏れないよう、名前を並べずに表に出る項目([Browsable(false)] でないもの)を全部写す。
+    public void ApplyEdited(TransferSettings draft)
+    {
+        foreach(var property in typeof(TransferSettings).GetProperties(System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public))
+        {
+            if(!property.CanRead || !property.CanWrite) continue;
+            if(property.GetCustomAttributes(typeof(BrowsableAttribute),true).Cast<BrowsableAttribute>().Any(a=>!a.Browsable)) continue;
+            property.SetValue(this,property.GetValue(draft));
+        }
+    }
     public void Save() { Directory.CreateDirectory(Path.GetDirectoryName(SettingsPath)!); File.WriteAllText(SettingsPath,JsonSerializer.Serialize(this,new JsonSerializerOptions { WriteIndented=true })); }
     // NR-X は LOGGER の標準 CSV を読む。列番号は上の NR-X CSV 列(0 は見出しの「電流」「圧力」・CH 番号から自動検出)。
     // 読み取りは Wrappers/LoggerFiles の LoggerCsvReader(移植前は Conversion/LoggerCsvReader.cs。判定の中身は同じ)。

@@ -8,6 +8,7 @@ CalibrationRecordTests.Run();
 await SupplyPressureTests.RunAsync();
 ShippingDataTests.Run();
 MeasurementProfileTests.Run();
+SaveConflictTests.Run();
 foreach (var isMotion in new[] { true, false })
 {
     double oldFrequency = isMotion ? 0.2 : 0.04;

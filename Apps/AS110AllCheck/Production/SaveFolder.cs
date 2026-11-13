@@ -63,6 +63,48 @@ internal static class SaveFolder
         return (files.OrderBy(f => Number(f.Serial)).ToList(), unreadable);
     }
 
+    // その S/N の保存ファイル(Excel/PDF/LOGGER。フルパス)を全部返す。日付・型式・前の版の名前(末尾 _6500)が違っても同じ S/N なら拾う。番号は先頭の 0 を無視して比べる。
+    // 正式保存の前に、同じ S/N の前のファイルが残っていないかを確かめるのに使う(2026-11-13、全体見直し。以前は同じ日付の名前しか見ず、
+    // 日付が変わってから測り直すと、聞かれないまま同じ S/N のファイルが 2 組残った)。
+    public static List<string> FindSerialFiles(string root, string serial)
+    {
+        var found = new List<string>();
+        if (!long.TryParse(serial, NumberStyles.None, CultureInfo.InvariantCulture, out long number)) return found;
+        foreach (string folder in DataFolders)
+        {
+            string path = Path.Combine(root, folder);
+            if (!Directory.Exists(path)) continue;
+            foreach (string file in Directory.EnumerateFiles(path).OrderBy(f => f, StringComparer.OrdinalIgnoreCase))
+            {
+                var match = FilePattern.Match(Path.GetFileNameWithoutExtension(file));
+                if (match.Success && long.TryParse(match.Groups["serial"].Value, NumberStyles.None, CultureInfo.InvariantCulture, out long n) && n == number)
+                    found.Add(file);
+            }
+        }
+        return found;
+    }
+
+    // 正式保存の前に見つけた、同じ S/N の前の保存ファイルを 2 つに分ける。
+    // Overwritten: 今回書くファイル(targets)と同じもの(上書きされる)。Kept: 別の名前のもの(今回の保存では消えずに残る)。
+    public static (string[] Overwritten, string[] Kept) FindSaveConflicts(string root, string serial, IEnumerable<string> targets)
+    {
+        var targetSet = new HashSet<string>(targets.Select(Path.GetFullPath), StringComparer.OrdinalIgnoreCase);
+        var files = FindSerialFiles(root, serial).Select(Path.GetFullPath).ToArray();
+        return (files.Where(targetSet.Contains).ToArray(), files.Where(f => !targetSet.Contains(f)).ToArray());
+    }
+
+    // 上書きの確認に出す文。上書きされるファイルと、消えずに残るファイルを分けて見せる。
+    public static string DescribeSaveConflicts(string serial, string baseName, IReadOnlyCollection<string> overwritten, IReadOnlyCollection<string> kept)
+    {
+        var text = new System.Text.StringBuilder($"S/N {serial} の保存ファイルがすでにあります（合格にはなっていません）。\n");
+        if (overwritten.Count > 0) text.Append("\n■ 同じ名前（「はい」で上書きします）\n").Append(string.Join("\n", overwritten)).Append('\n');
+        if (kept.Count > 0)
+            text.Append("\n■ 別の名前（日付・型式が違う、または前の版の名前〈末尾 _6500〉。「はい」でも消さずに残ります）\n").Append(string.Join("\n", kept))
+                .Append($"\n※ 残ったままだと、S/N {serial} のデータが 2 組になります。要らない方は保存のあとで人が片づけてください。\n");
+        text.Append($"\n今回の測定を {baseName} の名前で保存しますか？\n「はい」：保存する\n「いいえ」：保存しない。前のデータを残すなら「設定変更（測定を破棄）」→ 測定開始S/N を次の番号にして測り直す");
+        return text.ToString();
+    }
+
     // 完了記録(COMPLETE / RELEASE いずれも)に無い S/N のデータ。
     public static (List<(string Serial, string Model, string BaseName)> Unrecorded, int Unreadable) FindUnrecorded(string root, IReadOnlyDictionary<string, string> records)
     {

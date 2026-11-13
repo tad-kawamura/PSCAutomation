@@ -259,9 +259,18 @@ internal sealed partial class MainForm : Form
         _flow.SetLastSerial(_lastSerialBox.Text.Trim());
         // 測定開始S/N が空のときは型式だけ持ち、測定開始はできない(赤字「入力してください」で案内)。
         var (model,judged)=SelectedStage;
-        if(_serialBox.Text.Trim().Length==0) { _flow.ConfigureWithoutSerialFor(model,judged); _serialCompleted=false; _judgedPassed=true; return; }
+        if(_serialBox.Text.Trim().Length==0)
+        {
+            _flow.ConfigureWithoutSerialFor(model,judged); _serialCompleted=false; _judgedPassed=true;
+            // 測定開始のとき(requireSaveRoot)は S/N なしで始めない。ふだんは「データ調整」を押せなくして止めているが、欄を空にして確定する前に
+            // M5Stack の A ボタンで始めると、ボタンの状態が古いままここへ来る(2026-11-13、全体見直し)。
+            if(requireSaveRoot)throw new InvalidOperationException("測定開始S/N を入力してください。");
+            return;
+        }
         _flow.ConfigureFor(_serialBox.Text.Trim(),model,judged);
         if(!_flow.ShippingData)_judgedPassed=true;
+        // 測定開始のとき(requireSaveRoot)は、保存先フォルダー名「SN開始-最後」と合わない S/N では始めない(保存で初めて止まると、測定と転送が無駄になる)。
+        if(requireSaveRoot && SaveRootRangeProblem.Length>0)throw new InvalidOperationException(SaveRootRangeProblem);
         if(_flow.Mode==TestMode.Production && (requireSaveRoot || _rootBox.Text.Length>0))
         {
             RefreshSerialCompletion(requireSaveRoot);
@@ -271,6 +280,11 @@ internal sealed partial class MainForm : Form
             if(!_judgedPassed && requireSaveRoot)throw new InvalidOperationException(JudgedBlockedText(afterMeasurement:false));
         }
     }
+    // データ取りで、工程の S/N が保存先フォルダー名「SN開始-最後」と合わないときの文(合うとき・データ取り以外・保存先なし・S/N 空は "")。
+    // 合わないあいだは「データ調整」を押せなくし、「次にすること」に出す(2026-11-13、全体見直し。以前は赤字を出すだけで測定は始められ、保存で初めて止まった)。
+    // 保存先なし・S/N 空・最後 S/N 超えは、それぞれ専用の案内が先に出る。フォルダー名はここで毎回読むので、測定結果を残したまま保存先を選び直したときも今の保存先で確かめる。
+    private string SaveRootRangeProblem =>
+        _flow.Mode==TestMode.Production && !_flow.SerialMissing ? SaveFolder.CheckRange(_rootBox.Text,_flow.Serial) : "";
     // 測定開始S/N が完了記録で保護中か(押してからエラーにせず、「次にすること」とデータ調整ボタンに反映する)。
     private bool _serialCompleted;
     // 完了記録を読み直して _serialCompleted を更新する。S/N を入れたとき・保存先を選んだとき・合格で次の番号へ進んだとき・保護と解除を変えたときに呼ぶ。
@@ -346,7 +360,8 @@ internal sealed partial class MainForm : Form
         _startButton.Text=_flow.Mode==TestMode.Motion?"測定開始":"データ調整";
         // 型式(参照波形)未選択・データ取りの保存先未選択は、押してからエラーにせず押せない状態にして「次にすること」で案内する(2026-11-06)。
         _startButton.Enabled=ready && !_flow.SaveFailed && !_flow.CaptureFailed && (!_reviewStage) && (_flow.Mode!=TestMode.Motion || MotionContactEnergized) && !_flow.SerialRangeFinished && !_flow.SerialMissing
-            && (_flow.Mode==TestMode.Motion || _selectedReferencePath is not null) && (_flow.Mode!=TestMode.Production || _rootBox.Text.Length>0) && !_serialCompleted && _judgedPassed;
+            && (_flow.Mode==TestMode.Motion || _selectedReferencePath is not null) && (_flow.Mode!=TestMode.Production || _rootBox.Text.Length>0) && !_serialCompleted && _judgedPassed
+            && SaveRootRangeProblem.Length==0;
         _transferButton.Enabled=idle && _flow.HasCapture && !_flow.CaptureFailed && !_reviewStage;
         string saveBlockReason=GetSaveBlockReason();
         _saveButton.Enabled=saveBlockReason.Length==0;
@@ -392,7 +407,7 @@ internal sealed partial class MainForm : Form
         if(_saveConflict is not null)
         {
             _nextStepLabel.ForeColor=Color.Red;
-            _nextStepLabel.Text=$"次にすること：{_saveConflict}。今回の測定で置き換えるなら「保存」→「はい」。前のデータを残すなら「設定変更（測定を破棄）」→ 測定開始S/N を次の番号にして測り直す（前のデータを合格扱いにするなら「完了番号の保護と解除」で S/N {_flow.Serial} にチェック）";
+            _nextStepLabel.Text=$"次にすること：{_saveConflict}。今回の測定を保存するなら「保存」→「はい」（同じ名前のファイルは上書き、別の名前のファイルは残ります）。前のデータだけを残すなら「設定変更（測定を破棄）」→ 測定開始S/N を次の番号にして測り直す（前のデータを合格扱いにするなら「完了番号の保護と解除」で S/N {_flow.Serial} にチェック）";
             return;
         }
         _nextStepLabel.ForeColor=Color.Green;
@@ -434,6 +449,8 @@ internal sealed partial class MainForm : Form
             if(_rootBox.Text.Length==0)return "「保存先選択」で保存先を選んでください";
             if(_flow.SerialMissing)return "測定開始S/N を入力してください";
             if(_flow.SerialRangeFinished)return $"最後の S/N {_flow.LastSerial} を超えています。保存先を選び直し、測定開始S/N を入力してください";
+            // 保存先フォルダー名と合わない(範囲より前の番号・フォルダー名に範囲が無い・測定結果を残したまま保存先を選び直した)。
+            if(SaveRootRangeProblem.Length>0)return SaveRootRangeProblem.TrimEnd('。');
             // 測定結果が残っているのに完了済み(測定を始めたあとで別の PC などから保護された)ときは、解除してから保存する一本道だけを出す。
             if(_serialCompleted && _flow.HasCapture)return $"S/N {_flow.Serial} は完了済み（保護中）になっています。今回の測定で上書きするなら「完了番号の保護と解除」で S/N {_flow.Serial} のチェックを外してから「保存」を押してください";
             if(_serialCompleted)return $"測定開始S/N {_flow.Serial} は完了済み（保護中）です。別の番号にするか、「完了番号の保護と解除」で S/N {_flow.Serial} のチェックを外してください";
@@ -645,30 +662,28 @@ internal sealed partial class MainForm : Form
             string root=Path.GetFullPath(SaveRootPath),baseName=_flow.BaseName;
             string excel=Path.Combine(root,"Excel",baseName+".xlsx"),pdf=Path.Combine(root,"PDF",baseName+".pdf"),logger=Path.Combine(root,"LOGGER",baseName+Path.GetExtension(_capturePath));
             string ownership=root+"|"+baseName;
-            // 前の版の名前(末尾 _6500)で同じ S/N・同じ日に保存したファイルも、同名と同じに扱って聞く(上書きしても前の版の名前のファイルは消さずに残る)。
-            string legacy=_flow.LegacyBaseName;
-            string[] existing=new[]{excel,pdf,logger,
-                Path.Combine(root,"Excel",legacy+".xlsx"),Path.Combine(root,"PDF",legacy+".pdf"),Path.Combine(root,"LOGGER",legacy+Path.GetExtension(_capturePath))}
-                .Where(File.Exists).ToArray();
-            if(_ownedSaveBase!=ownership && !store.WasReleased(_flow.Serial) && existing.Length>0)
+            // 同じ S/N の前の保存ファイルを、名前が違っても探す(日付・型式が違うもの、前の版の名前〈末尾 _6500〉。SaveFolder.FindSerialFiles)。
+            // 同じ名前のものは今回の保存で上書きされ、別の名前のものは消えずに残る。2026-11-13 より前は同じ日付の名前しか見ず、
+            // 日付が変わってから測り直すと、聞かれないまま同じ S/N のファイルが 2 組残った(全体見直し)。
+            var (overwritten,kept)=SaveFolder.FindSaveConflicts(root,_flow.Serial,[excel,pdf,logger]);
+            if(_ownedSaveBase!=ownership && !store.WasReleased(_flow.Serial) && overwritten.Length+kept.Length>0)
             {
                 // 前に同じ S/N を保存したファイル(合格にはしていない)が残っている。まだ何も書いていないので「保存失敗」にはせず、
-                // 上書きするかを人に聞く。上書きしないときは「次にすること」に取れる手を出す(2026-11-06、人の指摘: 何をすればいいか分からなかった)。
-                _saveConflict=$"S/N {_flow.Serial} の保存ファイルがすでにあります（{string.Join("・",existing.Select(f=>Path.GetFileName(Path.GetDirectoryName(f)!)))}）";
+                // 保存するかを人に聞く。保存しないときは「次にすること」に取れる手を出す(2026-11-06、人の指摘: 何をすればいいか分からなかった)。
+                _saveConflict=$"S/N {_flow.Serial} の保存ファイルがすでにあります（{string.Join("・",overwritten.Concat(kept).Select(f=>Path.GetFileName(Path.GetDirectoryName(f)!)).Distinct())}）";
                 UseWaitCursor=false;
                 DialogResult answer;
                 try
                 {
-                    answer=ErrorNotification.Show(this,
-                        $"S/N {_flow.Serial} の保存ファイルがすでにあります（合格にはなっていません）。\n"+string.Join("\n",existing)+
-                        (existing.Any(f=>Path.GetFileNameWithoutExtension(f)==legacy)?$"\n（末尾 _6500 は前の版の名前です。「はい」でも消さずに残り、{baseName} の名前で保存します）":"")+
-                        "\n\n今回の測定で上書きしますか？\n「はい」：上書きして保存する\n「いいえ」：保存しない。前のデータを残すなら「設定変更（測定を破棄）」→ 測定開始S/N を次の番号にして測り直す",
-                        "正式保存：同名ファイル",MessageBoxButtons.YesNo,MessageBoxIcon.Warning);
+                    answer=ErrorNotification.Show(this,SaveFolder.DescribeSaveConflicts(_flow.Serial,baseName,overwritten,kept),
+                        "正式保存：同じ S/N のファイル",MessageBoxButtons.YesNo,MessageBoxIcon.Warning);
                 }
                 finally { UseWaitCursor=true; }
-                if(answer!=DialogResult.Yes) return "同名ファイルがあるため保存しませんでした。"+_saveConflict;
-                AppendLog("正式保存：同名ファイルを上書きします / "+string.Join(" / ",existing));
+                if(answer!=DialogResult.Yes) return "同じ S/N の保存ファイルがあるため保存しませんでした。"+_saveConflict;
+                if(overwritten.Length>0)AppendLog("正式保存：同じ名前のファイルを上書きします / "+string.Join(" / ",overwritten));
             }
+            // 別の名前のファイルは残る。聞かなかったとき(保護を解除した S/N・この起動で自分が保存した S/N)も、残ることをログに残す。
+            string keptNote=kept.Length>0?$"（S/N {_flow.Serial} の別の名前のファイルが {kept.Length} 件残っています：{string.Join("、",kept.Select(Path.GetFileName))}）":"";
             _saveConflict=null;
             _ownedSaveBase=ownership;
             // ここから書き込む。途中で止まったら保存失敗(同じ番号で再保存)。成功したら SaveSucceeded が戻す。
@@ -686,7 +701,7 @@ internal sealed partial class MainForm : Form
                 _flow.SaveSucceeded();_reviewStage=true;
             }
             finally {try{Directory.Delete(stage,true);}catch{}}
-            return _flow.ShippingData?$"Excel・PDF・LOGGERをすべて保存しました（{root}）。「完了」を押してください（漏れ試験はしません）。":"Excel・PDF・LOGGERをすべて保存しました。漏れチェックを行ってください。";
+            return (_flow.ShippingData?$"Excel・PDF・LOGGERをすべて保存しました（{root}）。「完了」を押してください（漏れ試験はしません）。":"Excel・PDF・LOGGERをすべて保存しました。漏れチェックを行ってください。")+keptNote;
         });
     }
     private void StartLeakOutput()
@@ -852,14 +867,20 @@ internal sealed partial class MainForm : Form
     {
         if(_operationInProgress || _flow.Measuring || _leakRunning || _flow.HasSaved || _flow.SaveFailed)return;
         using var dialog=new Form {Text="Excel転送設定",ClientSize=new Size(480,300),StartPosition=FormStartPosition.CenterParent,TopMost=true};
-        _flow.TransferFailed();
-        var grid=new PropertyGrid {Dock=DockStyle.Fill,SelectedObject=_transferSettings,ToolbarVisible=false,PropertySort=PropertySort.NoSort};
+        // 表で直すのは設定の写し。「設定保存」を押したときだけ元の設定に取り込み、× で閉じたら何も変えない(転送済みの結果もそのまま)。
+        // 以前は表が設定をその場で書き換え、開いただけで転送済みを取り消していた(2026-11-13、全体見直し)。
+        var draft=_transferSettings.CreateDraft();
+        var grid=new PropertyGrid {Dock=DockStyle.Fill,SelectedObject=draft,ToolbarVisible=false,PropertySort=PropertySort.NoSort};
         var ok=new Button{Text="設定保存",Dock=DockStyle.Bottom,Height=40,DialogResult=DialogResult.OK};
         // 漏れ試験の初期運用の回避(SPEC「漏れ試験の自動判定」5)。軌道に乗ったら外す(人の方針)。
         var allowLeakOverride=new CheckBox{Text="漏れ判定が不合格でも、人の判断で合格にできる（初期運用）",Dock=DockStyle.Bottom,Height=32,Padding=new Padding(8,0,0,0),Checked=_transferSettings.AllowLeakOverride};
         dialog.Controls.AddRange([grid,allowLeakOverride,ok]);
         string previousSaveRoot=_transferSettings.SaveRoot;
-        if(dialog.ShowDialog(this)==DialogResult.OK)RunOperation("転送設定保存",()=>{
+        if(dialog.ShowDialog(this)!=DialogResult.OK){AppendLog("転送設定：保存せずに閉じました（設定は変えていません）。");return;}
+        RunOperation("転送設定保存",()=>{
+            // 設定が変わるので、前の設定で転送した結果では保存させない(転送し直す)。
+            _flow.TransferFailed();
+            _transferSettings.ApplyEdited(draft);
             bool overrideChanged=_transferSettings.AllowLeakOverride!=allowLeakOverride.Checked;
             _transferSettings.AllowLeakOverride=allowLeakOverride.Checked;_transferSettings.Save();
             return "設定しました。"+(overrideChanged?(allowLeakOverride.Checked?"漏れ判定の不合格を人の判断で合格にできます。":"漏れ判定の不合格では合格にできません。"):"");});

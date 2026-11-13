@@ -164,6 +164,28 @@ internal static class Program
             serialBox.Text="3";configure.Invoke(form,[false]);Call("UpdateControls");
             if((bool)Field("_serialCompleted"))throw new Exception("Non-completed serial must clear the completed state");
             Console.WriteLine("PASS completed serial is detected when typed and blocks start; another serial clears it");
+            // 保存先フォルダー名「SN開始-最後」(ここでは SN1-100)と合わない S/N は、測定開始(ConfigureProduct の requireSaveRoot)で止める
+            // (2026-11-13、全体見直し。以前は赤字を出すだけで測定は始められ、保存で初めて止まった)。範囲内なら止めない。S/N が空でも測定開始は止める。
+            var rangeProblemOf=type.GetProperty("SaveRootRangeProblem",Private)!;
+            bool StartStops(string expected)
+            {
+                try { configure.Invoke(form,[true]); return false; }
+                catch(System.Reflection.TargetInvocationException ex) when(ex.InnerException is InvalidOperationException stop && stop.Message.Contains(expected)) { return true; }
+            }
+            serialBox.Text="150";configure.Invoke(form,[false]);Call("UpdateControls");
+            string rangeProblem=(string)rangeProblemOf.GetValue(form)!;
+            if(!rangeProblem.Contains("範囲 1〜100 の外") || ((Button)Field("_startButton")).Enabled || !StartStops("範囲 1〜100 の外"))throw new Exception("A serial outside the folder range must stop the start: "+rangeProblem);
+            serialBox.Text="3";configure.Invoke(form,[true]);
+            if(((string)rangeProblemOf.GetValue(form)!).Length!=0)throw new Exception("A serial inside the folder range must not be reported");
+            serialBox.Text="";
+            if(!StartStops("測定開始S/N を入力"))throw new Exception("Starting without a serial must stop");
+            if(((string)rangeProblemOf.GetValue(form)!).Length!=0)throw new Exception("An empty serial is reported by its own guide, not as a range problem");
+            // フォルダー名に範囲が無い保存先でも止める。
+            string noRangeRoot=Path.Combine(Path.GetDirectoryName(completedRoot)!,"測定データ");
+            Directory.CreateDirectory(noRangeRoot);
+            ((TextBox)Field("_rootBox")).Text=noRangeRoot;Call("ApplySaveRootRange");serialBox.Text="3";configure.Invoke(form,[false]);
+            if(!StartStops("SN開始-最後 がありません"))throw new Exception("A save root without a range in its name must stop the start");
+            Console.WriteLine("PASS a serial outside the save folder range, a folder without a range and an empty serial stop the start; a serial in range does not");
         }
         finally { ((TextBox)Field("_rootBox")).Text="";serialBox.Text="";Call("ApplySaveRootRange");Call("UpdateControls");try{Directory.Delete(Path.GetDirectoryName(completedRoot)!,true);}catch(IOException){} }
         if(((Control)Field("_transferButton")).Left>=((Control)Field("_saveButton")).Left)throw new Exception("Excel transfer button is not first in the action row");
