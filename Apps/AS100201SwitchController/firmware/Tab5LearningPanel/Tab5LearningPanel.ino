@@ -8,12 +8,19 @@
 //   - 取消: 確認「直前の○○を取り消しますか」→ はい で UNDO を送る
 //   - 2 画面目の選択と取消の確認はパネルの中で完結させ、確定した 1 行だけを PC に送る
 //   - 2026-11-13 追記: 「PC と切れました」は USB の未接続が 1.5 秒続いたときだけ出す(一瞬の揺れで出ていたため)。
-//     やり取り(版 1)は変えていない
 //
-// PC とのやり取り(115200bps 相当・LF の行単位。USB-C の内蔵 USB シリアル):
-//   PC → パネル  AS100201_PANEL_PING           → パネルは AS100201_PANEL_READY:1 を返す
+// 版 2(2026-11-13、SPEC_調整操作の記録.md「Wi-Fi・バッテリーへの変更」): USB と Wi-Fi の両方でつながる・電池・画面を暗くする
+//   - Tab5 が Wi-Fi の親機になり(WIFI_SSID、PANEL_IP)、PANEL_PORT で PC からの TCP 接続を待つ。PC は専用の USB Wi-Fi 子機でつなぐ
+//   - PC の確認(PING)が最後に届いた道(USB / Wi-Fi)を「今の道」にし、定期応答・操作の行・電池残量はその道にだけ送る
+//     (同じ操作が 2 本で二重に記録されないため)。両方つながっていれば PC が USB を選ぶ。今の道が切れたら PC がもう一方へ移る
+//   - 電池残量を画面の上に出し、30 秒ごとと PC の確認に答えた直後に BATT: を送る
+//   - 60 秒触らなければ画面を暗くする。暗いときの最初のタッチは明るくするだけで、ボタンとしては受け付けない
+//
+// PC とのやり取り(LF の行単位。USB-C の内蔵 USB シリアル、または Wi-Fi の TCP。どちらも同じ行):
+//   PC → パネル  AS100201_PANEL_PING           → パネルは AS100201_PANEL_READY:2 を返す(この道が今の道になる)
 //   パネル → PC  DIAG_FRAME:<連番>:<millis>     250ms ごと(PC はこれが 1 秒止まると操作を受け付けない)
-//   パネル → PC  DIAG_BOOT:1                    起動通知
+//   パネル → PC  DIAG_BOOT:1                    起動通知(USB)
+//   パネル → PC  BATT:<残量%>:<電圧mV>:<充電中 0/1>  30 秒ごと(電池が無いときは残量 -1)
 //   パネル → PC  ACT:MAG / ACT:DEMAG:FULL|TAP / ACT:NOZZLE:P|R:IN|OUT:1|2|3 / ACT:SPACER:P|R:UP|DOWN / DONE / UNDO
 //   PC → パネル  ACK:<受け取った行> / NAK:<理由>(理由は日本語 UTF-8)
 //   Arduino 向けの AS100201_PING や知らない行(STATE: など)は無視する(接続確認が COM ポートを総当たりで探すため)。
@@ -26,10 +33,24 @@
 //   書き込めないときは、リセットボタンを 2 秒ほど長押しして緑の LED が速く点滅する状態(書き込み待ち)にしてから書き込む。
 
 #include <M5Unified.h>
+#include <WiFi.h>
+#include <lwip/sockets.h>
 
 // ---- 取り決め ----------------------------------------------------------
 static const char* const HELLO_REQUEST = "AS100201_PANEL_PING";
-static const char* const HELLO_REPLY = "AS100201_PANEL_READY:1";   // 版 1。PC 側 As100201PanelProtocol.PanelVersion と揃える
+static const char* const HELLO_REPLY = "AS100201_PANEL_READY:2";   // 版 2。PC 側 As100201PanelProtocol.PanelVersion と揃える
+
+// Wi-Fi(Tab5 が親機)。名前とパスワードはここにだけ書く(2026-11-13、AI の仮決め)。変えたら書き込み直し、
+// PC の子機の Wi-Fi の登録もし直す。IP とポートは PC 側 As100201PanelNetworkSettings と揃える。
+static const char* const WIFI_SSID = "AS100201_PANEL";
+static const char* const WIFI_PASSWORD = "as100201-panel";   // 8 文字以上
+const IPAddress PANEL_IP(192, 168, 4, 1);                    // 社内 LAN と同じ範囲なら PC 側と両方を変える
+const uint16_t PANEL_PORT = 50201;
+
+const unsigned long BATTERY_INTERVAL_MS = 30000;   // 電池残量を読んで送る間隔
+const int LOW_BATTERY_LEVEL = 20;                  // これ以下で画面の残量を警告の色にする(PC のログと同じ値)
+const unsigned long DIM_AFTER_MS = 60000;          // 触らなければ画面を暗くするまで(AI の仮決め。実物で決める)
+const uint8_t DIM_BRIGHTNESS = 24;                 // 暗いときの明るさ(0〜255。状態は読める程度。実物で決める)
 const unsigned long FRAME_INTERVAL_MS = 250;
 const unsigned long REPLY_TIMEOUT_MS = 2000;   // 送ってから ACK / NAK が来ないと「返事なし」を出す
 // USB の「つながっていない」がこの時間続いたときだけ「PC と切れました」にする。
@@ -42,7 +63,7 @@ const bool FLIP_LANDSCAPE = false;
 
 // ---- 色 ----------------------------------------------------------------
 uint16_t C_BG, C_HEADER, C_TEXT, C_SUBTEXT, C_OP, C_DONE, C_UNDO, C_BACK, C_SELECTED, C_UNSELECTED,
-    C_DISABLED, C_DISABLED_TEXT, C_PRESSED, C_YES, C_MSG_INFO, C_MSG_OK, C_MSG_WARN, C_MSG_ERROR;
+    C_DISABLED, C_DISABLED_TEXT, C_PRESSED, C_YES, C_MSG_INFO, C_MSG_OK, C_MSG_WARN, C_MSG_ERROR, C_MSG_WARN_TEXT;
 
 // ---- 画面とボタン -------------------------------------------------------
 enum Screen : uint8_t { HOME, DEMAG, NOZZLE, SPACER, UNDO_CONFIRM };
@@ -69,10 +90,27 @@ char side = 'P';     // ノズル・スペーサーの P / R
 char degree = '2';   // ノズルの程度 1=微調整 2=普通 3=大きく
 
 // ---- 状態 ---------------------------------------------------------------
+// PC への道。PC の確認(PING)が最後に届いた道が「今の道」(なければ PATH_NONE)。
+enum Path : uint8_t { PATH_NONE, PATH_USB, PATH_WIFI };
+Path currentPath = PATH_NONE;
+
 bool usbConnected = false;    // PC が USB シリアルを開いている(一瞬の揺れは無視した値)
 unsigned long lastUsbSeenAt = 0;  // 最後に USB がつながっていると見えた時刻(受信があったときも含む)
 bool lostShown = false;       // 「PC と切れました」を出したあと、まだつながり直していない
-bool verified = false;        // USB がつながってから PC の確認(PING)を受けた
+
+bool wifiStarted = false;     // Wi-Fi の親機を始められた
+WiFiServer server(PANEL_PORT);
+WiFiClient wifiClient;        // PC からの TCP 接続(1 本だけ。新しい接続が来たら古い方を閉じる)
+
+int batteryLevel = -1;        // 残量 %(電池なしは -1)
+int batteryMillivolts = 0;
+bool batteryCharging = false;
+unsigned long lastBatteryAt = 0;
+
+uint8_t normalBrightness = 160;
+bool dimmed = false;
+unsigned long lastTouchAt = 0;
+
 String pendingLine;           // 送って返事を待っている行(空なら待っていない)
 unsigned long pendingAt = 0;
 String lastOperation;         // 最後に記録された操作(ACT: の行)。取消の確認に出す
@@ -87,9 +125,13 @@ bool dirty = true;
 unsigned long frameSequence = 0;
 unsigned long lastFrameAt = 0;
 
-char rxLine[256];
-size_t rxLength = 0;
-bool rxOverflow = false;
+// 道ごとの受信途中の行。
+struct LineReader {
+  char line[256];
+  size_t length = 0;
+  bool overflow = false;
+};
+LineReader usbReader, wifiReader;
 
 // ---- 文言 ---------------------------------------------------------------
 // PC の台帳・ログと同じ言葉で、送った行を人に見せる名前にする。
@@ -122,11 +164,24 @@ void setMessage(MessageKind kind, const String& title, const String& detail) {
   dirty = true;
 }
 
+const char* pathName(Path path) {
+  return path == PATH_USB ? "USB" : path == PATH_WIFI ? "Wi-Fi" : "なし";
+}
+
+bool wifiClientAlive() {
+  return wifiClient && wifiClient.connected();
+}
+
+// その道が今もつながっているか(USB は揺れを除いた値、Wi-Fi は TCP の接続)。
+bool pathAlive(Path path) {
+  return path == PATH_USB ? usbConnected : path == PATH_WIFI ? wifiClientAlive() : false;
+}
+
 // ---- 送信 ---------------------------------------------------------------
-// PC がポートを開いていないときに書き込みで止まらないよう、送れる分が空いているときだけ送る。
+// USB: PC がポートを開いていないときに書き込みで止まらないよう、送れる分が空いているときだけ送る。
 // (bool)Serial は見ない(一瞬 false になるため)。つながっていない間に書いた分は ESP32 の送信バッファに
-// 残り、あふれたら古い方から捨てられる(HWCDC の動き)。操作の行を送ってよいかは sendCommand が usbConnected で決める。
-bool writeLine(const char* line) {
+// 残り、あふれたら古い方から捨てられる(HWCDC の動き)。操作の行を送ってよいかは sendCommand が決める。
+bool writeUsb(const char* line) {
   size_t length = strlen(line) + 2;
   if (Serial.availableForWrite() < (int)length) return false;
   Serial.print(line);
@@ -134,11 +189,37 @@ bool writeLine(const char* line) {
   return true;
 }
 
+void dropWifiClient() {
+  if (wifiClient) wifiClient.stop();
+  wifiReader.length = 0;
+  wifiReader.overflow = false;
+}
+
+// Wi-Fi: 画面を止めないよう、待たずに送る(WiFiClient::write は相手が受け取らないと最大 10 秒ほど待つため使わない)。
+// 送り切れなかったら行が途中で切れるので、接続ごと閉じる(PC は定期応答が止まったことで気づき、つなぎ直す)。
+bool writeWifi(const char* line) {
+  if (!wifiClientAlive()) return false;
+  char buffer[300];
+  int length = snprintf(buffer, sizeof(buffer), "%s\r\n", line);
+  if (length <= 0 || length >= (int)sizeof(buffer)) return false;
+  int sent = ::send(wifiClient.fd(), buffer, length, MSG_DONTWAIT);
+  if (sent == length) return true;
+  dropWifiClient();
+  return false;
+}
+
+bool writeLine(Path path, const char* line) {
+  if (path == PATH_USB) return writeUsb(line);
+  if (path == PATH_WIFI) return writeWifi(line);
+  return false;
+}
+
 void sendCommand(const String& line) {
   screen = HOME;
   pressedId = B_NONE;
-  if (!usbConnected || !writeLine(line.c_str())) {
-    setMessage(MSG_ERROR, "送れませんでした：" + describe(line), "USB ケーブルと PC のアプリを確かめて、押し直してください");
+  if (currentPath == PATH_NONE || !pathAlive(currentPath) || !writeLine(currentPath, line.c_str())) {
+    setMessage(MSG_ERROR, "送れませんでした：" + describe(line),
+               "USB ケーブル・PC の Wi-Fi・PC のアプリを確かめて、押し直してください");
     return;
   }
   pendingLine = line;
@@ -146,17 +227,47 @@ void sendCommand(const String& line) {
   setMessage(MSG_INFO, "送りました：" + describe(line), "PC の返事を待っています…");
 }
 
+// ---- 電池 ---------------------------------------------------------------
+// 残量は M5Unified が電池(2 セル)の電圧から出した値。電池が付いていないときは -1。
+void readBattery() {
+  int level = -1, millivolts = 0;
+  bool charging = false;
+  int raw = M5.Power.getBatteryVoltage();
+  if (M5.Power.getBatteryPresence() != m5::battery_presence_t::absent && raw > 0) {
+    millivolts = raw;
+    level = M5.Power.getBatteryLevel();
+    if (level < 0) level = 0;
+    if (level > 100) level = 100;
+    charging = M5.Power.isCharging();
+  }
+  if (level != batteryLevel || charging != batteryCharging) dirty = true;
+  batteryLevel = level;
+  batteryMillivolts = millivolts;
+  batteryCharging = charging;
+}
+
+void sendBattery(Path path) {
+  char line[48];
+  snprintf(line, sizeof(line), "BATT:%d:%d:%d", batteryLevel, batteryMillivolts, batteryCharging ? 1 : 0);
+  writeLine(path, line);
+}
+
 // ---- 受信 ---------------------------------------------------------------
-void handleLine(const String& line) {
+void handleLine(Path from, const String& line) {
   if (line == HELLO_REQUEST) {
-    writeLine(HELLO_REPLY);
-    if (!verified) {
-      verified = true;
-      setMessage(MSG_INFO, "PC のアプリとつながりました", "操作する前にボタンを押してください");
+    // 確認が届いた道が今の道になる(PC は両方あれば USB を選ぶ)。
+    writeLine(from, HELLO_REPLY);
+    if (currentPath != from) {
+      currentPath = from;
+      lostShown = false;
+      setMessage(MSG_INFO, String("PC のアプリと ") + pathName(from) + " でつながりました", "操作する前にボタンを押してください");
     }
+    sendBattery(from);
     dirty = true;
     return;
   }
+  // 返事は今の道からだけ受け取る。
+  if (from != currentPath) return;
   if (line.startsWith("ACK:")) {
     String target = line.substring(4);
     if (target.startsWith("ACT:")) lastOperation = target;
@@ -175,25 +286,67 @@ void handleLine(const String& line) {
   // それ以外(Arduino 向けの AS100201_PING、STATE: など)は無視する。
 }
 
-void readSerial() {
+void feed(LineReader& reader, Path from, int c) {
+  if (c == '\n') {
+    if (!reader.overflow) {
+      reader.line[reader.length] = '\0';
+      handleLine(from, String(reader.line));
+    }
+    reader.length = 0;
+    reader.overflow = false;
+  } else if (c == '\r') {
+    return;
+  } else if (reader.length < sizeof(reader.line) - 1) {
+    reader.line[reader.length++] = (char)c;
+  } else {
+    reader.overflow = true;   // 長すぎる行は捨てる
+  }
+}
+
+void readUsb() {
   while (Serial.available() > 0) {
     int c = Serial.read();
     if (c < 0) break;
-    if (c == '\n') {
-      if (!rxOverflow) {
-        rxLine[rxLength] = '\0';
-        handleLine(String(rxLine));
-      }
-      rxLength = 0;
-      rxOverflow = false;
-    } else if (c == '\r') {
-      continue;
-    } else if (rxLength < sizeof(rxLine) - 1) {
-      rxLine[rxLength++] = (char)c;
-    } else {
-      rxOverflow = true;   // 長すぎる行は捨てる
+    feed(usbReader, PATH_USB, c);
+  }
+}
+
+// 新しい TCP 接続を受け、届いた分を読む。新しい接続が来たら古い方を閉じる
+// (PC が Wi-Fi の途切れのあとにつなぎ直したとき、古い接続が残っていることがある)。
+void readWifi() {
+  if (!wifiStarted) return;
+  WiFiClient incoming = server.accept();
+  if (incoming) {
+    dropWifiClient();
+    wifiClient = incoming;
+    wifiClient.setNoDelay(true);
+    // 今の道が Wi-Fi なら、つなぎ直しの確認(PING)がすぐ来るまで今の道なしにする。
+    if (currentPath == PATH_WIFI) {
+      currentPath = PATH_NONE;
+      dirty = true;
     }
   }
+  while (wifiClientAlive() && wifiClient.available() > 0) {
+    int c = wifiClient.read();
+    if (c < 0) break;
+    feed(wifiReader, PATH_WIFI, c);
+  }
+}
+
+// 今の道が切れた。PC は自動でもう一方の道(つながっていれば)へ移る。
+void pathLost(Path path) {
+  currentPath = PATH_NONE;
+  lostShown = true;
+  const char* detail = path == PATH_USB
+      ? "USB ケーブルを確かめてください（Wi-Fi がつながっていれば、PC が自動で切り替えます）"
+      : "PC の Wi-Fi 子機と距離を確かめてください（USB ケーブルを挿せば USB でつながります）";
+  if (pendingLine.length()) {
+    setMessage(MSG_WARN, "PC と切れました：" + describe(pendingLine), "記録されたか PC のアプリの画面で確かめてください");
+    pendingLine = "";
+  } else {
+    setMessage(MSG_ERROR, String("PC と切れました（") + pathName(path) + "）", detail);
+  }
+  dirty = true;
 }
 
 // ---- 配置 ---------------------------------------------------------------
@@ -270,7 +423,7 @@ void layoutButtons() {
 // 押せるのは、PC の確認を受けていて、返事待ちでないときだけ。戻る・いいえ・程度の選択は送らないのでいつでも押せる。
 bool buttonEnabled(const Button& b) {
   if (b.id == B_BACK || b.id == B_NO || b.id == B_DEG1 || b.id == B_DEG2 || b.id == B_DEG3) return true;
-  return usbConnected && verified && pendingLine.length() == 0;
+  return currentPath != PATH_NONE && pathAlive(currentPath) && pendingLine.length() == 0;
 }
 
 // ---- 描画 ---------------------------------------------------------------
@@ -310,15 +463,26 @@ void drawHeader() {
   M5.Display.setTextDatum(middle_left);
   M5.Display.drawString("調整記録パネル", GAP, HEADER_H / 2);
 
+  // 電池残量(と Wi-Fi を始められなかったとき)。題名の右。
+  String power = batteryLevel < 0 ? String("電池なし")
+               : String(batteryCharging ? "充電中 " : "電池 ") + batteryLevel + "%";
+  if (!wifiStarted) power += "　Wi-Fi なし";
+  M5.Display.setTextColor(batteryLevel >= 0 && batteryLevel <= LOW_BATTERY_LEVEL && !batteryCharging ? C_MSG_WARN_TEXT : C_SUBTEXT);
+  M5.Display.drawString(power, 330, HEADER_H / 2);
+  M5.Display.setTextColor(C_TEXT);
+
   uint16_t dot;
-  const char* state;
-  if (!usbConnected) { dot = C_MSG_ERROR; state = "PC：USB がつながっていません"; }
-  else if (!verified) { dot = C_MSG_WARN; state = "PC：アプリの確認を待っています"; }
-  else if (pendingLine.length()) { dot = C_MSG_WARN; state = "PC：返事を待っています"; }
-  else { dot = C_MSG_OK; state = "PC：つながっています"; }
+  String state;
+  if (currentPath == PATH_NONE) {
+    bool any = usbConnected || wifiClientAlive();
+    dot = any ? C_MSG_WARN : C_MSG_ERROR;
+    state = any ? "PC：アプリの確認を待っています" : "PC：つながっていません";
+  }
+  else if (pendingLine.length()) { dot = C_MSG_WARN; state = String("PC：返事を待っています（") + pathName(currentPath) + "）"; }
+  else { dot = C_MSG_OK; state = String("PC：") + pathName(currentPath) + " でつながっています"; }
   M5.Display.setTextDatum(middle_right);
   M5.Display.drawString(state, W - GAP, HEADER_H / 2);
-  int textW = M5.Display.textWidth(state);
+  int textW = M5.Display.textWidth(state.c_str());
   M5.Display.fillCircle(W - GAP - textW - 26, HEADER_H / 2, 14, dot);
 }
 
@@ -436,11 +600,25 @@ void activate(ButtonId id) {
   dirty = true;
 }
 
+// 画面を元の明るさに戻す。
+void wake(unsigned long now) {
+  lastTouchAt = now;
+  if (!dimmed) return;
+  dimmed = false;
+  M5.Display.setBrightness(normalBrightness);
+}
+
 // 押した所で色を変え、同じボタンの上で指を離したら確定する(押したまま外へずらせば取りやめ)。
-void handleTouch() {
+// 暗いときの最初のタッチは明るくするだけで、ボタンとしては受け付けない(暗い画面を触って誤って記録しないため)。
+void handleTouch(unsigned long now) {
   if (M5.Touch.getCount() == 0 && pressedId == B_NONE) return;
+  if (M5.Touch.getCount() > 0 && !dimmed) lastTouchAt = now;   // 押している間は暗くしない
   auto t = M5.Touch.getDetail();
   if (t.wasPressed()) {
+    if (dimmed) {
+      wake(now);
+      return;
+    }
     pressedId = hitTest(t.x, t.y);
     if (pressedId != B_NONE) redrawButton(pressedId);
   } else if (t.wasReleased()) {
@@ -474,6 +652,7 @@ void setupColors() {
   C_MSG_OK = d.color565(0x1D, 0x6B, 0x3A);
   C_MSG_WARN = d.color565(0x9A, 0x63, 0x00);
   C_MSG_ERROR = d.color565(0x9B, 0x25, 0x25);
+  C_MSG_WARN_TEXT = d.color565(0xF2, 0xC2, 0x30);
 }
 
 void setup() {
@@ -488,11 +667,32 @@ void setup() {
   if (M5.Display.width() < M5.Display.height()) M5.Display.setRotation((M5.Display.getRotation() + 1) % 4);
   if (FLIP_LANDSCAPE) M5.Display.setRotation((M5.Display.getRotation() + 2) % 4);
   setupColors();
+  uint8_t brightness = M5.Display.getBrightness();
+  if (brightness > DIM_BRIGHTNESS) normalBrightness = brightness;
 
   usbConnected = (bool)Serial;
   lastUsbSeenAt = millis();
-  writeLine("DIAG_BOOT:1");
+  writeUsb("DIAG_BOOT:1");
+  readBattery();
+  setMessage(MSG_INFO, "起動しました", "Wi-Fi を始めています…");
   drawScreen();
+
+  // Wi-Fi の親機を始める(無線用チップ ESP32-C6 を経由。ピンはボード M5Tab5 の設定にある)。
+  // 始められなくても USB では使える。
+  // ゲートウェイは 0.0.0.0 にして、PC へ「この先にインターネットがある」と知らせない(DHCP でルーターを渡さない)。
+  // 渡すと、PC がふだんのインターネットの通信を Tab5 へ流してしまうことがある。DNS も渡さない。
+  WiFi.mode(WIFI_AP);
+  wifiStarted = WiFi.softAPConfig(PANEL_IP, IPAddress(0, 0, 0, 0), IPAddress(255, 255, 255, 0)) &&
+                WiFi.softAP(WIFI_SSID, WIFI_PASSWORD);
+  if (wifiStarted) {
+    server.begin();
+    server.setNoDelay(true);
+    setMessage(MSG_INFO, "起動しました", String("PC のアプリで「学習モード」を選ぶと、USB か Wi-Fi（") + WIFI_SSID + "）でつながります");
+  } else {
+    setMessage(MSG_WARN, "Wi-Fi を始められませんでした", "USB ケーブルでつなげば使えます");
+  }
+  lastBatteryAt = lastTouchAt = millis();
+  dirty = true;
 }
 
 void loop() {
@@ -505,32 +705,36 @@ void loop() {
     lastUsbSeenAt = now;
     if (!usbConnected) {
       usbConnected = true;
-      if (lostShown) {
+      if (lostShown && currentPath == PATH_NONE) {
         lostShown = false;
-        setMessage(MSG_INFO, "USB がつながりました", "PC のアプリで「確認」を押すと、操作できるようになります");
+        setMessage(MSG_INFO, "USB がつながりました", "PC のアプリが自動で確かめ直すと、操作できるようになります");
       }
       dirty = true;
     }
   } else if (usbConnected && now - lastUsbSeenAt >= DISCONNECT_CONFIRM_MS) {
     usbConnected = false;
-    verified = false;
-    lostShown = true;
-    if (pendingLine.length()) {
-      setMessage(MSG_WARN, "PC と切れました：" + describe(pendingLine), "記録されたか PC のアプリの画面で確かめてください");
-      pendingLine = "";
-    } else {
-      setMessage(MSG_ERROR, "PC と切れました", "USB ケーブルを確かめてください");
-    }
+    if (currentPath == PATH_USB) pathLost(PATH_USB);
     dirty = true;
   }
 
-  readSerial();
+  readUsb();
+  readWifi();
+  if (currentPath == PATH_WIFI && !wifiClientAlive()) pathLost(PATH_WIFI);
 
+  // 定期応答は今の道にだけ送る(PC はこれが 1 秒止まると操作を受け付けない)。
   if (now - lastFrameAt >= FRAME_INTERVAL_MS) {
     lastFrameAt = now;
-    char frame[48];
-    snprintf(frame, sizeof(frame), "DIAG_FRAME:%lu:%lu", ++frameSequence, now);
-    writeLine(frame);
+    if (currentPath != PATH_NONE) {
+      char frame[48];
+      snprintf(frame, sizeof(frame), "DIAG_FRAME:%lu:%lu", ++frameSequence, now);
+      writeLine(currentPath, frame);
+    }
+  }
+
+  if (now - lastBatteryAt >= BATTERY_INTERVAL_MS) {
+    lastBatteryAt = now;
+    readBattery();
+    if (currentPath != PATH_NONE) sendBattery(currentPath);
   }
 
   if (pendingLine.length() && now - pendingAt >= REPLY_TIMEOUT_MS) {
@@ -538,7 +742,11 @@ void loop() {
     pendingLine = "";
   }
 
-  handleTouch();
+  handleTouch(now);
+  if (!dimmed && pressedId == B_NONE && now - lastTouchAt >= DIM_AFTER_MS) {
+    dimmed = true;
+    M5.Display.setBrightness(DIM_BRIGHTNESS);
+  }
   if (dirty && pressedId == B_NONE) drawScreen();
   delay(5);
 }

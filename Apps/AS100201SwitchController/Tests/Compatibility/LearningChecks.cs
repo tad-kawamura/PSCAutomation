@@ -1,6 +1,6 @@
 // 学習モード(SPEC_調整操作の記録.md、2026-11-09 承認)の模擬テスト。機器・LOGGER・タッチパネルは使わない。
 // グループ: パネルの行の読み取り / 台帳の行の組み立て / 完了・取消・完了の取消 / 書けないときの停止と再試行 /
-//           パネル途切れ中の受け付け / 通常モードを選んだとき今までと同じ / タッチパネルの代わり(開発用)
+//           パネル途切れ中の受け付け / USB と Wi-Fi の 2 本・電池残量(2026-11-13) / 通常モードを選んだとき今までと同じ / タッチパネルの代わり(開発用)
 using PSCAutomation.Apps.AS100201SwitchController;
 using System.Text;
 
@@ -17,6 +17,7 @@ internal static class LearningChecks
         WriteFailureChecks();
         PressedRowChecks();
         await PanelOutageChecks();
+        await PanelPathAndBatteryChecks();
         await VirtualPanelChecks();
         // 画面(MainForm)を作るとこのスレッドに WinForms の SynchronizationContext が入り、以後の await が戻らなくなる。
         // 画面を作る確認は await の後に置く(VirtualPanelChecks も画面の確認は最後で、その後に await しない)。
@@ -109,12 +110,14 @@ internal static class LearningChecks
             Check(!As100201PanelCommand.TryParse(bad, out _), "accepted bad panel line: " + bad);
         Check(As100201PanelProtocol.Ack(As100201PanelCommand.Parse("ACT:NOZZLE:P:IN:2")) == "ACK:ACT:NOZZLE:P:IN:2", "ACK format");
         Check(As100201PanelProtocol.Nak("理由") == "NAK:理由", "NAK format");
-        Check(As100201PanelProtocol.CheckHello("AS100201_PANEL_READY:1") is null, "panel version 1 rejected");
-        Check(As100201PanelProtocol.CheckHello("AS100201_PANEL_READY:2")?.Contains("版 2") == true, "panel version 2 accepted");
+        // 版 2(2026-11-13、USB / Wi-Fi と電池残量)。版 1 のスケッチは書き込み直しを求める。
+        Check(As100201PanelProtocol.CheckHello("AS100201_PANEL_READY:2") is null, "panel version 2 rejected");
+        Check(As100201PanelProtocol.CheckHello("AS100201_PANEL_READY:1")?.Contains("版 1") == true, "panel version 1 accepted");
+        Check(As100201PanelProtocol.CheckHello("AS100201_PANEL_READY:3")?.Contains("版 3") == true, "panel version 3 accepted");
         Check(As100201PanelProtocol.CheckHello("AS100201_READY:2") is not null && As100201PanelProtocol.CheckHello(null)?.Contains("不明") == true, "Arduino reply accepted as panel");
         Check(As100201PanelProtocol.HelloRequest != "AS100201_PING" && !As100201PanelProtocol.HelloPrefix.StartsWith(As100201ArduinoProtocol.HelloPrefix) &&
             !As100201ArduinoProtocol.HelloPrefix.StartsWith(As100201PanelProtocol.HelloPrefix), "panel and Arduino hello strings collide");
-        Pass("panel lines: ACT:MAG / DEMAG / NOZZLE / SPACER / DONE / UNDO parsed with ledger words; malformed lines rejected; ACK/NAK; panel version 1 only");
+        Pass("panel lines: ACT:MAG / DEMAG / NOZZLE / SPACER / DONE / UNDO parsed with ledger words; malformed lines rejected; ACK/NAK; panel version 2 only");
     }
 
     // 2. 台帳の行の組み立て(CSV の形)
@@ -387,13 +390,16 @@ internal static class LearningChecks
         public event Action<string>? LineReceived;
         public event Action? Disconnected;
         public bool IsConnected { get; private set; }
-        public string HelloReply = "AS100201_PANEL_READY:1";
+        public string HelloReply = "AS100201_PANEL_READY:2";
+        public bool Fail;
         public List<string> Sent { get; } = new();
         public List<string> Requests { get; } = new();
         public int Disconnects;
         public Task VerifyAsync(string request, Func<string, bool> isReply, Action<string>? timingLog = null)
         {
             Requests.Add(request);
+            // Fail: その道にパネルが無い(USB なら COM ポートに見つからない、Wi-Fi ならつながらない)。
+            if (Fail) throw new InvalidOperationException("fake: not found");
             IsConnected = true;
             if (!isReply(HelloReply)) throw new TimeoutException("fake: no reply");
             return Task.CompletedTask;
@@ -450,7 +456,7 @@ internal static class LearningChecks
         await panel.MaintainAsync();
         Check(!panel.IsConnected && statuses[^1].Contains("版 9"), "wrong version accepted");
         // 起動通知で古い状態を捨てる。
-        link.HelloReply = "AS100201_PANEL_READY:1";
+        link.HelloReply = "AS100201_PANEL_READY:2";
         await Task.Delay(2100);
         await panel.MaintainAsync();
         for (int i = 0; i < 6; i++) { link.Receive($"DIAG_FRAME:{seq}:{seq * 250}"); seq++; await Task.Delay(250); }
@@ -471,6 +477,101 @@ internal static class LearningChecks
             Check(As100201LearningGate.Allows(button, true, true, true, false, true, out _), button + " refused when all ready");
         }
         Pass("panel outage: warm-up 1 s, stale after 1 s -> NAK + status, recovery 1 s, reconnect after drop, version check, DIAG_BOOT reset; gate lets only sw4 through");
+    }
+
+    // 8. タッチパネルの USB と Wi-Fi の 2 本(2026-11-13 承認)と電池残量
+    private static async Task PanelPathAndBatteryChecks()
+    {
+        const string ping = As100201PanelProtocol.HelloRequest;
+        static bool IsHello(string line) => line.StartsWith(As100201PanelProtocol.HelloPrefix, StringComparison.Ordinal);
+        var usb = new FakePanelLink();
+        var wifi = new FakePanelLink();
+        using (var paths = new As100201PanelPathLink(usb, wifi))
+        {
+            var changes = new List<As100201PanelPath>();
+            var lines = new List<string>();
+            int disconnected = 0;
+            paths.PathChanged += changes.Add;
+            paths.LineReceived += lines.Add;
+            paths.Disconnected += () => disconnected++;
+
+            // 両方あれば USB。Wi-Fi は確かめない
+            await paths.VerifyAsync(ping, IsHello);
+            Check(paths.ActivePath == As100201PanelPath.Usb && paths.IsConnected && usb.Requests.Count == 1 && wifi.Requests.Count == 0 &&
+                changes.SequenceEqual(new[] { As100201PanelPath.Usb }), "USB not preferred");
+            // 今の道でない側の行・切断は捨て、送るのは今の道だけ
+            wifi.Receive("ACT:MAG");
+            usb.Receive("DIAG_FRAME:1:250");
+            wifi.Drop();
+            paths.SendLine("ACK:ACT:MAG");
+            Check(lines.SequenceEqual(new[] { "DIAG_FRAME:1:250" }) && disconnected == 0 &&
+                usb.Sent.SequenceEqual(new[] { "ACK:ACT:MAG" }) && wifi.Sent.Count == 0, "inactive path not ignored");
+            // USB が切れた: 切断を知らせる。選び直すと Wi-Fi へ移る
+            usb.Fail = true;
+            usb.Drop();
+            Check(disconnected == 1 && paths.ActivePath == As100201PanelPath.None && !paths.IsConnected, "USB drop not propagated");
+            bool refused = false;
+            try { paths.SendLine("ACK:x"); } catch (InvalidOperationException) { refused = true; }
+            Check(refused, "send without path");
+            await paths.VerifyAsync(ping, IsHello);
+            Check(paths.ActivePath == As100201PanelPath.Wifi && changes.SequenceEqual(new[] { As100201PanelPath.Usb, As100201PanelPath.Wifi }), "no failover to Wi-Fi");
+            // Wi-Fi で使っている間に USB が戻っても、選び直すまで移らない
+            usb.Fail = false;
+            Check(paths.ActivePath == As100201PanelPath.Wifi, "moved to USB without re-verify");
+            // 選び直す(「確認」)と USB に戻り、Wi-Fi は閉じる
+            await paths.VerifyAsync(ping, IsHello);
+            Check(paths.ActivePath == As100201PanelPath.Usb && wifi.Disconnects == 1 && !wifi.IsConnected && changes[^1] == As100201PanelPath.Usb, "not back to USB on re-verify");
+            // 同じ道でつながり直したときは道の変化を知らせない
+            int changeCount = changes.Count;
+            await paths.DisconnectAsync();
+            await paths.VerifyAsync(ping, IsHello);
+            Check(changes.Count == changeCount && paths.ActivePath == As100201PanelPath.Usb, "same path reported as change");
+            // 両方なければ、両方の理由を出す
+            usb.Fail = wifi.Fail = true;
+            await paths.DisconnectAsync();
+            string message = "";
+            try { await paths.VerifyAsync(ping, IsHello); } catch (InvalidOperationException ex) { message = ex.Message; }
+            Check(message.Contains("USB：") && message.Contains("Wi-Fi：") && paths.ActivePath == As100201PanelPath.None, "both missing not reported: " + message);
+        }
+
+        // 見張り(As100201PanelProtocol)と組み合わせ: USB が切れると、再接続で Wi-Fi に移る。電池残量の行を知らせる
+        var usb2 = new FakePanelLink();
+        var wifi2 = new FakePanelLink();
+        var paths2 = new As100201PanelPathLink(usb2, wifi2);
+        using (var panel = new As100201PanelProtocol(paths2))
+        {
+            var batteries = new List<As100201PanelBattery>();
+            panel.BatteryReported += batteries.Add;
+            await panel.VerifyAsync();
+            Check(paths2.ActivePath == As100201PanelPath.Usb && panel.IsConnected, "protocol verify not on USB");
+            usb2.Fail = true;
+            usb2.Drop();
+            Check(!panel.IsConnected, "protocol still connected after USB drop");
+            await panel.MaintainAsync();
+            Check(paths2.ActivePath == As100201PanelPath.Wifi && panel.IsConnected && wifi2.Requests.Count == 1, "protocol did not fail over to Wi-Fi");
+            wifi2.Receive("BATT:75:7900:0");
+            wifi2.Receive("BATT:abc");
+            usb2.Receive("BATT:10:6500:0");
+            Check(batteries.Count == 1 && batteries[0] == new As100201PanelBattery(75, 7900, false), "battery line not reported once");
+        }
+
+        // BATT: の読み取り
+        Check(As100201PanelBattery.TryParse("BATT:40:7600:1", out var b) && b.Level == 40 && b.Millivolts == 7600 && b.Charging && b.Present && b.DisplayText == "充電中 40%", "BATT charging");
+        Check(As100201PanelBattery.TryParse("BATT:75:7900:0", out b) && b.DisplayText == "電池 75%", "BATT text");
+        Check(As100201PanelBattery.TryParse("BATT:-1:0:0", out b) && !b.Present && b.DisplayText == "電池なし", "BATT none");
+        foreach (string bad in new[] { "BATT:101:7000:0", "BATT:-2:7000:0", "BATT:50:7000:2", "BATT:50:-1:0", "BATT:50:7000", "BATT:50:7000:0:1", "BATT:x:7000:0", "batt:50:7000:0" })
+            Check(!As100201PanelBattery.TryParse(bad, out _), "accepted bad battery line: " + bad);
+
+        // 残量が少ないときのログ: 20% 以下で 1 回、30% を超えたらまた出せる。充電中・電池なしは出さない
+        var watch = new As100201BatteryWatch();
+        Check(watch.Update(new(50, 7800, false)) is null, "warned at 50%");
+        Check(watch.Update(new(20, 7000, false))?.Contains("20%") == true, "not warned at 20%");
+        Check(watch.Update(new(15, 6900, false)) is null && watch.Update(new(25, 7100, false)) is null && watch.Update(new(30, 7200, false)) is null, "warned twice");
+        Check(watch.Update(new(31, 7200, false)) is null && watch.Update(new(19, 7000, false))?.Contains("19%") == true, "not rearmed above 30%");
+        var charging = new As100201BatteryWatch();
+        Check(charging.Update(new(10, 6600, true)) is null && charging.Update(new(-1, 0, false)) is null, "warned while charging / without battery");
+        Check(charging.Update(new(10, 6600, false))?.Contains("10%") == true, "charging consumed the warning");
+        Pass("panel paths: USB preferred, inactive path ignored, failover to Wi-Fi on drop (also via protocol reconnect), stays on Wi-Fi until re-verify then back to USB, both-missing reasons; BATT lines; low battery log once at 20% (rearm above 30%, not while charging)");
     }
 
     // 6. 通常モードを選んだとき今までと同じ

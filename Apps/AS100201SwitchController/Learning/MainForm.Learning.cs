@@ -8,6 +8,11 @@ internal sealed partial class MainForm : Form
 {
     private readonly As100201StartupMode _mode;
     private As100201PanelProtocol? _panel;
+    // 本物のタッチパネルの道(USB / Wi-Fi)。開発用の代わり(--virtual-panel)のときは null。
+    private As100201PanelPathLink? _panelPaths;
+    private As100201PanelPath _lastPanelPath;
+    private As100201PanelBattery? _panelBattery;
+    private readonly As100201BatteryWatch _batteryWatch = new();
     private As100201LearningSession? _learning;
     private string? _lastPanelStatus;
     private (As100201Switch Press, int Phase)? _lastWaveform;
@@ -30,6 +35,7 @@ internal sealed partial class MainForm : Form
         _panel.CommandReceived += PanelCommandReceived;
         _panel.Disconnected += PanelDisconnected;
         _panel.StatusChanged += PanelStatusChanged;
+        _panel.BatteryReported += PanelBatteryReported;
         // 保存先は雛形に依存しない(2026-11-10 人の決定)ので、起動時に決まる。フォルダーは最初に書くときに作る。
         string directory = LearningDataDirectory(AppContext.BaseDirectory);
         _learning = new As100201LearningSession(new As100201CsvLedger(Path.Combine(directory, LedgerFileName)), _logger.SaveXdt)
@@ -121,7 +127,13 @@ internal sealed partial class MainForm : Form
     private void UpdateLearningControls()
     {
         if (!IsLearningMode || _panel is null) return;
-        _panelValueLabel.Text = _panel.InputReady ? "タッチパネル　接続済み" : _panel.IsConnected ? "定期応答の確認中" : "接続待ち（自動再確認）";
+        var details = new List<string>();
+        if (_panelPaths?.ActivePath is As100201PanelPath path and not As100201PanelPath.None)
+            details.Add(As100201PanelPathLink.PathName(path));
+        if (_panelBattery is not null) details.Add(_panelBattery.DisplayText);
+        string suffix = details.Count == 0 ? "" : "（" + string.Join("・", details) + "）";
+        _panelValueLabel.Text = _panel.InputReady ? "タッチパネル　接続済み" + suffix
+            : _panel.IsConnected ? "定期応答の確認中" + suffix : "接続待ち（USB / Wi-Fi を自動再確認）";
         _panelValueLabel.ForeColor = _panel.InputReady ? Color.DarkGreen : Color.DarkRed;
         _saveDirectoryLabel.Text = _learning is null ? "未設定" : _learning.SaveDirectory + "　台帳：" + Path.GetFileName(_learning.LedgerLocation) + "　xdt：日付フォルダー";
         _learningStateLabel.Text = _learning?.StateText ?? "記録できません";
@@ -141,15 +153,42 @@ internal sealed partial class MainForm : Form
         timer.Stop();
         foreach (string detail in details) AppendLog(detail.Replace("Arduino内訳", "タッチパネル内訳"));
         AppendLog($"処理時間：タッチパネル接続確認 = {timer.Elapsed.TotalSeconds:F3} 秒" + (error is null ? "（成功）" : "（失敗）"));
-        return error is null ? null : "タッチパネル: " + error.Message + "（学習モードはタッチパネルがないと動きません。通常モードで起動し直せば今までどおり使えます。" +
+        return error is null ? null : "タッチパネル: " + error.Message + "（学習モードはタッチパネルがないと動きません。" +
+            "Tab5 の電源、USB ケーブル、または PC の Wi-Fi 子機が Tab5 の Wi-Fi につながっているかを確かめてください。通常モードで起動し直せば今までどおり使えます。" +
             "Tab5 が無いまま試すときは、起動の窓で「学習モード（開発用：タッチパネルの代わり…）」を選んでください）";
+    }
+
+    // 確認が通った道が前回と違う(最初につながったときも)。両方つながっていれば USB、切れたらもう一方へ移る(2026-11-13 承認)。
+    private void PanelPathChanged(As100201PanelPath path)
+    {
+        PostToUi(() =>
+        {
+            string name = As100201PanelPathLink.PathName(path);
+            AppendLog(_lastPanelPath == As100201PanelPath.None
+                ? $"タッチパネルは {name} でつながっています。"
+                : $"タッチパネルの道を {As100201PanelPathLink.PathName(_lastPanelPath)} から {name} に切り替えました。");
+            _lastPanelPath = path;
+            UpdateControls();
+        });
+    }
+
+    // 電池残量(30 秒ごと)。少なくなったら 1 回だけログに出す(2026-11-13 承認)。
+    private void PanelBatteryReported(As100201PanelBattery battery)
+    {
+        PostToUi(() =>
+        {
+            _panelBattery = battery;
+            if (_batteryWatch.Update(battery) is string warning) AppendLog(warning);
+            UpdateControls();
+        });
     }
 
     private void PanelDisconnected()
     {
         PostToUi(() =>
         {
-            AppendLog("タッチパネルの通信が途切れました。自動で再接続を確認します。途切れている間は測定を始められません（sw4 の停止だけ受け付けます）。");
+            _panelBattery = null;
+            AppendLog("タッチパネルの通信が途切れました。自動で再接続を確認します（USB を先に、なければ Wi-Fi）。途切れている間は測定を始められません（sw4 の停止だけ受け付けます）。");
             RefreshReadyLed();
             UpdateControls();
         });
@@ -324,6 +363,8 @@ internal sealed partial class MainForm : Form
         _panel.CommandReceived -= PanelCommandReceived;
         _panel.Disconnected -= PanelDisconnected;
         _panel.StatusChanged -= PanelStatusChanged;
+        _panel.BatteryReported -= PanelBatteryReported;
+        if (_panelPaths is not null) _panelPaths.PathChanged -= PanelPathChanged;
         _panel.Dispose();
     }
 

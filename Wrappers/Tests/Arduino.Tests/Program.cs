@@ -120,10 +120,137 @@ try
     Check(thirdText.Contains("[START] アプリ起動") && thirdText.Contains("[CLOSE] 対象=なし") && thirdText.Contains("[END] Arduino通信を終了"),
         "接続クラスの起動・切断・終了の記録がない");
     Console.WriteLine("PASS ArduinoConnection: 起動・切断・終了を ArduinoDiagnosticLog へ書く");
+    await TcpLineConnectionChecks();
     Console.WriteLine("Arduino: all checks passed.");
 }
 finally
 {
     NewLogs();
     foreach (var file in created) File.Delete(file);
+}
+
+// TcpLineConnection(2026-11-13 追加)。PC 内のループバックに模擬の相手を立てて確かめる(実機・Wi-Fi は使わない)。
+async Task TcpLineConnectionChecks()
+{
+    // つながらない相手: すぐに InvalidOperationException。切断通知は出さない
+    var closedListener = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, 0);
+    closedListener.Start();
+    int closedPort = ((System.Net.IPEndPoint)closedListener.LocalEndpoint).Port;
+    closedListener.Stop();
+    using (var none = new TcpLineConnection("127.0.0.1", closedPort))
+    {
+        int noneDisconnected = 0;
+        none.Disconnected += () => noneDisconnected++;
+        await FailsAsync<InvalidOperationException>(() => none.VerifyAsync("PING", l => l == "READY"), "つながらない相手");
+        Check(!none.IsConnected && noneDisconnected == 0, "つながらない相手で接続済み・切断通知");
+    }
+    Fails<ArgumentException>(() => new TcpLineConnection(" ", 1), "空のホスト");
+    Fails<ArgumentOutOfRangeException>(() => new TcpLineConnection("127.0.0.1", 0), "ポート 0");
+    Fails<ArgumentOutOfRangeException>(() => new TcpLineConnection("127.0.0.1", 65536), "ポート 65536");
+
+    // 模擬の相手: PING に READY(reply を変えられる)、それ以外の行は受け取った一覧に足す
+    var listener = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, 0);
+    listener.Start();
+    int port = ((System.Net.IPEndPoint)listener.LocalEndpoint).Port;
+    string reply = "READY";
+    var serverReceived = new System.Collections.Concurrent.ConcurrentQueue<string>();
+    System.Net.Sockets.TcpClient? serverClient = null;
+    var serverTask = Task.Run(async () =>
+    {
+        while (true)
+        {
+            System.Net.Sockets.TcpClient accepted;
+            try { accepted = await listener.AcceptTcpClientAsync(); }
+            catch (Exception) { return; }
+            serverClient = accepted;
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    using var reader = new StreamReader(accepted.GetStream(), new System.Text.UTF8Encoding(false));
+                    var stream = accepted.GetStream();
+                    while (await reader.ReadLineAsync() is string line)
+                    {
+                        if (line == "PING")
+                        {
+                            byte[] bytes = System.Text.Encoding.UTF8.GetBytes(reply + "\r\n");
+                            await stream.WriteAsync(bytes);
+                        }
+                        else serverReceived.Enqueue(line);
+                    }
+                }
+                catch (Exception) { }
+            });
+        }
+    });
+    async Task ServerSend(string raw)
+    {
+        byte[] bytes = System.Text.Encoding.UTF8.GetBytes(raw);
+        await serverClient!.GetStream().WriteAsync(bytes);
+    }
+    async Task<bool> WaitUntil(Func<bool> condition)
+    {
+        for (int i = 0; i < 100 && !condition(); i++) await Task.Delay(20);
+        return condition();
+    }
+
+    var tcp = new TcpLineConnection("127.0.0.1", port);
+    var lines = new System.Collections.Concurrent.ConcurrentQueue<string>();
+    int tcpDisconnected = 0;
+    tcp.LineReceived += lines.Enqueue;
+    tcp.Disconnected += () => Interlocked.Increment(ref tcpDisconnected);
+    Fails<InvalidOperationException>(() => tcp.SendLine("HELLO"), "TCP 接続前の送信");
+    await FailsAsync<ArgumentException>(() => tcp.VerifyAsync(" ", _ => true), "TCP 空の確認文字列");
+    var timing = new List<string>();
+    await tcp.VerifyAsync("PING", l => l == "READY", timing.Add);
+    Check(tcp.IsConnected && timing.Any(t => t.Contains("接続 =")) && timing.Any(t => t.Contains("応答待ち =")), "TCP 接続確認");
+    await tcp.VerifyAsync("PING", l => l == "READY");
+    Check(tcp.IsConnected, "TCP 同じ接続での確認し直し");
+    await tcp.ConnectAsync("PING", _ => false);
+    Check(tcp.IsConnected, "TCP 接続済みなら ConnectAsync は何もしない");
+
+    // 受信: CR を捨て・前後の空白を除き・空行を捨て、分割して届いた行もつなぐ。UTF-8 の日本語も通る
+    await ServerSend("FRAME:1\r\n\r\n  FRA");
+    await ServerSend("ME:2  \n理由あり\n");
+    Check(await WaitUntil(() => lines.Count >= 3), "TCP 受信行が届かない");
+    // 確認応答(READY)も LineReceived に届く(ArduinoConnection と同じ)。それを除いた並びを見る
+    Check(await WaitUntil(() => lines.Count(l => l != "READY") >= 3) &&
+          lines.Where(l => l != "READY").SequenceEqual(new[] { "FRAME:1", "FRAME:2", "理由あり" }), "TCP 受信行の組み立て: " + string.Join("|", lines));
+    // 長すぎる行は改行まで捨て、次の行は届く
+    lines.Clear();
+    await ServerSend(new string('x', 1500) + "\nAFTER\n");
+    Check(await WaitUntil(() => lines.Contains("AFTER")) && !lines.Any(l => l.StartsWith("x")), "TCP 長すぎる行の破棄");
+    // 送信: UTF-8・LF
+    tcp.SendLine("NAK:記録できません");
+    Check(await WaitUntil(() => serverReceived.Contains("NAK:記録できません")), "TCP 送信が届かない");
+
+    // 応答が違う: 閉じて例外。切断通知は出さない
+    reply = "OTHER";
+    await FailsAsync<TimeoutException>(() => tcp.VerifyAsync("PING", l => l == "READY"), "TCP 応答違い(接続中の確認し直し)");
+    Check(!tcp.IsConnected && tcpDisconnected == 0, "TCP 応答違いで閉じない・切断通知が出た");
+    await FailsAsync<InvalidOperationException>(() => tcp.VerifyAsync("PING", l => l == "READY"), "TCP 応答違い(新しい接続)");
+    Check(!tcp.IsConnected && tcpDisconnected == 0, "TCP 新しい接続の応答違い");
+
+    // 相手が閉じた: 切断通知が 1 回
+    reply = "READY";
+    await tcp.VerifyAsync("PING", l => l == "READY");
+    serverClient!.Close();
+    Check(await WaitUntil(() => tcpDisconnected == 1) && !tcp.IsConnected, "TCP 相手が閉じたときの切断通知");
+    await Task.Delay(100);
+    Check(tcpDisconnected == 1, "TCP 切断通知が 2 回以上");
+    Fails<InvalidOperationException>(() => tcp.SendLine("HELLO"), "TCP 切断後の送信");
+
+    // こちらから閉じる: 切断通知は出さない
+    await tcp.VerifyAsync("PING", l => l == "READY");
+    await tcp.DisconnectAsync();
+    await Task.Delay(100);
+    Check(!tcp.IsConnected && tcpDisconnected == 1, "TCP DisconnectAsync で切断通知");
+
+    tcp.Dispose();
+    Fails<ObjectDisposedException>(() => tcp.SendLine("HELLO"), "TCP Dispose 後の送信");
+    await FailsAsync<ObjectDisposedException>(() => tcp.VerifyAsync("PING", _ => true), "TCP Dispose 後の確認");
+    await FailsAsync<ObjectDisposedException>(() => tcp.ConnectAsync("PING", _ => true), "TCP Dispose 後の接続");
+    listener.Stop();
+    await serverTask;
+    Console.WriteLine("PASS TcpLineConnection: 接続と確認・確認し直し、行の組み立て(CR・空白・空行・分割・長すぎる行)、UTF-8 の送受信、応答違いで閉じる、相手が閉じたときだけ切断通知、Dispose 後の操作を止める");
 }

@@ -15,7 +15,7 @@
 | SIGLENT SDG1032X | ファンクションジェネレータ(WF1973 の代替) | USB(VISA) | `Wrappers/Instruments`(移植済み) | AllCheck、BoltCheck |
 | ADCMT 7351E | DMM。直流電流の実測 | **USB のみ**(USBTMC、VISA)。GPIB / RS-232C は不可 | `Wrappers/Instruments`(移植済み) | NoiseTest |
 | GC16 精密デジタル圧力計(社内は 2005 年製・0〜2 MPa) | 圧力の読み取り・ゼロ調整(校正) | **RS-232C のみ**(社内の本体。USB-RS232C 変換ケーブルで COM ポート) | `Wrappers/Instruments`(2026-11-13 新規) | ―(AllCheck の校正の自動読み取りで初めて使う) |
-| Arduino(UNO R4 Minima、M5Stack 等) | 試験治具のマイコン。スイッチ・LED・NF 弁のインターロック | USB シリアル(COM ポート、行単位テキスト) | `Wrappers/Arduino`(移植済み) | AllCheck、BoltCheck、SwitchController |
+| Arduino(UNO R4 Minima、M5Stack 等) | 試験治具のマイコン。スイッチ・LED・NF 弁のインターロック | USB シリアル(COM ポート、行単位テキスト)。ネットワーク(TCP、行単位テキスト)も可(2026-11-13 追加、Wi-Fi の機器向け) | `Wrappers/Arduino`(移植済み。TCP は `TcpLineConnection`) | AllCheck、BoltCheck、SwitchController(Tab5 は USB と Wi-Fi) |
 | Windows の Wi-Fi | NR-X を Wi-Fi で使うときの接続先切替 | `netsh` | `Wrappers/Common`(移植済み) | AllCheck 他 |
 | ロガーの出力ファイル(xdt / ydt / CSV) | WAVE LOGGER の波形ファイルと CSV | ファイル | `Wrappers/LoggerFiles`(移植済み) | XdtConversion.Core 他 |
 | Excel ブック(xlsx) | 測定値の転記・判定・PDF 保存 | ファイル直接 / Excel COM(Excel 本体ソフト経由) | `Wrappers/Excel`(移植済み) | AllCheck、XdtConversion、NoiseTest |
@@ -116,6 +116,11 @@
   - 共通の異常種別か判定する `IsIncident(kind)`
 - PC 遅延観測(`Wrappers/Common` の `PcDelayObservation`)と組み合わせるときは `PcDelayObservation.Start(ArduinoDiagnosticLog.Write)`
 - 受信行の意味(`NF:0` / `NF:1`、READY、スイッチ状態)と受信頻度の判定は**アプリ側のプロトコルクラス**が持つ(AllCheck `As110ArduinoProtocol`、SwitchController `As100201ArduinoProtocol`)
+- **ネットワーク(TCP)での行単位の送受信**(`TcpLineConnection`、2026-11-13 追加。AS100201SwitchController のタッチパネル Tab5 を Wi-Fi でつなぐため): `ArduinoConnection` と同じ形(`ConnectAsync` / `VerifyAsync(request, isReply)`、`SendLine`、`LineReceived`、`Disconnected`、`DisconnectAsync`)で、決まった相手(`new TcpLineConnection(ホスト, ポート)`)へ PC から接続しに行く
+  - PC は待ち受けないので、Windows のファイアウォールに例外は要らない。接続先(IP・ポート)はアプリ側に置く
+  - 接続は 3 秒、確認の応答は 2 秒まで待つ(`ConnectTimeout` / `ReplyTimeout` で変えられる)。応答がなければ閉じて例外
+  - 切断通知は相手が閉じた・読み書きに失敗したときだけ(`DisconnectAsync`・`Dispose`・確認の失敗では出さない)
+  - 機器が Wi-Fi の親機になり、PC がそれに Wi-Fi でつなぐ形なら、PC 側の Wi-Fi の切り替えは要らない(子機をつなぎっぱなしにする)。PC の Wi-Fi を切り替えるのは `Wrappers/Common` の `SingleAdapterWifiManager`(NR-X 用)
 
 **制約**
 - 115200bps、改行 `\n`(LF)、送信 UTF-8(BOM なし)、受信は ASCII として解釈、DTR 有効(元のまま固定)
@@ -123,6 +128,7 @@
 - 異常ログは静的クラスでプロセスに 1 つ。`Configure` は起動時に 1 回呼ぶ
 - 通信断だけでは発振器や LOGGER を止めない(方針はアプリ側)
 - 実機(Arduino UNO R4 Minima、COM4)では 2026-11-04 に AS100201SwitchController の範囲を確認: 総当たりの接続(1.7 秒の起動待ち込み)、行の受信、USB を抜いたときの切断検知(`PORT_CLOSED`)と異常ログの保存、挿し直した後の再接続(`Apps/AS100201SwitchController/README.md`)。M5Stack・AS110 の NF 監視、1024 文字超の破棄、`LocalApplicationData` への切り替えは未確認。テスト(`Arduino.Tests`)はポートを開かない範囲だけ
+- `TcpLineConnection`: 行は UTF-8・LF(受信は CR を捨て、前後の空白を除き、空行を捨てる)。1 行 1024 バイトを超えたら改行まで捨てる。送信は 1 秒で諦める。テスト(`Arduino.Tests`)は PC 内のループバックに模擬の相手を立てて、接続・確認・行の組み立て・送受信・切断通知を確かめた。**実機(Wi-Fi、Tab5)では未確認**(2026-11-13)
 
 ### ロガーの出力ファイル(`Wrappers/LoggerFiles`、`PSCAutomation.Wrappers.LoggerFiles`)
 
@@ -183,6 +189,6 @@ WAVE LOGGER を起動せずに、出力ファイルを直接読み書きする�
 |---|---|---|
 | AS110AllCheck | AS110 の全数検査(動き検査・校正・リーク・Excel 転記) | NR-X / NR-500、WF1973 or SDG1032X、Arduino(M5Stack)、Excel、GC16(校正の自動読み取り。2026-11-13 追加) |
 | AS110BoltCheck | AS110 の動き検査 | NR-X、WF1973 or SDG1032X、Arduino(NF インターロック) |
-| AS100201SwitchController | AS100-201 のスイッチ制御。**移植済み**(`Apps/AS100201SwitchController`、`AS100201SwitchController.slnf`) | NR-500 / NR-X(USB だけ)、WF1973(連続・三角波)、Arduino(スイッチ・READY LED) |
+| AS100201SwitchController | AS100-201 のスイッチ制御。**移植済み**(`Apps/AS100201SwitchController`、`AS100201SwitchController.slnf`) | NR-500 / NR-X(USB だけ)、WF1973(連続・三角波)、Arduino(スイッチ・READY LED)、学習モードのタッチパネル M5Stack Tab5(USB と Wi-Fi、電池) |
 | AS110NoiseTest | AS110 のノイズ測定(電流を変えながら制御圧力の p-p を判定) | NR-500、WF1973(DC)、ADCMT 7351E、Excel |
 | XdtConversion | xdt を Excel 雛形へ転記する単機能アプリ。**移植済み**(`Apps/XdtConversion`、`XdtConversion.slnf`) | ファイルのみ、Excel |

@@ -19,12 +19,14 @@ internal sealed class As100201PanelProtocol : IDisposable
     private static readonly TimeSpan RecoveryTime = TimeSpan.FromSeconds(1);
     public const string HelloRequest = "AS100201_PANEL_PING";
     public const string HelloPrefix = "AS100201_PANEL_READY:";
-    public const int PanelVersion = 1;
+    // 版 2(2026-11-13): USB と Wi-Fi の両方でつながり、電池残量 BATT: を送る。版 1 の行はそのまま。
+    public const int PanelVersion = 2;
     private string? _helloReply;
 
     public event Action<As100201PanelCommand>? CommandReceived;
     public event Action? Disconnected;
     public event Action<string>? StatusChanged;
+    public event Action<As100201PanelBattery>? BatteryReported;
 
     public As100201PanelProtocol(IAs100201SerialLink link)
     {
@@ -137,7 +139,7 @@ internal sealed class As100201PanelProtocol : IDisposable
                 ArduinoDiagnosticLog.Write("PANEL_RECONNECT_WAIT", ex.Message);
                 StatusChanged?.Invoke(ex is As100201PanelVersionException
                     ? ex.Message
-                    : "タッチパネルの接続を待っています。USB接続後に自動で再確認します。");
+                    : "タッチパネルの接続を待っています。USB か Wi-Fi でつながれば自動で再確認します。");
             }
         }
         finally
@@ -207,6 +209,12 @@ internal sealed class As100201PanelProtocol : IDisposable
                 _lastBoardMillis = boardMillis;
                 _staleLogged = false;
             }
+        }
+        else if (line.StartsWith(As100201PanelBattery.Prefix, StringComparison.Ordinal))
+        {
+            // 電池残量は受け付けの決まり(定期応答の安定)と関係なく知らせる。形が違えば異常ログにだけ残す。
+            if (As100201PanelBattery.TryParse(line, out var battery)) BatteryReported?.Invoke(battery);
+            else ArduinoDiagnosticLog.Write("PANEL_UNKNOWN_LINE", line);
         }
         else if (As100201PanelCommand.TryParse(line, out var command))
         {

@@ -38,7 +38,7 @@ internal static class Program
         DoublePressChecks().GetAwaiter().GetResult();
         // 測定中の取り込みと加工(2026-11-11 承認の追加仕様)。LiveCaptureChecks.cs の 4 グループ。
         LiveCaptureChecks.Run();
-        // 学習モード(2026-11-09 承認の追加仕様)。LearningChecks.cs の 6 グループ。
+        // 学習モード(2026-11-09 承認の追加仕様)。LearningChecks.cs の 9 グループ(2026-11-13 に USB と Wi-Fi・電池の 1 グループを追加)。
         LearningChecks.Run().GetAwaiter().GetResult();
         Console.WriteLine($"All {_passed} compatibility groups passed. No device or LOGGER application was opened.");
         return 0;

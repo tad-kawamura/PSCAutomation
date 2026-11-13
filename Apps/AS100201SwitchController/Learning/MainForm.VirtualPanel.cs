@@ -13,7 +13,14 @@ internal sealed partial class MainForm : Form
 
     private IAs100201SerialLink CreatePanelLink()
     {
-        if (!_useVirtualPanel) return new As100201SerialLink();
+        if (!_useVirtualPanel)
+        {
+            // USB と Wi-Fi の 2 本(2026-11-13 承認。両方つながっていれば USB、切れたらもう一方へ)。
+            _panelPaths = new As100201PanelPathLink(new As100201SerialLink(),
+                new As100201NetworkLink(As100201PanelNetworkSettings.Host, As100201PanelNetworkSettings.Port));
+            _panelPaths.PathChanged += PanelPathChanged;
+            return _panelPaths;
+        }
         _virtualPanel = new As100201VirtualPanelLink();
         _virtualPanel.LineSent += VirtualPanelLineSent;
         return _virtualPanel;
