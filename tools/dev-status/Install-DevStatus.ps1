@@ -1,5 +1,5 @@
 # Installs the desktop overview updater on this PC:
-#   - copies Update-DevStatus.ps1 and the template to %LOCALAPPDATA%\PSCAutomation\dev-status
+#   - copies Update-DevStatus.ps1 and the template to %USERPROFILE%\.pscautomation\dev-status
 #   - creates a read-only cache repository there (never touches a working clone)
 #   - registers a scheduled task (at logon and every hour) for the current user
 #
@@ -13,7 +13,9 @@ param([switch]$Uninstall)
 
 $ErrorActionPreference = 'Stop'
 $taskName = 'PSCAutomation-DevStatus'
-$installDir = Join-Path $env:LOCALAPPDATA 'PSCAutomation\dev-status'
+# Not under AppData: a packaged app (the Claude desktop app) redirects new files
+# under AppData to its own private folder, where Task Scheduler cannot see them.
+$installDir = Join-Path $env:USERPROFILE '.pscautomation\dev-status'
 
 if ($Uninstall) {
     Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction SilentlyContinue
