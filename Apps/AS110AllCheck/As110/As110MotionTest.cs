@@ -35,4 +35,13 @@ internal static class As110MotionTest
         isSdg1032X
             ? (isMotion ? SdgSettings : SdgDataSettings)
             : (isMotion ? Settings : DataSettings);
+
+    // データ調整・データ取りで測る時間を lengthFactor 倍にする型式(AS110-006 は 2 倍。MeasurementProfile)は、周波数を 1/lengthFactor にする。
+    // 振幅・オフセット・周期数・開始位相は同じ。動き検査は型式によらず同じ設定。
+    public static GeneratorBurstSettings GetSettings(bool isSdg1032X, bool isMotion, int lengthFactor)
+    {
+        if (lengthFactor < 1) throw new ArgumentOutOfRangeException(nameof(lengthFactor));
+        var settings = GetSettings(isSdg1032X, isMotion);
+        return isMotion || lengthFactor == 1 ? settings : settings with { FrequencyHz = settings.FrequencyHz / lengthFactor };
+    }
 }

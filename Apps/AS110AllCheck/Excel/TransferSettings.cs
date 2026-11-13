@@ -38,9 +38,9 @@ internal sealed class TransferSettings
     [Browsable(false)]
     public double LeakFailDisplaySeconds { get; set; } = 2.0;
     // 圧力の最大値の下限(kPa)。型式ごとに覚える(2026-11-12 続き)。初期値があるのは下の型式だけ、ほかの型式は入れるまで無い。
-    // 初期値: AS110-035 は 530 kPa、AS110-015 は 550 kPa(2026-11-12、人の指示)。
+    // 初期値: AS110-035 は 530 kPa、AS110-015 は 550 kPa、AS110-006 は 550 kPa(いずれも 2026-11-12、人の指示)。
     public static IReadOnlyDictionary<string,double> DefaultLeakMaximumLowerLimitKpa { get; } =
-        new Dictionary<string,double> { ["AS110-035"]=530.0, ["AS110-015"]=550.0 };
+        new Dictionary<string,double> { ["AS110-035"]=530.0, ["AS110-015"]=550.0, ["AS110-006"]=550.0 };
     [Browsable(false)]
     public Dictionary<string,double> LeakMaximumLowerLimitKpa { get; set; } = new(DefaultLeakMaximumLowerLimitKpa);
     // 移動平均はLOGGERのチャンネル設定をXdtReaderが適用する。
@@ -53,6 +53,16 @@ internal sealed class TransferSettings
         settings.LeakMaximumLowerLimitKpa ??= new();
         foreach(var (model,limit) in DefaultLeakMaximumLowerLimitKpa) settings.LeakMaximumLowerLimitKpa.TryAdd(model,limit);
         return settings;
+    }
+    // その型式で使う転送の設定。測る時間が違う型式(AS110-006 は 2 倍。MeasurementProfile)は、測定点数と平均する点数をその倍率にする
+    // (6500 点・5 点平均 → 13000 点・10 点平均。Excel へは同じ 1300 点)。ほかの型式は同じ値の写し。写しは保存しない(画面で直す値は元のまま)。
+    public TransferSettings ForModel(ProductModel model)
+    {
+        var copy=(TransferSettings)MemberwiseClone();
+        int factor=MeasurementProfile.LengthFactor(model);
+        copy.ExpectedSamples=ExpectedSamples*factor;
+        copy.Compression=Compression*factor;
+        return copy;
     }
     public void Save() { Directory.CreateDirectory(Path.GetDirectoryName(SettingsPath)!); File.WriteAllText(SettingsPath,JsonSerializer.Serialize(this,new JsonSerializerOptions { WriteIndented=true })); }
     // NR-X は LOGGER の標準 CSV を読む。列番号は上の NR-X CSV 列(0 は見出しの「電流」「圧力」・CH 番号から自動検出)。

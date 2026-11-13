@@ -300,8 +300,12 @@ internal sealed partial class MainForm : Form
         // 接続確認が済んでいれば、モードを選んだ流れで校正画面を開く(まだなら接続確認の終わりで開く)。
         OpenCalibrationIfPending();
     }
+    // データ調整・データ取りは、参照波形で選んだ型式の測る時間に合わせる(AS110-006 は周波数が半分。MeasurementProfile)。
     private GeneratorBurstSettings CurrentBurstSettings => As110MotionTest.GetSettings(
-        isSdg1032X: _generator is Sdg1032XSession, isMotion: _flow.Mode == TestMode.Motion);
+        isSdg1032X: _generator is Sdg1032XSession, isMotion: _flow.Mode == TestMode.Motion,
+        lengthFactor: _flow.Mode == TestMode.Motion ? 1 : MeasurementProfile.LengthFactor(_selectedModel));
+    // 参照波形で選んだ型式の転送の設定(AS110-006 は 13000 点・10 点平均。MeasurementProfile)。
+    private TransferSettings ModelTransferSettings => _transferSettings.ForModel(_selectedModel);
     private void UpdateProductionControls()
     {
         bool idle=!_operationInProgress && !_leakRunning && !_flow.Measuring;
@@ -499,7 +503,7 @@ internal sealed partial class MainForm : Form
         if(extension.Equals(".ydt",StringComparison.OrdinalIgnoreCase))
         {
             long count=_logger.GetDataCount();
-            if(count!=_transferSettings.ExpectedSamples)throw new InvalidDataException($"測定点数が{count}点です。LOGGER設定を確認してください。");
+            if(count!=ModelTransferSettings.ExpectedSamples)throw new InvalidDataException($"測定点数が{count}点です。{ModelTransferSettings.ExpectedSamples}点ではありません。LOGGER設定を確認してください。");
             string csv=stage+".csv";if(File.Exists(csv))File.Delete(csv);
             long csvResult=_logger.SaveCsv(csv);
             if(csvResult!=0 || !File.Exists(csv) || new FileInfo(csv).Length==0)throw new IOException($"NR-Xの標準CSV一時保存に失敗（戻り値{csvResult}）。");
@@ -508,7 +512,7 @@ internal sealed partial class MainForm : Form
         else
         {
             var info=XdtReader.Inspect(stage);
-            if(info.Samples!=_transferSettings.ExpectedSamples)throw new InvalidDataException($"測定点数が{info.Samples}点です。{_transferSettings.ExpectedSamples}点ではありません。LOGGER設定を確認してください。");
+            if(info.Samples!=ModelTransferSettings.ExpectedSamples)throw new InvalidDataException($"測定点数が{info.Samples}点です。{ModelTransferSettings.ExpectedSamples}点ではありません。LOGGER設定を確認してください。");
         }
         File.Move(stage,path,true);_capturePath=path;_flow.CaptureSucceeded();
     }
@@ -531,7 +535,7 @@ internal sealed partial class MainForm : Form
             _lastExcelPass=false; _flow.TransferFailed();
             // 初回転送の途中で応答待ちになっても、この所有先を次の再試行へ引き継ぐ。
             _excel ??= new ExcelWorkSession();
-            _excel=ExcelWorkSession.Open(ExcelTemplatePath,ExcelWorkPath,_capturePath,_transferSettings,_flow.Model,
+            _excel=ExcelWorkSession.Open(ExcelTemplatePath,ExcelWorkPath,_capturePath,ModelTransferSettings,_flow.Model,
                 _flow.Mode==TestMode.Production?_flow.Serial:"-",_flow.MeasuredAt,_excel,AppendLog);
             var calculationTimer=Stopwatch.StartNew();
             bool pass=await _excel.IsPassAsync();
@@ -617,7 +621,11 @@ internal sealed partial class MainForm : Form
             string root=Path.GetFullPath(SaveRootPath),baseName=_flow.BaseName;
             string excel=Path.Combine(root,"Excel",baseName+".xlsx"),pdf=Path.Combine(root,"PDF",baseName+".pdf"),logger=Path.Combine(root,"LOGGER",baseName+Path.GetExtension(_capturePath));
             string ownership=root+"|"+baseName;
-            string[] existing=new[]{excel,pdf,logger}.Where(File.Exists).ToArray();
+            // 前の版の名前(末尾 _6500)で同じ S/N・同じ日に保存したファイルも、同名と同じに扱って聞く(上書きしても前の版の名前のファイルは消さずに残る)。
+            string legacy=_flow.LegacyBaseName;
+            string[] existing=new[]{excel,pdf,logger,
+                Path.Combine(root,"Excel",legacy+".xlsx"),Path.Combine(root,"PDF",legacy+".pdf"),Path.Combine(root,"LOGGER",legacy+Path.GetExtension(_capturePath))}
+                .Where(File.Exists).ToArray();
             if(_ownedSaveBase!=ownership && !store.WasReleased(_flow.Serial) && existing.Length>0)
             {
                 // 前に同じ S/N を保存したファイル(合格にはしていない)が残っている。まだ何も書いていないので「保存失敗」にはせず、
@@ -630,6 +638,7 @@ internal sealed partial class MainForm : Form
                 {
                     answer=ErrorNotification.Show(this,
                         $"S/N {_flow.Serial} の保存ファイルがすでにあります（合格にはなっていません）。\n"+string.Join("\n",existing)+
+                        (existing.Any(f=>Path.GetFileNameWithoutExtension(f)==legacy)?$"\n（末尾 _6500 は前の版の名前です。「はい」でも消さずに残り、{baseName} の名前で保存します）":"")+
                         "\n\n今回の測定で上書きしますか？\n「はい」：上書きして保存する\n「いいえ」：保存しない。前のデータを残すなら「設定変更（測定を破棄）」→ 測定開始S/N を次の番号にして測り直す",
                         "正式保存：同名ファイル",MessageBoxButtons.YesNo,MessageBoxIcon.Warning);
                 }

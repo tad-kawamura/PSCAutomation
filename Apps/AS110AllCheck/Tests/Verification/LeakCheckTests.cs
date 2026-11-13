@@ -272,15 +272,17 @@ internal static class LeakCheckTests
             && LeakTestInput.ValidateFailDisplay("0.5",out _) is null && LeakTestInput.ValidateFailDisplay("10",out _) is null,"fail display inputs are valid");
         foreach(string text in new[]{"0.4","10.1","2.05","","x"})
             Check(LeakTestInput.ValidateFailDisplay(text,out _) is not null,$"invalid fail display rejected: '{text}'");
-        // 設定の既定値: 下限 AS110-035 530 kPa・AS110-015 550 kPa、不合格の表示 2 秒。古い設定ファイル(項目なし)を読んでも同じ。
+        // 設定の既定値: 下限 AS110-035 530 kPa・AS110-015 550 kPa・AS110-006 550 kPa、不合格の表示 2 秒。古い設定ファイル(項目なし)を読んでも同じ。
         var defaults=TransferSettings.FromJson("{\"LeakTestSeconds\":12}");
-        Check(defaults.LeakTestSeconds==12 && defaults.LeakFailDisplaySeconds==2.0 && defaults.LeakMaximumLowerLimitKpa.Count==2
-            && defaults.LeakMaximumLowerLimitKpa["AS110-035"]==530.0 && defaults.LeakMaximumLowerLimitKpa["AS110-015"]==550.0,
-            "old settings files get the AS110-035/015 lower limits and 2 s display");
+        Check(defaults.LeakTestSeconds==12 && defaults.LeakFailDisplaySeconds==2.0 && defaults.LeakMaximumLowerLimitKpa.Count==3
+            && defaults.LeakMaximumLowerLimitKpa["AS110-035"]==530.0 && defaults.LeakMaximumLowerLimitKpa["AS110-015"]==550.0
+            && defaults.LeakMaximumLowerLimitKpa["AS110-006"]==550.0,
+            "old settings files get the AS110-035/015/006 lower limits and 2 s display");
         // 下限の表を保存済みの設定ファイル(AS110-015 の初期値を足す前)でも、無い型式にだけ初期値が入る。人が入れた値は変えない。
         var older=TransferSettings.FromJson("{\"LeakMaximumLowerLimitKpa\":{\"AS110-035\":531.5,\"AS110-135B\":480.0}}");
         Check(older.LeakMaximumLowerLimitKpa["AS110-035"]==531.5 && older.LeakMaximumLowerLimitKpa["AS110-015"]==550.0
-            && older.LeakMaximumLowerLimitKpa["AS110-135B"]==480.0 && older.LeakMaximumLowerLimitKpa.Count==3,
+            && older.LeakMaximumLowerLimitKpa["AS110-135B"]==480.0 && older.LeakMaximumLowerLimitKpa["AS110-006"]==550.0
+            && older.LeakMaximumLowerLimitKpa.Count==4,
             "saved lower limits keep their values and gain missing defaults");
         Check(TransferSettings.FromJson("{\"LeakMaximumLowerLimitKpa\":{\"AS110-015\":545.0}}").LeakMaximumLowerLimitKpa["AS110-015"]==545.0,
             "an entered AS110-015 lower limit is not replaced by the default");

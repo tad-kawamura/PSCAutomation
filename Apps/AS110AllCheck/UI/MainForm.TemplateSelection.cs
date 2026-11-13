@@ -4,7 +4,8 @@ namespace PSCAutomation.Apps.AS110AllCheck;
 // LOGGER XでNR-500を使用するときもXDTを選択する。
 internal sealed partial class MainForm : Form
 {
-    private string GetDetectedTemplatePath()
+    // model を省くと、参照波形で選んだ型式(まだ選んでいなければ前回の型式・最初は表の先頭)の雛形。
+    private string GetDetectedTemplatePath(ProductModel? model = null)
     {
         if (!_hardwareDetected)
             throw new InvalidOperationException("NR本体の接続確認後に雛形を選択してください。");
@@ -25,7 +26,7 @@ internal sealed partial class MainForm : Form
             throw new InvalidOperationException("雛形の選択に未対応の本体です：" + _detectedHardwareName);
         }
 
-        string path = GetAutomaticTemplatePath(extension);
+        string path = GetAutomaticTemplatePath(extension, model ?? _selectedModel);
         AppendLog($"使用雛形：本体={_detectedHardwareName} / {Path.GetFileName(path)}");
         return path;
     }

@@ -17,7 +17,7 @@ internal static class ShippingDataTests
         flow.ConfigureFor("075633", shipping!, judged);
         Check(flow.ShippingData && flow.Model == shipping && flow.TemplateModel == judged, "shipping data uses the judged model's Excel template");
         flow.BeginMeasurement(new DateTime(2026, 11, 12)); flow.CaptureSucceeded(); flow.TransferSucceeded();
-        Check(flow.BaseName == "AS110-116B350_SN075633_20261112_6500", "shipping data file name uses AS110-116B350");
+        Check(flow.BaseName == "AS110-116B350_SN075633_20261112", "shipping data file name uses AS110-116B350");
         Check(!flow.CanComplete, "shipping data cannot complete before save");
         flow.SaveSucceeded();
         Check(flow.CanComplete && !flow.LeakNeedsOverride && flow.LeakChecks == 0, "shipping data completes after save without leak test");

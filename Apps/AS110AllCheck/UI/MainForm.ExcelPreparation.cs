@@ -53,7 +53,7 @@ internal sealed partial class MainForm : Form
         try
         {
             _excel ??= new ExcelWorkSession();
-            _excel = await ExcelWorkSession.PrepareAsync(ExcelTemplatePath, ExcelWorkPath, _transferSettings, _flow.Model,
+            _excel = await ExcelWorkSession.PrepareAsync(ExcelTemplatePath, ExcelWorkPath, ModelTransferSettings, _flow.Model,
                 _flow.Mode == TestMode.Production ? _flow.Serial : "-", _excel, AppendLog);
         }
         catch (Exception ex) when (!_closeRequested)

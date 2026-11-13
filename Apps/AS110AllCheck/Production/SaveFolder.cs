@@ -4,11 +4,12 @@ namespace PSCAutomation.Apps.AS110AllCheck;
 
 // 保存先フォルダーの決まりごと。
 // - フォルダー名は「SN開始-最後」(例: SN71360-71460)を含む。開始S/N・最後S/N はここから決め、測定開始S/N(今の S/N)がその範囲内なら一致
-// - 中身は Excel/PDF/LOGGER の「型式_SN番号_日付_6500.拡張子」。ここから S/N を拾い、完了記録に無いものを見つける
+// - 中身は Excel/PDF/LOGGER の「型式_SN番号_日付.拡張子」(2026-11-12 より前の版は「型式_SN番号_日付_6500.拡張子」。どちらも読む)。
+//   ここから S/N を拾い、完了記録に無いものを見つける
 internal static class SaveFolder
 {
     private static readonly Regex RangePattern = new(@"SN(\d+)-(\d+)", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
-    private static readonly Regex FilePattern = new(@"^(?<model>.+?)_SN(?<serial>\d+)_\d{8}_6500$", RegexOptions.CultureInvariant);
+    private static readonly Regex FilePattern = new(@"^(?<model>.+?)_SN(?<serial>\d+)_\d{8}(?:_\d+)?$", RegexOptions.CultureInvariant);
     private static readonly string[] DataFolders = ["Excel", "PDF", "LOGGER"];
 
     public static string FolderName(string root) => Path.GetFileName(Path.TrimEndingDirectorySeparator(Path.GetFullPath(root)));

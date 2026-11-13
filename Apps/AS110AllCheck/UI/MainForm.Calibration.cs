@@ -19,6 +19,8 @@ internal sealed partial class MainForm : Form
     private CalibrationRecord? _appliedCalibrationRecord;
     // LOGGER に読み込んだ作業用の雛形。漏れ試験の自動判定は、これが xdt のとき(NR-500)だけ圧力の換算係数を読んで行う。
     private string? _workingTemplatePath;
+    // 作業用の雛形の元(雛形フォルダーのファイル)。型式で LOGGER 雛形が替わる(AS110-006)ときに、読み直すかを決める。
+    private string? _workingTemplateSource;
     // 今の校正記録を書き終えた保存先。同じ保存先には 2 回書かない。
     private string? _calibrationRecordedRoot;
 
@@ -124,6 +126,7 @@ internal sealed partial class MainForm : Form
                 RefreshLoggerState();
                 _calibrationApplied = true;
                 _workingTemplatePath = workingPath;
+                _workingTemplateSource = originalPath;
                 _appliedCalibration = calibration;
                 _appliedCalibrationRecord = calibration is null ? null :
                     new CalibrationRecord(DateTimeOffset.Now, calibration, _modeBox.Text, hardware, templateName);
@@ -147,6 +150,69 @@ internal sealed partial class MainForm : Form
                 throw;
             }
         });
+    }
+
+    // 参照波形で選んだ型式の LOGGER 雛形が、いま読み込んでいる雛形と違うとき(AS110-006 と、ほかの型式の間を替えたとき)に、
+    // いま適用している校正値のまま、その型式の雛形で作業用ファイルを作り直して LOGGER に読み込む(校正画面は出さない。2026-11-12、SPEC「AS110-006 の雛形と測り方」)。
+    // 校正記録は新しい雛形の名前で書き直す(同じ保存先にも書く)。失敗したら雛形待ちに戻る(校正からやり直す)。
+    private void ReloadTemplateForModel(string originalPath)
+    {
+        if (!_calibrationApplied)
+            throw new InvalidOperationException("校正値を適用してから参照波形を選択してください。");
+        if (_logger.HasActiveFile())
+        {
+            RefreshLoggerState();
+            if (!LoggerReadyToStart)
+                throw new InvalidOperationException("LOGGERが停止してから参照波形を選択してください。");
+        }
+        As110Calibration? calibration = _appliedCalibration;
+        string hardware = _detectedHardwareName;
+        string templateName = Path.GetFileName(originalPath);
+        bool xdt = string.Equals(Path.GetExtension(originalPath), ".xdt", StringComparison.OrdinalIgnoreCase);
+        string workingFolder = Path.Combine(_workingTemplateFolder, Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(workingFolder);
+        string workingPath = Path.Combine(workingFolder, templateName);
+        if (xdt && calibration is not null)
+        {
+            var editor = new XdtScalingEditor(originalPath);
+            calibration.Apply(editor);
+            editor.Save(workingPath);
+        }
+        else
+        {
+            File.Copy(originalPath, workingPath);
+        }
+        if (_logger.HasActiveFile())
+        {
+            long closeResult = _logger.CloseActiveFile();
+            if (closeResult != 0)
+                throw new InvalidOperationException($"LOGGERのファイルを閉じられません（戻り値 {closeResult}）。");
+        }
+        ResetTemplate();
+        try
+        {
+            string result = LoadTemplateFile(workingPath);
+            RefreshLoggerState();
+            _calibrationApplied = true;
+            _workingTemplatePath = workingPath;
+            _workingTemplateSource = originalPath;
+            _appliedCalibration = calibration;
+            _appliedCalibrationRecord = calibration is null ? null :
+                new CalibrationRecord(DateTimeOffset.Now, calibration, _modeBox.Text, hardware, templateName);
+            _calibrationRecordedRoot = null;
+            AppendLog("雛形読み直し（型式で雛形が替わるため、同じ校正値で読み込み）：" + result);
+            try { WriteCalibrationRecordIfReady(); }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
+            {
+                throw new IOException("校正記録を保存できないため、試験開始を許可しません。保存先を確認し、校正値を入れ直してください。\r\n" +
+                    CalibrationRecordFile.FolderPath(_rootBox.Text) + "\r\n" + ex.Message, ex);
+            }
+        }
+        catch
+        {
+            ResetTemplate();
+            throw;
+        }
     }
 
     // 校正の適用と保存先の選択の両方がそろっていて、その保存先にまだ書いていなければ校正記録を書く。
