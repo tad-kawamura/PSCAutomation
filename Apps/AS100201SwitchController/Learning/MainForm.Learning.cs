@@ -24,9 +24,12 @@ internal sealed partial class MainForm : Form
 
     public bool IsLearningMode => _mode == As100201StartupMode.Learning;
 
-    // 学習モードで測定を始めてよいか。パネルが途切れている間と、台帳・xdt に書けない間は始めない。
+    // パネルが 2 画面目以降(操作を選んでいる途中)にいる(版 4、2026-11-13 人の指示)。パネルの SELECT / HOME で変わる。
+    private bool _panelSelecting;
+
+    // 学習モードで測定を始めてよいか。パネルが途切れている間、台帳・xdt に書けない間、パネルで操作を選んでいる途中は始めない。
     private bool LearningReady => !IsLearningMode ||
-        (_panel is { InputReady: true } && _learning is { Blocked: false });
+        (_panel is { InputReady: true } && _learning is { Blocked: false } && !_panelSelecting);
 
     private void InitializeLearningMode()
     {
@@ -36,6 +39,7 @@ internal sealed partial class MainForm : Form
         _panel.Disconnected += PanelDisconnected;
         _panel.StatusChanged += PanelStatusChanged;
         _panel.BatteryReported += PanelBatteryReported;
+        _panel.SelectionChanged += PanelSelectionChanged;
         // 保存先は雛形に依存しない(2026-11-10 人の決定)ので、起動時に決まる。フォルダーは最初に書くときに作る。
         string directory = LearningDataDirectory(AppContext.BaseDirectory);
         _learning = new As100201LearningSession(new As100201CsvLedger(Path.Combine(directory, LedgerFileName)), _logger.SaveXdt)
@@ -132,6 +136,7 @@ internal sealed partial class MainForm : Form
             details.Add(As100201PanelPathLink.PathName(path));
         if (_panelBattery is not null) details.Add(_panelBattery.DisplayText);
         string suffix = details.Count == 0 ? "" : "（" + string.Join("・", details) + "）";
+        if (_panelSelecting && _panel.InputReady) suffix += "　選択中（測定できません）";
         _panelValueLabel.Text = _panel.InputReady ? "タッチパネル　接続済み" + suffix
             : _panel.IsConnected ? "定期応答の確認中" + suffix : "接続待ち（USB / Wi-Fi を自動再確認）";
         _panelValueLabel.ForeColor = _panel.InputReady ? Color.DarkGreen : Color.DarkRed;
@@ -183,11 +188,27 @@ internal sealed partial class MainForm : Form
         });
     }
 
+    // パネルが操作を選び始めた(SELECT)・1 画面目に戻った(HOME)。選んでいる途中は READY LED を消し、測定を始めない。
+    private void PanelSelectionChanged(bool selecting) => PostToUi(() => SetPanelSelecting(selecting));
+
+    private void SetPanelSelecting(bool selecting)
+    {
+        if (_panelSelecting == selecting) return;
+        _panelSelecting = selecting;
+        AppendLog(selecting
+            ? "タッチパネルで操作を選んでいます。選び終わるまで測定を始めません（READY LED を消します）。"
+            : "タッチパネルが 1 画面目に戻りました。測定を始められます。");
+        RefreshReadyLed();
+        UpdateControls();
+    }
+
     private void PanelDisconnected()
     {
         PostToUi(() =>
         {
             _panelBattery = null;
+            // パネルの画面がどこにあるか分からなくなる。つなぎ直したらパネルが SELECT / HOME を送り直す。
+            _panelSelecting = false;
             AppendLog("タッチパネルの通信が途切れました。自動で再接続を確認します（USB を先に、なければ Wi-Fi）。途切れている間は測定を始められません（sw4 の停止だけ受け付けます）。");
             RefreshReadyLed();
             UpdateControls();
@@ -251,6 +272,8 @@ internal sealed partial class MainForm : Form
             }
             string reply = _learning.HandleCommand(command);
             _panel.TrySend(reply);
+            // 確定した行(操作・完了・取消)が届いたら、パネルは 1 画面目に戻っている(HOME も届くが、念のため)。
+            if (command.Kind != As100201PanelCommandKind.Hold) SetPanelSelecting(false);
         }
         catch (Exception ex)
         {
@@ -367,6 +390,7 @@ internal sealed partial class MainForm : Form
         _panel.Disconnected -= PanelDisconnected;
         _panel.StatusChanged -= PanelStatusChanged;
         _panel.BatteryReported -= PanelBatteryReported;
+        _panel.SelectionChanged -= PanelSelectionChanged;
         if (_panelPaths is not null) _panelPaths.PathChanged -= PanelPathChanged;
         _panel.Dispose();
     }
@@ -384,7 +408,8 @@ internal sealed partial class MainForm : Form
             panelReady: _panel is { InputReady: true },
             hasSession: _learning is not null,
             saveBlocked: _learning is { Blocked: true },
-            readyLedOn: _readyLedOn, out refusal);
+            readyLedOn: _readyLedOn, out refusal,
+            panelSelecting: _panelSelecting);
     }
 
     // 台帳のファイル名(2026-11-09 人の決定)。

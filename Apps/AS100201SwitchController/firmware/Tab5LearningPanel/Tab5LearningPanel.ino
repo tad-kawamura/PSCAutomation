@@ -24,13 +24,19 @@
 //   - パネルに触れたら(1 画面目で 2 画面目のあるボタンを押した・暗い画面に触れた)HOLD を送る。
 //     PC は測定中なら LOGGER を止める(人が次の行動を決めた所までを学習データにするため)。HOLD は返事を待たない
 //
+// 版 4(2026-11-13、人の指示): 選び終わるまで測定できないようにする
+//   - 2 画面目以降(操作を選んでいる途中)に入ったら SELECT、1 画面目に戻ったら HOME を送る。PC は SELECT の間、
+//     READY LED を消し PC_go / CR_go / F8 を受け付けない(sw4 は受け付ける)。PC の確認(PING)に答えた直後にも送り直す
+//     (つなぎ直し・パネルの再起動で、PC が選択中のまま止まらないように)
+//
 // PC とのやり取り(LF の行単位。USB-C の内蔵 USB シリアル、または Wi-Fi の TCP。どちらも同じ行):
-//   PC → パネル  AS100201_PANEL_PING           → パネルは AS100201_PANEL_READY:3 を返す(この道が今の道になる)
+//   PC → パネル  AS100201_PANEL_PING           → パネルは AS100201_PANEL_READY:4 を返す(この道が今の道になる)
 //   パネル → PC  DIAG_FRAME:<連番>:<millis>     250ms ごと(PC はこれが 1 秒止まると操作を受け付けない)
 //   パネル → PC  DIAG_BOOT:1                    起動通知(USB)
 //   パネル → PC  BATT:<残量%>:<電圧mV>:<充電中 0/1>  30 秒ごと(電池が無いときは残量 -1)
 //   パネル → PC  ACT:MAG / ACT:DEMAG:FULL|TAP / ACT:NOZZLE:P|R:IN|OUT / ACT:SPACER:P|R:UP|DOWN:<厚さ>:<差> / DONE / UNDO
 //   パネル → PC  HOLD                           パネルに触れた(返事 ACK:HOLD は表示しない)
+//   パネル → PC  SELECT / HOME                  操作を選んでいる途中 / 1 画面目(返事なし)
 //   PC → パネル  ACK:<受け取った行> / NAK:<理由>(理由は日本語 UTF-8)
 //   Arduino 向けの AS100201_PING や知らない行(STATE: など)は無視する(接続確認が COM ポートを総当たりで探すため)。
 //
@@ -47,7 +53,7 @@
 
 // ---- 取り決め ----------------------------------------------------------
 static const char* const HELLO_REQUEST = "AS100201_PANEL_PING";
-static const char* const HELLO_REPLY = "AS100201_PANEL_READY:3";   // 版 3。PC 側 As100201PanelProtocol.PanelVersion と揃える
+static const char* const HELLO_REPLY = "AS100201_PANEL_READY:4";   // 版 4。PC 側 As100201PanelProtocol.PanelVersion と揃える
 
 // スペーサーの箱の表示(厚さ mm)。2026-11-13 に箱の写真 3 枚から読み取った(手書きの札は読み違いがありうる。実物で確かめる)。
 // 箱が増えたら、ここと PC 側 As100201SpacerCatalog(開発用の代わりのパネルの選択肢)の両方を直す。
@@ -159,6 +165,9 @@ String messageDetail = "PC のアプリで「学習モード」を選ぶと、�
 bool dirty = true;
 unsigned long frameSequence = 0;
 unsigned long lastFrameAt = 0;
+int reportedSelecting = -1;          // PC に最後に送れた画面の位置(1=SELECT、0=HOME、-1=まだ・送り直す)
+unsigned long lastSelectionAt = 0;
+const unsigned long SELECTION_RESEND_MS = 1000;   // 変わらなくても送り直す間隔(PC が取りこぼしても 1 秒で揃う)
 
 // 道ごとの受信途中の行。
 struct LineReader {
@@ -279,6 +288,17 @@ void sendHold() {
   writeLine(currentPath, "HOLD");
 }
 
+// 画面の位置を PC に知らせる(版 4)。2 画面目以降(操作を選んでいる途中)なら SELECT、1 画面目なら HOME。
+// 変わったときと、1 秒ごとに送る。PC は SELECT の間、測定を始めない。送れなければ次の周回でまた送る。
+void reportSelection(unsigned long now) {
+  if (currentPath == PATH_NONE || !pathAlive(currentPath)) return;
+  int selecting = screen != HOME ? 1 : 0;
+  if (selecting == reportedSelecting && now - lastSelectionAt < SELECTION_RESEND_MS) return;
+  if (!writeLine(currentPath, selecting ? "SELECT" : "HOME")) return;
+  reportedSelecting = selecting;
+  lastSelectionAt = now;
+}
+
 // ---- 電池 ---------------------------------------------------------------
 // 残量は M5Unified が電池(2 セル)の電圧から出した値。電池が付いていないときは -1。
 void readBattery() {
@@ -315,6 +335,7 @@ void handleLine(Path from, const String& line) {
       setMessage(MSG_INFO, String("PC のアプリと ") + pathName(from) + " でつながりました", "操作する前にボタンを押してください");
     }
     sendBattery(from);
+    reportedSelecting = -1;   // 確認のあとに今の画面の位置(SELECT / HOME)を送り直す
     dirty = true;
     return;
   }
@@ -816,6 +837,7 @@ void loop() {
   readUsb();
   readWifi();
   if (currentPath == PATH_WIFI && !wifiClientAlive()) pathLost(PATH_WIFI);
+  reportSelection(now);
 
   // 定期応答は今の道にだけ送る(PC はこれが 1 秒止まると操作を受け付けない)。
   if (now - lastFrameAt >= FRAME_INTERVAL_MS) {

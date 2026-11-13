@@ -124,14 +124,16 @@ internal static class LearningChecks
         Check(As100201SpacerCatalog.Thicknesses.Count == 49 && As100201SpacerCatalog.Thicknesses.Distinct().Count() == 49 &&
             As100201SpacerCatalog.Thicknesses.All(t => As100201PanelCommand.TryParse($"ACT:SPACER:P:UP:{t}:NA", out _)) &&
             As100201SpacerCatalog.Differences.All(d => As100201PanelCommand.TryParse($"ACT:SPACER:P:UP:0.450:{d}", out _)), "spacer catalog");
-        // 版 3(2026-11-13、ノズルは方向だけ・スペーサーの厚さ・HOLD)。版 2 までのスケッチは書き込み直しを求める。
-        Check(As100201PanelProtocol.CheckHello("AS100201_PANEL_READY:3") is null, "panel version 3 rejected");
+        // 版 4(2026-11-13、版 3 のノズル・スペーサー・HOLD に、選んでいる途中の SELECT / HOME を足した)。版 3 までのスケッチは書き込み直しを求める。
+        Check(As100201PanelProtocol.CheckHello("AS100201_PANEL_READY:4") is null, "panel version 4 rejected");
+        Check(As100201PanelProtocol.CheckHello("AS100201_PANEL_READY:3")?.Contains("版 3") == true, "panel version 3 accepted");
+        Check(!As100201PanelCommand.TryParse("SELECT", out _) && !As100201PanelCommand.TryParse("HOME", out _), "selection lines parsed as commands");
         Check(As100201PanelProtocol.CheckHello("AS100201_PANEL_READY:2")?.Contains("版 2") == true, "panel version 2 accepted");
         Check(As100201PanelProtocol.CheckHello("AS100201_PANEL_READY:1")?.Contains("版 1") == true, "panel version 1 accepted");
         Check(As100201PanelProtocol.CheckHello("AS100201_READY:2") is not null && As100201PanelProtocol.CheckHello(null)?.Contains("不明") == true, "Arduino reply accepted as panel");
         Check(As100201PanelProtocol.HelloRequest != "AS100201_PING" && !As100201PanelProtocol.HelloPrefix.StartsWith(As100201ArduinoProtocol.HelloPrefix) &&
             !As100201ArduinoProtocol.HelloPrefix.StartsWith(As100201PanelProtocol.HelloPrefix), "panel and Arduino hello strings collide");
-        Pass("panel lines (v3): ACT:MAG / DEMAG / NOZZLE direction / SPACER thickness+diff / DONE / UNDO / HOLD parsed with ledger words; v2 and malformed lines rejected; ACK/NAK; panel version 3 only");
+        Pass("panel lines (v4): ACT:MAG / DEMAG / NOZZLE direction / SPACER thickness+diff / DONE / UNDO / HOLD parsed with ledger words; v2 and malformed lines rejected; ACK/NAK; panel version 4 only; SELECT / HOME are not commands");
     }
 
     // 2. 台帳の行の組み立て(CSV の形)
@@ -405,7 +407,7 @@ internal static class LearningChecks
         public event Action<string>? LineReceived;
         public event Action? Disconnected;
         public bool IsConnected { get; private set; }
-        public string HelloReply = "AS100201_PANEL_READY:3";
+        public string HelloReply = "AS100201_PANEL_READY:4";
         public bool Fail;
         public List<string> Sent { get; } = new();
         public List<string> Requests { get; } = new();
@@ -438,9 +440,18 @@ internal static class LearningChecks
         panel.StatusChanged += statuses.Add;
         panel.Disconnected += () => disconnected++;
 
+        var selections = new List<bool>();
+        panel.SelectionChanged += selections.Add;
+
         await panel.VerifyAsync();
         Check(link.Requests.SequenceEqual(new[] { "AS100201_PANEL_PING" }) && panel.IsConnected && !panel.InputReady, "verified but not ready before frames");
-        // 定期応答が安定する前の操作は捨てて NAK。
+        // 画面の位置(版 4)は定期応答の安定を待たずに知らせ、返事は送らない(つなぎ直した直後に送られるため)。
+        link.Receive("SELECT");
+        link.Receive("HOME");
+        Check(selections.SequenceEqual(new[] { true, false }) && received.Count == 0 && link.Sent.Count == 0, "selection lines before warm-up");
+        // 定期応答が安定する前の操作は捨てて NAK。HOLD は断りを返さない。
+        link.Receive("HOLD");
+        Check(received.Count == 0 && link.Sent.Count == 0, "HOLD before warm-up answered");
         link.Receive("ACT:MAG");
         Check(received.Count == 0 && link.Sent.Count == 1 && link.Sent[0].StartsWith("NAK:"), "command before warm-up not dropped with NAK");
         uint seq = 1;
@@ -471,7 +482,7 @@ internal static class LearningChecks
         await panel.MaintainAsync();
         Check(!panel.IsConnected && statuses[^1].Contains("版 9"), "wrong version accepted");
         // 起動通知で古い状態を捨てる。
-        link.HelloReply = "AS100201_PANEL_READY:3";
+        link.HelloReply = "AS100201_PANEL_READY:4";
         await Task.Delay(2100);
         await panel.MaintainAsync();
         for (int i = 0; i < 6; i++) { link.Receive($"DIAG_FRAME:{seq}:{seq * 250}"); seq++; await Task.Delay(250); }
@@ -482,6 +493,7 @@ internal static class LearningChecks
         // スイッチの受け付けの決まり: sw4 だけは途切れ中・保存の停止中でも受け付ける。
         string refusal;
         Check(As100201LearningGate.Allows("sw4", baseReady: true, panelReady: false, hasSession: true, saveBlocked: true, readyLedOn: false, out _), "sw4 refused during outage");
+        Check(As100201LearningGate.Allows("sw4", true, true, true, false, false, out _, panelSelecting: true), "sw4 refused while selecting");
         Check(!As100201LearningGate.Allows("sw4", baseReady: false, panelReady: true, hasSession: true, saveBlocked: false, readyLedOn: true, out refusal) && refusal == As100201LearningGate.NotReady, "sw4 without base");
         foreach (string button in new[] { "PC_go", "CR_go", "F8" })
         {
@@ -489,9 +501,10 @@ internal static class LearningChecks
             Check(!As100201LearningGate.Allows(button, true, true, hasSession: false, false, true, out refusal) && refusal == As100201LearningGate.NoSaveDirectory, button + " allowed without save directory");
             Check(!As100201LearningGate.Allows(button, true, true, true, saveBlocked: true, true, out refusal) && refusal == As100201LearningGate.SaveBlocked, button + " allowed while blocked");
             Check(!As100201LearningGate.Allows(button, true, true, true, false, readyLedOn: false, out _), button + " allowed with LED off");
+            Check(!As100201LearningGate.Allows(button, true, true, true, false, true, out refusal, panelSelecting: true) && refusal == As100201LearningGate.PanelSelecting, button + " allowed while selecting on the panel");
             Check(As100201LearningGate.Allows(button, true, true, true, false, true, out _), button + " refused when all ready");
         }
-        Pass("panel outage: warm-up 1 s, stale after 1 s -> NAK + status, recovery 1 s, reconnect after drop, version check, DIAG_BOOT reset; gate lets only sw4 through");
+        Pass("panel outage: warm-up 1 s, stale after 1 s -> NAK + status, recovery 1 s, reconnect after drop, version check, DIAG_BOOT reset, SELECT / HOME before warm-up without reply, HOLD dropped silently; gate lets only sw4 through (also while selecting)");
     }
 
     // 8. タッチパネルの USB と Wi-Fi の 2 本(2026-11-13 承認)と電池残量

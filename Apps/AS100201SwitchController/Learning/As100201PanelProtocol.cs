@@ -21,13 +21,19 @@ internal sealed class As100201PanelProtocol : IDisposable
     public const string HelloPrefix = "AS100201_PANEL_READY:";
     // 版 2(2026-11-13): USB と Wi-Fi の両方でつながり、電池残量 BATT: を送る。版 1 の行はそのまま。
     // 版 3(2026-11-13): ノズルは方向だけ、スペーサーは厚さと表示との差を付ける、パネルに触れたら HOLD を送る。
-    public const int PanelVersion = 3;
+    // 版 4(2026-11-13): 2 画面目以降に入ったら SELECT、1 画面目に戻ったら HOME を送る(選び終わるまで測定を始めない)。
+    public const int PanelVersion = 4;
+    // パネルが操作を選んでいる途中(2 画面目以降)・1 画面目にいる。ページを移ったときと、PC の確認に答えた直後に送られる。
+    public const string SelectingLine = "SELECT";
+    public const string HomeLine = "HOME";
     private string? _helloReply;
 
     public event Action<As100201PanelCommand>? CommandReceived;
     public event Action? Disconnected;
     public event Action<string>? StatusChanged;
     public event Action<As100201PanelBattery>? BatteryReported;
+    // true: 操作を選んでいる途中(SELECT)、false: 1 画面目(HOME)。
+    public event Action<bool>? SelectionChanged;
 
     public As100201PanelProtocol(IAs100201SerialLink link)
     {
@@ -216,6 +222,11 @@ internal sealed class As100201PanelProtocol : IDisposable
             // 電池残量は受け付けの決まり(定期応答の安定)と関係なく知らせる。形が違えば異常ログにだけ残す。
             if (As100201PanelBattery.TryParse(line, out var battery)) BatteryReported?.Invoke(battery);
             else ArduinoDiagnosticLog.Write("PANEL_UNKNOWN_LINE", line);
+        }
+        else if (line is SelectingLine or HomeLine)
+        {
+            // パネルの画面の位置(版 4)。受け付けの決まり(定期応答の安定)と関係なく知らせる。つなぎ直した直後にも届くため。
+            SelectionChanged?.Invoke(line == SelectingLine);
         }
         else if (As100201PanelCommand.TryParse(line, out var command))
         {

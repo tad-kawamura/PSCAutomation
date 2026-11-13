@@ -101,6 +101,15 @@ internal sealed partial class MainForm : Form
             AppendLog(unplugged.Checked ? "代わりのパネル：USB を抜いた状態にしました。" : "代わりのパネル：USB を差し直しました（自動の再接続を待ちます）。");
             _virtualPanel.Unplugged = unplugged.Checked;
         };
+        // パネルが 2 画面目以降にいる状態(版 4)。入れると SELECT、外すと HOME を送る。
+        var selecting = new CheckBox { AutoSize = true, Text = "選んでいる途中（SELECT）", Margin = new Padding(0, 4, 16, 0), ForeColor = SystemColors.ControlText };
+        selecting.CheckedChanged += (_, _) =>
+        {
+            if (_virtualPanel is null) return;
+            string line = selecting.Checked ? As100201PanelProtocol.SelectingLine : As100201PanelProtocol.HomeLine;
+            if (!_virtualPanel.Press(line)) AppendLog("代わりのパネルは接続されていないため送れません。");
+        };
+        faults.Controls.Add(selecting);
         _virtualReplyLabel.AutoSize = true;
         _virtualReplyLabel.Margin = new Padding(0, 5, 0, 0);
         _virtualReplyLabel.Text = "パネルへの返事：（まだありません）";
