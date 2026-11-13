@@ -6,6 +6,7 @@ AS100-201 のスイッチ制御・測定アプリ。治具の Arduino のスイ�
 
 - 仕様(機器・操作・異常時・移植で変えたこと): [specs/AS100201SwitchController/SPEC.md](../../specs/AS100201SwitchController/SPEC.md)
 - Arduino スケッチ: `firmware/ArduinoSwitchAndReadyLed/ArduinoSwitchAndReadyLed.ino`。**版 2**(2026-11-09、PC_go / CR_go の 2 回押しの判定を追加)。**アプリとスケッチは一緒に更新する**: 版 1 のスケッチをこのアプリにつなぐと接続エラー(「スケッチが古い」)、版 2 のスケッチを 2026-11-09 より前のアプリにつなぐと「Arduino が見つからない」になる。書き込みは Arduino IDE で(ボードは UNO R4 Minima)
+- タッチパネル(学習モード)のスケッチ: `firmware/Tab5LearningPanel/Tab5LearningPanel.ino`。**版 1**(2026-11-13、横置き・仮レイアウト)。書き込みは下の「タッチパネルのスケッチを書き込む」
 
 ## 開く・ビルドする
 
@@ -30,7 +31,7 @@ NI-VISA が入っていない PC ではビルドできない(`Wrappers/Instrumen
 | `UI/` | 画面の組み立て、操作の共通処理、PC 遅延観測、起動時のモード選択の窓(`StartupModeDialog`) |
 | `Learning/` | 学習モード(2026-11-09 承認の追加仕様)。起動モード、タッチパネルの行の読み取り(`As100201PanelCommand`)と取り決め(`As100201PanelProtocol`、Arduino と同じ見張り)、CSV 台帳(`As100201LearningLedger`)、記録の状態管理(`As100201LearningSession`: 測定・操作・完了・取消、書けないときの停止と再試行)、受け付けの決まり(`As100201LearningGate`)、画面への組み込み(`MainForm.Learning.cs`)、開発用のタッチパネルの代わり(`As100201VirtualPanelLink` / `MainForm.VirtualPanel.cs`、`--virtual-panel`)。測定中の取り込み(2026-11-11): 加工の計算(`As100201LiveFeatures`)、取り込みと失敗の判断(`As100201LiveCapture`)、xdt との突き合わせ(`As100201FeatureComparison`)、画面への組み込み(`MainForm.LiveCapture.cs`) |
 | `Tests/Compatibility/` | 互換テスト(模擬の機器で、送るコマンドと順番・LOGGER の呼び方・状態判定・異常ログの設定を確かめる)。`LearningChecks.cs` は学習モードの 7 グループ、`LiveCaptureChecks.cs` は測定中の取り込みの 4 グループ |
-| `firmware/` | Arduino スケッチ(旧 `_arduino/`) |
+| `firmware/` | Arduino スケッチ(旧 `_arduino/`)と、タッチパネル(Tab5)のスケッチ `Tab5LearningPanel`(2026-11-13) |
 
 使う wrapper: `WaveLogger.Automation`(LOGGER、`ReferenceOnly`)、`Common`(NR-500 の本体確認・エラー表示・PC 遅延観測)、`Arduino`(シリアル通信・異常ログ)、`Instruments`(`Wf1973ContinuousSession`)、`LoggerFiles`(学習モードの測定中の取り込みで、雛形の xdt からチャンネル・換算係数を読む。2026-11-11)。
 
@@ -121,7 +122,34 @@ Visual Studio では起動プロファイル「学習モード（タッチパネ
 
 ### タッチパネルとのやり取り
 
-Arduino と同じ 115200bps・LF の行単位。PC → `AS100201_PANEL_PING`、パネル → `AS100201_PANEL_READY:1`(版 1 以外は接続エラー)、`DIAG_FRAME:<連番>:<millis>`(250ms)、`DIAG_BOOT:1`、操作は `ACT:MAG` / `ACT:DEMAG:FULL|TAP` / `ACT:NOZZLE:P|R:IN|OUT:1|2|3` / `ACT:SPACER:P|R:UP|DOWN` / `DONE` / `UNDO`。パネルは **M5Stack Tab5**(ESP32-P4、5 インチ 1280×720、2026-11-09 人の決定)。画面は M5GFX で自前描画(2026-11-10 人の決定)。スケッチ(`firmware/` 配下に新規)は Tab5 が届いてから作る。スケッチは Arduino 向けの `AS100201_PING` を無視すること(接続確認が COM ポートを総当たりで探すため、Arduino の確認文字列がパネルにも届く。逆に Arduino のスケッチは知らない行を無視する)。
+Arduino と同じ 115200bps・LF の行単位。PC → `AS100201_PANEL_PING`、パネル → `AS100201_PANEL_READY:1`(版 1 以外は接続エラー)、`DIAG_FRAME:<連番>:<millis>`(250ms)、`DIAG_BOOT:1`、操作は `ACT:MAG` / `ACT:DEMAG:FULL|TAP` / `ACT:NOZZLE:P|R:IN|OUT:1|2|3` / `ACT:SPACER:P|R:UP|DOWN` / `DONE` / `UNDO`。パネルは **M5Stack Tab5**(ESP32-P4、5 インチ 1280×720、2026-11-09 人の決定)。画面は M5GFX で自前描画(2026-11-10 人の決定)。スケッチは Arduino 向けの `AS100201_PING` を無視すること(接続確認が COM ポートを総当たりで探すため、Arduino の確認文字列がパネルにも届く。逆に Arduino のスケッチは知らない行を無視する)。
+
+### タッチパネルのスケッチを書き込む(2026-11-13)
+
+スケッチは `firmware/Tab5LearningPanel/Tab5LearningPanel.ino`(版 1)。Arduino IDE で開き、ツール メニューを次のようにして書き込む。
+
+| 項目 | 設定 |
+|---|---|
+| ボード | **M5Tab5**(esp32 by Espressif Systems 3.3 系。この PC は 3.3.12) |
+| USB Mode | **Hardware CDC and JTAG** |
+| USB CDC On Boot | **Enabled**(これが無いと USB-C から PC に行が届かず、アプリの接続確認でパネルが見つからない) |
+| Chip Variant | 既定の「Before v3.00」。書き込み時に esptool が出すチップの版が v3.0 以上なら「v3.00 or newer」 |
+| ライブラリ | M5Unified / M5GFX(0.3.0 で確かめた) |
+
+- 書き込めない(ポートが出ない)ときは、リセットボタンを 2 秒ほど長押しして緑の LED が速く点滅する状態にしてから書き込む(M5Stack の手順)
+- 上下が逆に見えたら、スケッチの `FLIP_LANDSCAPE` を `true` にして書き込み直す
+
+画面(横置き 1280×720、仮レイアウト。実物で見て直す):
+
+- 上の帯: 「調整記録パネル」と PC とのつながり(赤: USB なし / 黄: アプリの確認待ち・返事待ち / 緑: つながっている)。**アプリの確認(`AS100201_PANEL_PING`)を受けるまでは、送るボタンは灰色で押せない**
+- 1 画面目: 左に 6 操作(上段 着磁・ノズル P 側・スペーサー P 側、下段 減磁・ノズル R 側・スペーサー R 側)、右の列に完了(緑)・取消(橙)
+- 2 画面目: 減磁は「しっかり / ちょんちょん」、スペーサーは「上げる / 下げる」を押すと記録。**ノズルは上段で程度(初めは「普通」)を選び、下段の方向(押し込む / 外に出す)を押すと記録**(普通なら 1 タップで済むよう、程度を先に置いた。SPEC は「方向 → 程度」の順の書き方なので、実物で使って決める)。右の列に「戻る」(何も送らない)
+- 取消: 確認の画面に「直前の操作を取り消しますか」と、パネルが覚えている直前の記録(ACK を受けた操作)を出し、「はい、取り消す」で `UNDO` を送る。パネルを起動し直した直後は直前の操作が分からないので、その旨を出す(取り消すのは PC の記録の直前の操作)
+- 下の帯: 送った行と PC の返事。`ACK` は緑「記録しました：…」、`NAK` は赤で理由、**2 秒返事が無ければ黄「PC から返事がありません」**(自動では送り直さない。二重記録を避けるため)。返事を待つ間は送るボタンを押せない(二度押しで同じ操作が 2 行にならないように)
+- ボタンは押した所で色が変わり、同じボタンの上で指を離すと確定(押したまま外へずらせば取りやめ)
+- PC がポートを開いていないときは、定期応答などを捨てて画面を止めない(送り先が空くまで待たない)
+
+確かめたこと: arduino-cli でのビルド(M5Tab5、USB Mode=Hardware CDC and JTAG、USB CDC On Boot=Enabled、Chip Variant は両方。スケッチの警告なし)。**Tab5 への書き込みと動作は未確認**(下の「実機では未確認」)。
 
 ### 確認した範囲と未確認(学習モード)
 
@@ -158,6 +186,7 @@ Arduino と同じ 115200bps・LF の行単位。PC → `AS100201_PANEL_PING`、�
 - 測定中に LOGGER から値を取り出すこと: 2026-11-11 にアプリへ入れた(下の「測定中の取り込み」)。NR-500・旧 WAVE LOGGER で、確認ツールとアプリの画面(操作ボタンで停止)から確認済み。三角波が出ている波形・USB を抜いたときは未確認
 - タッチパネルの接続確認(Arduino と並べて 2 台の総当たり。Arduino の確認の後にパネルを確認する作りにした。Arduino が外れている間にパネルの確認が Arduino のポートを開いてリセットさせないか)
 - 本物のパネルでの `ACK` / `NAK` の表示
+- タッチパネルのスケッチ(版 1、2026-11-13)の書き込みと動作: USB-C でポートが出ること(USB CDC On Boot)、横置きの向き、日本語の文字の見え方・ボタンの大きさ、2 画面目・取消の確認、返事なしの表示、PC がポートを閉じている間に画面が止まらないこと
 - LOGGER が自動で止まったとき(sw4 なし)の行と xdt
 - パネルの USB を抜き差ししたときの再接続(抜いている間に測定を始められず sw4 は効くこと)
 - Tab5 のポートを開いたときのリセットの有無(`ArduinoConnection` の 1.7 秒待ちで足りるか)
