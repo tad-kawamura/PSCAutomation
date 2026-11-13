@@ -74,16 +74,14 @@ internal sealed partial class MainForm : Form
                     throw new InvalidOperationException("LOGGERが停止してから校正値を適用してください。");
             }
             string originalPath = GetDetectedTemplatePath();
-            bool supportsCalibration = string.Equals(Path.GetExtension(originalPath), ".xdt", StringComparison.OrdinalIgnoreCase);
+            bool supportsCalibration = IsXdt(originalPath);
             string hardware = _detectedHardwareName;
             string templateName = Path.GetFileName(originalPath);
-            string workingFolder = Path.Combine(_workingTemplateFolder, Guid.NewGuid().ToString("N"));
-            Directory.CreateDirectory(workingFolder);
-            string workingPath = Path.Combine(workingFolder, templateName);
             As110Calibration? calibration = null;
+            XdtScalingEditor? editor = null;
             if (supportsCalibration)
             {
-                var editor = new XdtScalingEditor(originalPath);
+                editor = new XdtScalingEditor(originalPath);
                 // 初期値は雛形の値。入れ直しのときだけ、いま適用している値から直せるようにする。
                 using var dialog = new CalibrationDialog(hardware, templateName,
                     _calibrationApplied && _appliedCalibration is not null ? _appliedCalibration : As110Calibration.FromTemplate(editor));
@@ -104,51 +102,20 @@ internal sealed partial class MainForm : Form
                     if (!LoggerReadyToStart)
                         throw new InvalidOperationException("LOGGERが停止してから校正値を適用してください。");
                 }
-                calibration.Apply(editor);
-                editor.Save(workingPath);
             }
-            else
-            {
-                // NR-X(ydt)は校正未対応。雛形の値のまま作業用ファイルにする。
-                File.Copy(originalPath, workingPath);
-            }
+            // NR-X(ydt)は校正未対応。雛形の値のまま作業用ファイルにする(CreateWorkingTemplate)。
+            string workingPath = CreateWorkingTemplate(originalPath, calibration, editor);
             // 手動で開かれた未適用のファイルも、設定済みの雛形に置き換える。
-            if (_logger.HasActiveFile())
-            {
-                long closeResult = _logger.CloseActiveFile();
-                if (closeResult != 0)
-                    throw new InvalidOperationException($"LOGGERのファイルを閉じられません（戻り値 {closeResult}）。");
-            }
-            ResetTemplate();
-            try
-            {
-                string result = LoadTemplateFile(workingPath);
-                RefreshLoggerState();
-                _calibrationApplied = true;
-                _workingTemplatePath = workingPath;
-                _workingTemplateSource = originalPath;
-                _appliedCalibration = calibration;
-                _appliedCalibrationRecord = calibration is null ? null :
-                    new CalibrationRecord(DateTimeOffset.Now, calibration, _modeBox.Text, hardware, templateName);
-                _calibrationRecordedRoot = null;
-                if (calibration is not null) AppendLog("校正値適用：" + calibration.Summary);
-                else AppendLog("NR-Xの校正は未対応のため、雛形の値のまま読み込みました。");
-                AppendLog("雛形読み込み：" + result);
-                // 保存先が決まっていれば(データ取りで、データ調整から移る前などに選んでいたとき)ここで記録する。書けなければ設定完了にしない。
-                try { WriteCalibrationRecordIfReady(); }
-                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
+            // 保存先が決まっていれば(データ取りで、データ調整から移る前などに選んでいたとき)ここで校正記録を書く。書けなければ設定完了にしない。
+            LoadWorkingTemplate(originalPath, workingPath, calibration, hardware,
+                result =>
                 {
-                    throw new IOException("校正記録を保存できないため、試験開始を許可しません。保存先を確認し、校正値を入れ直してください。\r\n" +
-                        CalibrationRecordFile.FolderPath(_rootBox.Text) + "\r\n" + ex.Message, ex);
-                }
-                RefreshReferenceCandidates();
-                return "成功 / 型式（参照波形）を選択してください。";
-            }
-            catch
-            {
-                ResetTemplate();
-                throw;
-            }
+                    if (calibration is not null) AppendLog("校正値適用：" + calibration.Summary);
+                    else AppendLog("NR-Xの校正は未対応のため、雛形の値のまま読み込みました。");
+                    AppendLog("雛形読み込み：" + result);
+                },
+                afterRecord: RefreshReferenceCandidates);
+            return "成功 / 型式（参照波形）を選択してください。";
         });
     }
 
@@ -167,15 +134,24 @@ internal sealed partial class MainForm : Form
                 throw new InvalidOperationException("LOGGERが停止してから参照波形・モードを選択してください。");
         }
         As110Calibration? calibration = _appliedCalibration;
-        string hardware = _detectedHardwareName;
-        string templateName = Path.GetFileName(originalPath);
-        bool xdt = string.Equals(Path.GetExtension(originalPath), ".xdt", StringComparison.OrdinalIgnoreCase);
+        string workingPath = CreateWorkingTemplate(originalPath, calibration);
+        LoadWorkingTemplate(originalPath, workingPath, calibration, _detectedHardwareName,
+            result => AppendLog("雛形読み直し（型式で雛形が替わるため、同じ校正値で読み込み）：" + result));
+    }
+
+    private static bool IsXdt(string path) =>
+        string.Equals(Path.GetExtension(path), ".xdt", StringComparison.OrdinalIgnoreCase);
+
+    // 元の雛形から作業用ファイルを一時フォルダーに作る(元の雛形は変えない)。xdt で校正値があれば換算係数を書き込み、無ければそのまま写す(NR-X の ydt)。
+    // editor は校正画面の初期値を読むのに使ったもの(あれば使い回す)。ApplyCalibration と ReloadTemplateForModel の共通部分(2026-11-13)。
+    private string CreateWorkingTemplate(string originalPath, As110Calibration? calibration, XdtScalingEditor? editor = null)
+    {
         string workingFolder = Path.Combine(_workingTemplateFolder, Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(workingFolder);
-        string workingPath = Path.Combine(workingFolder, templateName);
-        if (xdt && calibration is not null)
+        string workingPath = Path.Combine(workingFolder, Path.GetFileName(originalPath));
+        if (calibration is not null && IsXdt(originalPath))
         {
-            var editor = new XdtScalingEditor(originalPath);
+            editor ??= new XdtScalingEditor(originalPath);
             calibration.Apply(editor);
             editor.Save(workingPath);
         }
@@ -183,6 +159,14 @@ internal sealed partial class MainForm : Form
         {
             File.Copy(originalPath, workingPath);
         }
+        return workingPath;
+    }
+
+    // 作業用ファイルを LOGGER に読み込み、適用中の状態(校正値・雛形・校正記録)をそろえる。ApplyCalibration と ReloadTemplateForModel の共通部分(2026-11-13)。
+    // 開いているファイルを閉じてから読み込む。読み込み後のログ(loaded)・校正記録の書き込み・afterRecord のどこで失敗しても雛形待ちに戻す(校正からやり直す)。
+    private void LoadWorkingTemplate(string originalPath, string workingPath, As110Calibration? calibration, string hardware,
+        Action<string> loaded, Action? afterRecord = null)
+    {
         if (_logger.HasActiveFile())
         {
             long closeResult = _logger.CloseActiveFile();
@@ -199,15 +183,16 @@ internal sealed partial class MainForm : Form
             _workingTemplateSource = originalPath;
             _appliedCalibration = calibration;
             _appliedCalibrationRecord = calibration is null ? null :
-                new CalibrationRecord(DateTimeOffset.Now, calibration, _modeBox.Text, hardware, templateName);
+                new CalibrationRecord(DateTimeOffset.Now, calibration, _modeBox.Text, hardware, Path.GetFileName(originalPath));
             _calibrationRecordedRoot = null;
-            AppendLog("雛形読み直し（型式で雛形が替わるため、同じ校正値で読み込み）：" + result);
+            loaded(result);
             try { WriteCalibrationRecordIfReady(); }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
             {
                 throw new IOException("校正記録を保存できないため、試験開始を許可しません。保存先を確認し、校正値を入れ直してください。\r\n" +
                     CalibrationRecordFile.FolderPath(_rootBox.Text) + "\r\n" + ex.Message, ex);
             }
+            afterRecord?.Invoke();
         }
         catch
         {

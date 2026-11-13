@@ -7,6 +7,7 @@ namespace PSCAutomation.Apps.AS110AllCheck;
 // 選んだときに「レギュレーターを 350 kPa に合わせてください」の文をログに残す所だけ(MainForm.ShippingData.cs。2026-11-12)。
 // バルブ(型式)ごとに供給圧力が違うので、将来、電空レギュレーターなどでアプリから供給圧力を設定できるようになったら、
 // 型式を選んだとき・測定を始める前にここを呼ぶ。そのときの使い方は specs/AS110AllCheck/SPEC.md「供給圧力の設定(将来用)」。
+// そのとき、MainForm.ShippingData.cs の呼び出し(今は .GetAwaiter().GetResult() で待っている)を await に替える(画面が固まらないように)。
 //
 // ・型式ごとの供給圧力の値は ProductModel.All(Excel の見出しの「供給圧力」に書く値)を正本にし、ここでは値を二重に持たない。
 //   型式の表を直せば、ここの目標値も同じ値になる。
