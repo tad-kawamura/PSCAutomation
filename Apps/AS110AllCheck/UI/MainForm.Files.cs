@@ -29,7 +29,7 @@ internal sealed partial class MainForm : Form
         AppendLog("雛形は校正値の適用時に読み込みます。校正値を入力してください。");
     }
 
-    // データ調整・データ取りは型式でも選ぶ。測る時間が違う型式(AS110-006)は型式専用の雛形(「…_AS110-006」。MeasurementProfile)。
+    // データ取りは型式でも選ぶ。測る時間が違う型式(AS110-006)は型式専用の雛形(「…_AS110-006」。MeasurementProfile)。データ調整は共用の雛形。
     private string GetAutomaticTemplatePath(string extension, ProductModel model)
     {
         string folder = TemplateFolderPath;
@@ -41,7 +41,7 @@ internal sealed partial class MainForm : Form
         string fileName = (_flow.Mode == TestMode.Motion
             ? (extension == ".ydt" ? "AS110動き検査_NRX100" : "AS110動き検査用")
             : MeasurementProfile.LoggerTemplateName(
-                extension == ".ydt" ? "AS110データ調整・データ取り_NRX100" : "AS110データ調整・データ取り用", model)) + extension;
+                extension == ".ydt" ? "AS110データ調整・データ取り_NRX100" : "AS110データ調整・データ取り用", model, _flow.Mode)) + extension;
         // 用途と本体の両方で選ぶ。別用途の雛形へはフォールバックしない(型式専用の雛形が無いときも共用の雛形では測らない)。
         string[] files = Directory.GetFiles(folder, "*", SearchOption.TopDirectoryOnly)
             .Where(path => string.Equals(Path.GetFileName(path), fileName,
@@ -49,8 +49,8 @@ internal sealed partial class MainForm : Form
             .ToArray();
         if (files.Length != 1)
             throw new InvalidOperationException(
-                (_flow.Mode != TestMode.Motion && MeasurementProfile.HasOwnLoggerTemplate(model)
-                    ? $"{model.Name} は {_transferSettings.ForModel(model).ExpectedSamples} 点で測るため、専用の LOGGER 雛形「{fileName}」が要ります。" +
+                (MeasurementProfile.HasOwnLoggerTemplate(model, _flow.Mode)
+                    ? $"{model.Name} はデータ取りで {_transferSettings.ForModel(model, _flow.Mode).ExpectedSamples} 点で測るため、専用の LOGGER 雛形「{fileName}」が要ります。" +
                       "WAVE LOGGER で共用の雛形の点数だけを変えて作り、「雛形」フォルダへ配置してください。"
                     : $"このモードに必要な雛形「{fileName}」が見つかりません。「雛形」フォルダへ配置してください。") +
                 Environment.NewLine + folder);
@@ -148,12 +148,12 @@ internal sealed partial class MainForm : Form
                     throw new InvalidOperationException("測定結果が残っている間は型式（参照波形）を変えられません。「設定変更（測定を破棄）」を先に押してください。");
                 // Excel 雛形の無い型式は、測る前に止める(転送してから気づかないように)。
                 ExcelTemplatePathFor(model);
-                // LOGGER 雛形も型式で決まる(AS110-006 は専用の 13000 点。MeasurementProfile)。専用の雛形が無ければここで止める。
+                // LOGGER 雛形も型式とモードで決まる(AS110-006 のデータ取りは専用の 13000 点。MeasurementProfile)。専用の雛形が無ければここで止める。
                 string loggerTemplate = GetDetectedTemplatePath(model);
-                // 型式が替わったら供給圧力は 490 kPa(データ取り)に戻す(出荷データの工程は型式ごとのため)。
+                // 型式が替わったら供給圧力は型式の値(データ取り)に戻す(出荷データの 350 kPa は型式ごとの工程のため)。
                 if (model != _selectedModel) _shippingDataSelected = false;
                 _selectedModel = model;
-                // いま読み込んでいる雛形と違えば(AS110-006 とほかの型式の間を替えたとき)、同じ校正値で読み直す。
+                // いま読み込んでいる雛形と違えば(データ取りで AS110-006 とほかの型式の間を替えたとき)、同じ校正値で読み直す。
                 if (!string.Equals(loggerTemplate, _workingTemplateSource, StringComparison.OrdinalIgnoreCase))
                     ReloadTemplateForModel(loggerTemplate);
                 if (CanChangeSetup) ConfigureProduct(requireSaveRoot: false);

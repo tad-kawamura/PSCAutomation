@@ -290,22 +290,33 @@ internal sealed partial class MainForm : Form
         CloseJudgmentNotice();
         _flow.Mode=next;
         _modeSelected=true;
-        // モードを変えたら供給圧力は 490 kPa(データ取り)に戻す。
+        // モードを変えたら供給圧力は型式の値(データ取り)に戻す(出荷データの 350 kPa をやめる)。
         _shippingDataSelected=false;
         if (templatePurposeChanged) ResetTemplate();
-        RunOperation("モード選択",()=> { ConfigureProduct(requireSaveRoot:false); StopLeakOutput();_generator?.PrepareBurst(CurrentBurstSettings);
+        RunOperation("モード選択",()=> { ReloadTemplateForMode(); ConfigureProduct(requireSaveRoot:false); StopLeakOutput();_generator?.PrepareBurst(CurrentBurstSettings);
             // データ調整で校正を済ませてからデータ取りへ移ったときは、前回の保存先が残っていればここで校正記録を書く。
             WriteCalibrationRecordIfReady();return _modeBox.Text; });
         UpdateControls();
         // 接続確認が済んでいれば、モードを選んだ流れで校正画面を開く(まだなら接続確認の終わりで開く)。
         OpenCalibrationIfPending();
     }
-    // データ調整・データ取りは、参照波形で選んだ型式の測る時間に合わせる(AS110-006 は周波数が半分。MeasurementProfile)。
+    // データ取りは、参照波形で選んだ型式の測る時間に合わせる(AS110-006 は周波数が半分。データ調整・動き検査は型式によらない。MeasurementProfile)。
     private GeneratorBurstSettings CurrentBurstSettings => As110MotionTest.GetSettings(
         isSdg1032X: _generator is Sdg1032XSession, isMotion: _flow.Mode == TestMode.Motion,
-        lengthFactor: _flow.Mode == TestMode.Motion ? 1 : MeasurementProfile.LengthFactor(_selectedModel));
-    // 参照波形で選んだ型式の転送の設定(AS110-006 は 13000 点・10 点平均。MeasurementProfile)。
-    private TransferSettings ModelTransferSettings => _transferSettings.ForModel(_selectedModel);
+        lengthFactor: MeasurementProfile.LengthFactor(_selectedModel, _flow.Mode));
+    // 参照波形で選んだ型式・いまのモードの転送の設定(AS110-006 のデータ取りは 13000 点・10 点平均。MeasurementProfile)。
+    private TransferSettings ModelTransferSettings => _transferSettings.ForModel(_selectedModel, _flow.Mode);
+    // データ調整とデータ取りで LOGGER の雛形が違う型式(AS110-006 はデータ取りだけ専用の 13000 点。MeasurementProfile)は、
+    // モードを替えたときに、いま読み込んでいる雛形と違えば同じ校正値で読み直す(参照波形で型式を替えたときと同じ)。
+    // 校正前(雛形をまだ読んでいない)なら何もしない(校正のときにそのモードの雛形を読む)。専用の雛形が無ければ雛形待ちに戻して知らせる。
+    private void ReloadTemplateForMode()
+    {
+        if(_flow.Mode==TestMode.Motion || !_templateLoaded || !_calibrationApplied || _workingTemplateSource is null)return;
+        string template;
+        try { template=GetDetectedTemplatePath(); }
+        catch { ResetTemplate(); throw; }
+        if(!string.Equals(template,_workingTemplateSource,StringComparison.OrdinalIgnoreCase))ReloadTemplateForModel(template);
+    }
     private void UpdateProductionControls()
     {
         bool idle=!_operationInProgress && !_leakRunning && !_flow.Measuring;

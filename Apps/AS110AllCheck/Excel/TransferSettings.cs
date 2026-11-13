@@ -54,12 +54,12 @@ internal sealed class TransferSettings
         foreach(var (model,limit) in DefaultLeakMaximumLowerLimitKpa) settings.LeakMaximumLowerLimitKpa.TryAdd(model,limit);
         return settings;
     }
-    // その型式で使う転送の設定。測る時間が違う型式(AS110-006 は 2 倍。MeasurementProfile)は、測定点数と平均する点数をその倍率にする
-    // (6500 点・5 点平均 → 13000 点・10 点平均。Excel へは同じ 1300 点)。ほかの型式は同じ値の写し。写しは保存しない(画面で直す値は元のまま)。
-    public TransferSettings ForModel(ProductModel model)
+    // その型式・モードで使う転送の設定。測る時間が違う型式(AS110-006 のデータ取りは 2 倍。MeasurementProfile)は、測定点数と平均する点数をその倍率にする
+    // (6500 点・5 点平均 → 13000 点・10 点平均。Excel へは同じ 1300 点)。ほかの型式・データ調整は同じ値の写し。写しは保存しない(画面で直す値は元のまま)。
+    public TransferSettings ForModel(ProductModel model,TestMode mode)
     {
         var copy=(TransferSettings)MemberwiseClone();
-        int factor=MeasurementProfile.LengthFactor(model);
+        int factor=MeasurementProfile.LengthFactor(model,mode);
         copy.ExpectedSamples=ExpectedSamples*factor;
         copy.Compression=Compression*factor;
         return copy;

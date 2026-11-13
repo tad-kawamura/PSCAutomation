@@ -152,7 +152,8 @@ internal sealed partial class MainForm : Form
         });
     }
 
-    // 参照波形で選んだ型式の LOGGER 雛形が、いま読み込んでいる雛形と違うとき(AS110-006 と、ほかの型式の間を替えたとき)に、
+    // 参照波形で選んだ型式・いまのモードの LOGGER 雛形が、いま読み込んでいる雛形と違うとき(データ取りで AS110-006 とほかの型式の間を替えたとき、
+    // AS110-006 でデータ調整とデータ取りを替えたとき)に、
     // いま適用している校正値のまま、その型式の雛形で作業用ファイルを作り直して LOGGER に読み込む(校正画面は出さない。2026-11-12、SPEC「AS110-006 の雛形と測り方」)。
     // 校正記録は新しい雛形の名前で書き直す(同じ保存先にも書く)。失敗したら雛形待ちに戻る(校正からやり直す)。
     private void ReloadTemplateForModel(string originalPath)
@@ -163,7 +164,7 @@ internal sealed partial class MainForm : Form
         {
             RefreshLoggerState();
             if (!LoggerReadyToStart)
-                throw new InvalidOperationException("LOGGERが停止してから参照波形を選択してください。");
+                throw new InvalidOperationException("LOGGERが停止してから参照波形・モードを選択してください。");
         }
         As110Calibration? calibration = _appliedCalibration;
         string hardware = _detectedHardwareName;
