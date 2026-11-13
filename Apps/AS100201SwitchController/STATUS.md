@@ -1,6 +1,11 @@
-# AS100201SwitchController の状況
+---
+app: "AS100201SwitchController"
+state: "学習モードの PC 側は実装済み。Tab5 スケッチ版 1 で接続確認が実機で通った。Wi-Fi・バッテリーへの変更は承認待ち"
+next: "Wi-Fi・バッテリーの変更を承認 → 実装。Tab5 の画面レイアウトを決める"
+updated: "2026-11-13"
+---
 
-更新日: 2026-11-13
+# AS100201SwitchController の状況
 
 進み具合の覚え書き(書き方は `AGENTS.md`「進み具合の記録」)。短く保ち、詳しい中身は下の「詳しい場所」に書く。
 
