@@ -15,6 +15,7 @@ internal static class Program
         CalibrationDialogTests.Run(assembly);
         LeakJudgeWindowTests.Run(assembly);
         LeakCheckFormTests.Run(assembly);
+        ConnectionFormTests.Run(assembly);
         var type=assembly.GetType("PSCAutomation.Apps.AS110AllCheck.MainForm")!;
         using var form=(Form)Activator.CreateInstance(type)!;
         object Field(string name)=>type.GetField(name,Private)!.GetValue(form)!;
@@ -375,7 +376,12 @@ internal static class Program
         }
         Console.WriteLine("PASS saved-stage M5Stack labels and enabled masks map to output / leak / complete");
         ((System.Windows.Forms.Timer)Field("_statusHeartbeat")).Stop();
-        ((IDisposable)Field("_arduino")).Dispose();
-        Call("StopPcDelayObservation");
+        // 終了処理を通して閉じる(M5Stack 通信・遅延観測の後始末もここで行う)。Close を通さずに Dispose だけで終わると、
+        // new MainForm() が始めた LOGGER 本体ソフトの事前起動が破棄されず、検査のたびに窓なしの WAVE LOGGER(NRWL.exe)が 1 つ残った(2026-11-13、全体見直し・区切り 3)。
+        type.GetField("_reviewStage",Private)!.SetValue(form,false);
+        form.Close();
+        var closing=System.Diagnostics.Stopwatch.StartNew();
+        while(!form.IsDisposed && closing.Elapsed<TimeSpan.FromSeconds(10)){ Application.DoEvents(); Thread.Sleep(5); }
+        if(!form.IsDisposed)throw new Exception("Main form did not close");
     }
 }

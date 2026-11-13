@@ -22,13 +22,40 @@ internal sealed partial class MainForm : Form
     {
         if (_closeRequested || IsDisposed || !IsHandleCreated) return;
         if (InvokeRequired) { BeginInvoke((Action)ArduinoDisconnected); return; }
-        _leakCancel?.Cancel();
-        try { StopLeakOutput(); } catch { }
-        ResetTemplate();
-        _nfCommunicationAlertShown = true;
-        AppendLog("Arduino の通信が途切れました。「確認」を押してください。");
-        ErrorNotification.Show(this, "Arduino の通信が途切れました。接続を確認してください。",
-            "通信エラー", MessageBoxButtons.OK, MessageBoxIcon.Error);
+        // 切断の通知は、受信の失敗・送信の失敗・シリアルのエラー通知の 3 か所から上がる。処理中・表示中は重ねて入らない
+        // (2026-11-13、全体見直し・区切り 3。それまでは上がった数だけ同じ処理とポップアップが走った。下の ResetTemplate が画面を更新して
+        // M5Stack へ表示を送り、その送信がまた失敗すると、ここへ入れ子で戻ってきた)。
+        if (_arduinoDisconnectHandling) return;
+        _arduinoDisconnectHandling = true;
+        try
+        {
+            // 切れたと分かった時点でポートを閉じる。開いたままにすると、通信できないのに「接続済み」と表示し、表示を送るたびに同じ失敗を繰り返す。
+            // 閉じた後は「M5Stack が未接続」になり、「確認」でつなぎ直す(下の案内と同じ)。
+            // 「確認」の途中は閉じない(接続確認がポートを開け閉めしている最中で、つないだばかりのポートを閉じてしまうため。失敗したら接続確認が閉じる)。
+            if (!_checkingConnections) CloseArduinoPort();
+            _leakCancel?.Cancel();
+            try { StopLeakOutput(); } catch { }
+            ResetTemplate();
+            _nfCommunicationAlertShown = true;
+            AppendLog("Arduino の通信が途切れました。「確認」を押してください。");
+            // 「確認」の途中で切れた(生存確認の失敗を含む)ときは、接続確認の結果にまとめて出すので、ここでは重ねて出さない。
+            if (_checkingConnections) return;
+            ErrorNotification.Show(this, "Arduino の通信が途切れました。接続を確認してください。",
+                "通信エラー", MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
+        finally { _arduinoDisconnectHandling = false; }
+    }
+
+    // M5Stack の切断の処理中か(重ねて入らない。処理中は M5Stack へ表示も送らない)。
+    private bool _arduinoDisconnectHandling;
+
+    // 切断と分かったポートを閉じる。接続確認の外ではほかにポートを使う処理が無いので、その場で閉じ終わる。閉じるのに失敗しても切断の処理は続ける。
+    private void CloseArduinoPort()
+    {
+        if (!_arduino.IsConnected) return;
+        _arduino.DisconnectAsync().ContinueWith(
+            task => ArduinoDiagnosticLog.Write("CLOSE_ERROR", "切断後のポートを閉じられません / " + task.Exception?.GetBaseException().Message),
+            TaskContinuationOptions.OnlyOnFaulted);
     }
 
     private void ArduinoNfStatusChanged()
@@ -93,6 +120,28 @@ internal sealed partial class MainForm : Form
             // 準備中のCOM呼び出しも終了処理と重ねない。
             _operationInProgress = true;
             UpdateControls();
+            await BeginMeasurementAsync(receivedAt, requestVersion, enteredAt);
+        }
+        catch (Exception ex)
+        {
+            AppendLog("測定開始エラー：" + ex.Message);
+            if (_closeRequested) RecordShutdownError("測定開始", ex);
+            else ErrorNotification.Show(this, ex.Message, "測定開始エラー",
+                MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
+        finally { _operationInProgress = false; ContinueRequestedClose(); }
+    }
+
+    // 測定開始の本体(押したときの確かめ → 発振器の準備 → LOGGER 開始 → トリガー)。失敗したら後始末をしてから例外を返す(表示は ExecuteMeasurement)。
+    // 2026-11-13 に ExecuteMeasurement から分けた(機器なしの検査から、エラーのポップアップを出さずに呼べるように)。
+    // 後始末は、どこまで進んだかで分ける(全体見直し・区切り 3)。それまでは、始める前の確かめで止まったとき(S/N が完了済み・保存先の範囲外・
+    // 完了記録を読めない・参照波形が型式と合わない)も、残っていた測定結果(一時保存済み・転送済み)を破棄し、LOGGER に Stop を送っていた。
+    private async Task BeginMeasurementAsync(long? receivedAt, long? requestVersion, long enteredAt)
+    {
+        // 発振器に触ったか(触った後の失敗は出力 OFF を試す)、工程を測定中にしたか(した後の失敗は LOGGER を止めて工程を破棄する)。
+        bool generatorTouched = false, started = false;
+        try
+        {
             // LOGGER画面でのファイル変更も押下時に確認する。
             RefreshTemplateState();
             long templateCheckedAt = Stopwatch.GetTimestamp();
@@ -112,6 +161,7 @@ internal sealed partial class MainForm : Form
             ConfigureProduct();
             if (_flow.Mode != TestMode.Motion && !ReferenceLoadedForFlowModel)
                 throw new InvalidOperationException("選択した型式の参照波形を読み込んでください。");
+            generatorTouched = true;
             _generator!.PrepareBurst(CurrentBurstSettings);
             long preparedAt = Stopwatch.GetTimestamp();
             if (_closeRequested || !CanAcceptMeasurementRequest(receivedAt, requestVersion)) return;
@@ -123,6 +173,8 @@ internal sealed partial class MainForm : Form
 
             // LOGGER開始成功後すぐにトリガーを送り、画面ログはその後に書く。
             _flow.BeginMeasurement(DateTime.Now);
+            started = true;
+            _captureDiscardedNotice = null;
             _saveNotice?.Close(); _saveNotice=null;
             // 再測定ではExcelを操作せず保持し、確認・更新はExcel転送時だけ行う。
             _capturePath = null;
@@ -146,20 +198,19 @@ internal sealed partial class MainForm : Form
                 $"TRG送信={ElapsedMilliseconds(loggerStartedAt, triggerSentAt):F1} / " +
                 $"受信→送信完了={ElapsedMilliseconds(receivedAt ?? enteredAt, triggerSentAt):F1}");
         }
-        catch (Exception ex)
+        catch
         {
-            try { StopLeakOutput(); } catch { }
-            // 初回Start後の準備待ちで失敗した場合も、トリガ待ちを残さない。
-            if (_logger.IsInitialized) { try { _logger.Stop(); } catch { } }
-            _logger.ResetMeasurementStart();
-            _measurementState.MeasurementStarted = false;
-            _flow.Invalidate();
-            AppendLog("測定開始エラー：" + ex.Message);
-            if (_closeRequested) RecordShutdownError("測定開始", ex);
-            else ErrorNotification.Show(this, ex.Message, "測定開始エラー",
-                MessageBoxButtons.OK, MessageBoxIcon.Error);
+            if (generatorTouched) { try { StopLeakOutput(); } catch { } }
+            if (started)
+            {
+                // 初回Start後の準備待ちで失敗した場合も、トリガ待ちを残さない。
+                if (_logger.IsInitialized) { try { _logger.Stop(); } catch { } }
+                _logger.ResetMeasurementStart();
+                _measurementState.MeasurementStarted = false;
+                _flow.Invalidate();
+            }
+            throw;
         }
-        finally { _operationInProgress = false; ContinueRequestedClose(); }
     }
 
     private bool CanAcceptMeasurementRequest(long? receivedAt, long? requestVersion)

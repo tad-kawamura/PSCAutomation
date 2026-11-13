@@ -86,6 +86,14 @@ internal sealed class As110ArduinoProtocol : IDisposable
         catch { ResetNfStatus(); throw; }
     }
 
+    // 切断と分かったポートを閉じる(MainForm の切断の処理から呼ぶ)。閉じた後は IsConnected が false になり、「確認」でつなぎ直す。
+    // 閉じても Disconnected は上がらない(受信スレッドは止める要求を受けて終わる)。
+    public async Task DisconnectAsync()
+    {
+        await _connection.DisconnectAsync().ConfigureAwait(false);
+        ResetNfStatus();
+    }
+
     private static bool IsHelloReply(string line) => line == HelloResponse;
 
     // 受信の有無とNF定期通知の意味はAS110側で判断する。

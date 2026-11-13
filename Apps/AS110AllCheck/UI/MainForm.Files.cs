@@ -18,6 +18,8 @@ internal sealed partial class MainForm : Form
     private bool _templateStateErrorLogged;
     private bool _templateLoaded;
     private string? _selectedReferencePath;
+    // 一時保存できなかった測定を破棄したことの知らせ(「次にすること」の後ろに出す)。次の測定を始めたら消す。
+    private string? _captureDiscardedNotice;
 
     private void TemplateDragEnter(object? sender, DragEventArgs e)
     {
@@ -251,6 +253,15 @@ internal sealed partial class MainForm : Form
             _flow.Invalidate();
             _measurementState.MeasurementStarted = false;
             AppendLog("LOGGERの接続・雛形が変わったため、測定を中断しました。再測定してください。");
+        }
+        // 一時保存に失敗した測定は、LOGGER が持っているデータだけが頼り。接続のやり直し・校正の入れ直しで LOGGER のファイルは閉じられ、
+        // 雛形が読み込まれるので、そのデータはもう取り出せない。残しておくと「一時保存を再試行」が、読み直した雛形に入っている波形
+        // (雛形 xdt は測定ファイルの写しで 6500 点入っている)を今回の測定結果として取り込んだ(2026-11-13、全体見直し・区切り 3)。
+        else if (_flow.CaptureFailed)
+        {
+            _flow.Invalidate();
+            _captureDiscardedNotice = "一時保存できなかった測定は破棄しました。測り直してください";
+            AppendLog("LOGGERの接続・雛形が変わったため、一時保存できなかった測定を破棄しました。測り直してください。");
         }
         _measurementState.MeasurementStarted = false;
         _measurementState.State = null;

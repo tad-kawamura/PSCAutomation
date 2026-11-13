@@ -400,7 +400,8 @@ internal sealed partial class MainForm : Form
         if(blocked.Length>0)
         {
             _nextStepLabel.ForeColor=Color.Red;
-            _nextStepLabel.Text=$"次にすること：{blocked}（「{_startButton.Text}」は押せません）";
+            // 一時保存できなかった測定を破棄したとき(ResetTemplate)は、接続・校正をやり直す間も、測り直しが要ることを出し続ける。
+            _nextStepLabel.Text=$"次にすること：{blocked}（「{_startButton.Text}」は押せません）"+(_captureDiscardedNotice is null?"":$"　※{_captureDiscardedNotice}");
             return;
         }
         if(!_flow.HasTransfer || _flow.HasSaved)_saveConflict=null;
@@ -418,7 +419,7 @@ internal sealed partial class MainForm : Form
         else if(_flow.HasTransfer && _flow.Mode==TestMode.Production) next=$"Excel転送済み（{_excelJudgmentStatus}）。保存できません：{saveBlockReason}。測り直すなら「{_startButton.Text}」";
         else if(_flow.HasTransfer) next="Excel転送済みです。結果を確認し、測り直すなら「"+_startButton.Text+"」を押してください";
         else next=$"「{_startButton.Text}」を押してください（M5Stack の A ボタンでも始められます）";
-        _nextStepLabel.Text="次にすること："+next;
+        _nextStepLabel.Text="次にすること："+next+(_captureDiscardedNotice is null?"":$"　※{_captureDiscardedNotice}");
     }
     // データ調整(測定開始)ボタンが押せない理由。空ならボタンは押せる。_startButton.Enabled の条件と同じ順で、最初に引っかかったものを返す。
     private string GetStartBlockReason()
@@ -498,22 +499,33 @@ internal sealed partial class MainForm : Form
         if (_flow.Mode == TestMode.Motion) { a="測定開始"; b=c="-"; bb=cc=false; }
         // 出荷データは保存後に漏れ試験をせず、C で完了する。
         if (_reviewStage && _flow.ShippingData) { a=b="-"; aa=bb=false; c="完了"; }
+        // PC で画面(保存先選択・転送設定・完了番号の保護と解除・通知)を開いている間は、M5Stack のボタンも押せない表示にする(BoardButtonRequested でも断る)。
+        if (ModalDialogOpen) aa=bb=cc=false;
         string displaySerial = _flow.Mode == TestMode.Production ? _flow.Serial : "-";
         return $"{(int)_flow.Mode}:{(aa?1:0)}{(bb?1:0)}{(cc?1:0)}:{displaySerial}:{a}:{b}:{c}:{_flowLabel.Text.Replace(':',' ')}";
     }
     private void SendBoardDisplay()
     {
-        if(!_arduino.IsConnected)return;
+        // 切断の処理中は送らない(送信の失敗がまた切断の通知になるため。MainForm.Measurement.cs の ArduinoDisconnected)。
+        if(!_arduino.IsConnected || _arduinoDisconnectHandling)return;
         string signature=BuildBoardDisplaySignature();
         if(signature!=_displaySignature){_displaySignature=signature;_displayEpoch++;}
         try { _arduino.SendDisplay($"UI:{_displayEpoch}:{_boardToken}:{signature}"); }
         catch(Exception ex){AppendLog("M5Stack表示送信失敗："+ex.Message);}
     }
+    // PC でモーダルの画面(ダイアログ・メッセージボックス)を開いていて、メイン画面が操作を受け付けない間 true。
+    // 表示中のメイン画面が Windows の上で無効になっているかで見る(Enabled プロパティはモーダルの間も true のまま)。表示前(検査の非表示の画面)は false。
+    private bool ModalDialogOpen => IsHandleCreated && Visible && !CanFocus;
     private void BoardButtonRequested(int button,long epoch,string token)
     {
         long received=Stopwatch.GetTimestamp();
         if(IsDisposed || !IsHandleCreated)return;
         BeginInvoke((Action)(async ()=> {
+            if(_closeRequested)return;
+            // PC でモーダルの画面を開いている間は受け付けない。画面を開いていても PC のボタンの「押せるか」(Enabled)は変わらないので、
+            // それだけを見ていると、画面の裏で測定・転送・保存が進んだ(例: 「転送設定」を開いたまま M5Stack で保存 → 「設定保存」で保存済みが取り消される。
+            // 2026-11-13、全体見直し・区切り 3)。
+            if(ModalDialogOpen){AppendLog($"M5Stack操作を受け付けません：{(char)('A'+button-1)} / PC で画面（設定・確認・通知）を開いています。閉じてからもう一度押してください。");return;}
             if(_closeRequested || _repeatConfirmationShown || _operationInProgress || _leakRunning || !_arduino.MeasurementInputReady || token!=_boardToken || epoch!=_displayEpoch || Stopwatch.GetElapsedTime(received).TotalSeconds>=1)return;
             if (_flow.Mode == TestMode.Motion && button != 1) return;
             AppendLog($"M5Stack操作受付：{(char)('A'+button-1)} / モード={_flow.Mode} / revision={_flow.Revision} / 保存後工程={_reviewStage}");
