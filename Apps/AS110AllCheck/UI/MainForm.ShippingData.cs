@@ -49,6 +49,7 @@ internal sealed partial class MainForm : Form
     private void RefreshJudgedPass(bool throwOnError = false)
     {
         _judgedPassed = true;
+        _judgedPassReadError = null;
         if (!_flow.ShippingData || _flow.SerialMissing || _rootBox.Text.Length == 0) return;
         try
         {
@@ -56,12 +57,39 @@ internal sealed partial class MainForm : Form
             using var held = judged.Lock();
             _judgedPassed = judged.IsComplete(_flow.Serial);
         }
-        catch (Exception ex) when (!throwOnError)
+        catch (Exception ex)
         {
             _judgedPassed = false;
+            _judgedPassReadError = ex.Message;
             AppendLog("データ取りの完了記録の確認に失敗：" + ex.Message);
+            if (throwOnError) throw new IOException(JudgedReadFailedText(afterMeasurement: false), ex);
         }
     }
+
+    // 出荷データで、データ取りの完了記録を読めなかったときの理由(読めた・確かめていないときは null)。_judgedPassed が false のときだけ意味がある。
+    private string? _judgedPassReadError;
+    private bool JudgedPassUnreadable => !_judgedPassed && _judgedPassReadError is not null;
+
+    // 合格を確かめられなかったときの案内(2026-11-13、人の指示)。オフラインの PC なので、ほかの PC と取り合うことは無い。
+    // すぐ再起動すると時間がかかるので、先にその場で確かめられることを出し、それでもだめならアプリ → PC の順に再起動する。
+    // afterMeasurement: 測ったあと(「保存」のとき)は「保存」を押し直す。測る前は「保存先選択」で選び直す(選び直すと読み直す)。
+    private string JudgedReadFailedText(bool afterMeasurement) =>
+        $"{_flow.JudgedModel?.SupplyPressure} kPa のデータ取りの完了記録を読めず、S/N {_flow.Serial} が合格しているか確かめられません。\n" +
+        $"（{_judgedPassReadError}）\n\n" +
+        "次の順に確かめてください。\n" +
+        $"1. 保存先「{_rootBox.Text}」をエクスプローラーで開けるか（USB メモリー・外付けディスクなら差し直す）\n" +
+        "2. 保存先の「完了記録.txt」を Excel などで開いていたら閉じる\n" +
+        "3. " + (afterMeasurement ? "もう一度「保存」を押す" : "「保存先選択」で同じ保存先を選び直す") + "\n" +
+        "4. それでも読めなければアプリを再起動する。だめなら PC を再起動する";
+
+    // 「次にすること」(1 行)に出す短い案内。
+    private string JudgedReadFailedNextStep =>
+        $"{_flow.JudgedModel?.SupplyPressure} kPa の完了記録を読めず、合格を確かめられません。保存先をエクスプローラーで開けるか（USB なら差し直す）・" +
+        "「完了記録.txt」を開いていないかを確かめて、「保存先選択」で同じ保存先を選び直してください（だめならアプリ → PC の順に再起動）";
+
+    // 出荷データを測らせない理由(合格していない、または完了記録を読めない)。ダイアログに出す。
+    private string JudgedBlockedText(bool afterMeasurement) =>
+        JudgedPassUnreadable ? JudgedReadFailedText(afterMeasurement) : JudgedNotPassedText + "。";
 
     private void SupplyPressureSelectionCommitted()
     {

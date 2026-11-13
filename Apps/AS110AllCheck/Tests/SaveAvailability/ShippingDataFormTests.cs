@@ -58,6 +58,28 @@ internal static class ShippingDataFormTests
 
             serialBox.Text = "75633"; Configure(); Call("UpdateProductionControls");
             if (!(bool)Field("_judgedPassed") || (bool)Field("_serialCompleted")) throw new Exception("A serial completed at 490 kPa must be allowed for shipping data");
+
+            // データ取りの完了記録を読めないとき(ここではロックのファイルを先に握って読めなくする)は、合格していない扱いで止め、
+            // 「合格していません」ではなく、先に確かめること → 再起動の順の案内を出す(2026-11-13、人の指示)。読めるようになれば選び直しで戻る。
+            using (new FileStream(Path.Combine(root, "完了記録.lock"), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None))
+            {
+                Configure(); Call("UpdateProductionControls");
+                // 機器なしでは「次にすること」は未接続の案内が先に出るので、出荷データの部分の案内を直接見る。
+                string blocked = (string)type.GetProperty("JudgedReadFailedNextStep", Private)!.GetValue(form)!;
+                if ((bool)Field("_judgedPassed") || !(bool)type.GetProperty("JudgedPassUnreadable", Private)!.GetValue(form)! || ((Button)Field("_startButton")).Enabled
+                    || !blocked.Contains("読めず") || !blocked.Contains("再起動") || blocked.Contains("合格していません"))
+                    throw new Exception("An unreadable completion record must block with the check-then-restart guidance: " + blocked);
+                try { type.GetMethod("ConfigureProduct", Private)!.Invoke(form, [true]); throw new Exception("Starting must stop when the completion record cannot be read"); }
+                catch (TargetInvocationException ex) when (ex.InnerException is IOException io)
+                {
+                    string m = io.Message;
+                    if (!(m.Contains("1. ") && m.Contains("エクスプローラー") && m.Contains("完了記録.txt") && m.Contains("保存先選択") && m.IndexOf("アプリを再起動", StringComparison.Ordinal) > m.IndexOf("1. ", StringComparison.Ordinal)))
+                        throw new Exception("The dialog must list the checks before restarting: " + m);
+                }
+            }
+            Configure(); Call("UpdateProductionControls");
+            if (!(bool)Field("_judgedPassed")) throw new Exception("Selecting again after the record becomes readable must allow shipping data");
+            Console.WriteLine("PASS unreadable 490 kPa completion record: blocked with checks first, then restart; readable again is allowed");
             flowType.GetMethod("BeginMeasurement")!.Invoke(flow, [DateTime.Now]); flowType.GetMethod("CaptureSucceeded")!.Invoke(flow, null); flowType.GetMethod("TransferSucceeded")!.Invoke(flow, null);
             SetField("_lastExcelPass", true); SetField("_excelJudgmentStatus", "判定なし"); Call("UpdateProductionControls");
             if (!((Button)Field("_saveButton")).Enabled || box.Enabled) throw new Exception("Shipping data transfer must allow save and lock the supply pressure");

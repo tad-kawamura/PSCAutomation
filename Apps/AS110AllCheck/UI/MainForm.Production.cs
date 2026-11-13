@@ -266,7 +266,7 @@ internal sealed partial class MainForm : Form
             // 測定開始のとき(requireSaveRoot)だけ止める。S/N 入力・保存先選択・モード選択のときはポップアップにせず、「次にすること」とボタンで知らせる(2026-11-06、人の指摘)。
             if(_serialCompleted && requireSaveRoot)throw new InvalidOperationException("このS/Nは完了済みです。保護解除が必要です。");
             // 出荷データは、データ取りで合格した S/N だけ測る(人の指示: アプリが確かめる)。
-            if(!_judgedPassed && requireSaveRoot)throw new InvalidOperationException(JudgedNotPassedText+"。");
+            if(!_judgedPassed && requireSaveRoot)throw new InvalidOperationException(JudgedBlockedText(afterMeasurement:false));
         }
     }
     // 測定開始S/N が完了記録で保護中か(押してからエラーにせず、「次にすること」とデータ調整ボタンに反映する)。
@@ -435,6 +435,7 @@ internal sealed partial class MainForm : Form
             // 測定結果が残っているのに完了済み(測定を始めたあとで別の PC などから保護された)ときは、解除してから保存する一本道だけを出す。
             if(_serialCompleted && _flow.HasCapture)return $"S/N {_flow.Serial} は完了済み（保護中）になっています。今回の測定で上書きするなら「完了番号の保護と解除」で S/N {_flow.Serial} のチェックを外してから「保存」を押してください";
             if(_serialCompleted)return $"測定開始S/N {_flow.Serial} は完了済み（保護中）です。別の番号にするか、「完了番号の保護と解除」で S/N {_flow.Serial} のチェックを外してください";
+            if(JudgedPassUnreadable)return JudgedReadFailedNextStep;
             if(!_judgedPassed)return JudgedNotPassedText+$"。番号を確かめるか、供給圧力を {_selectedModel.SupplyPressure} kPa に戻してください";
         }
         if(_flow.CaptureFailed)return "一時保存に失敗しています。「一時保存を再試行」を押してください";
@@ -616,7 +617,7 @@ internal sealed partial class MainForm : Form
             if(_flow.ShippingData)
             {
                 RefreshJudgedPass();
-                if(!_judgedPassed) { _flow.SaveFailed=false;throw new InvalidOperationException(JudgedNotPassedText+"。"); }
+                if(!_judgedPassed) { _flow.SaveFailed=false;throw new InvalidOperationException(JudgedBlockedText(afterMeasurement:true)); }
             }
             // 保存先フォルダー名「SN開始-最後」と合わないときは書き込まずに止める(何も書いていないので再保存の扱いにはしない)。
             string rangeProblem=SaveFolder.CheckRange(_rootBox.Text,_flow.Serial);
