@@ -14,6 +14,7 @@
 | NF WF1973 | ファンクションジェネレータ。三角波バースト / 連続波 / DC オフセット | USB(VISA、NI-VISA 必須) | `Wrappers/Instruments`(移植済み) | AllCheck(バースト)、SwitchController(連続)、NoiseTest(DC) |
 | SIGLENT SDG1032X | ファンクションジェネレータ(WF1973 の代替) | USB(VISA) | `Wrappers/Instruments`(移植済み) | AllCheck、BoltCheck |
 | ADCMT 7351E | DMM。直流電流の実測 | **USB のみ**(USBTMC、VISA)。GPIB / RS-232C は不可 | `Wrappers/Instruments`(移植済み) | NoiseTest |
+| GC16 精密デジタル圧力計(社内は 2005 年製・0〜2 MPa) | 圧力の読み取り・ゼロ調整(校正) | **RS-232C のみ**(社内の本体。USB-RS232C 変換ケーブルで COM ポート) | `Wrappers/Instruments`(2026-11-13 新規) | ―(AllCheck の校正の自動読み取りで初めて使う) |
 | Arduino(UNO R4 Minima、M5Stack 等) | 試験治具のマイコン。スイッチ・LED・NF 弁のインターロック | USB シリアル(COM ポート、行単位テキスト) | `Wrappers/Arduino`(移植済み) | AllCheck、BoltCheck、SwitchController |
 | Windows の Wi-Fi | NR-X を Wi-Fi で使うときの接続先切替 | `netsh` | `Wrappers/Common`(移植済み) | AllCheck 他 |
 | ロガーの出力ファイル(xdt / ydt / CSV) | WAVE LOGGER の波形ファイルと CSV | ファイル | `Wrappers/LoggerFiles`(移植済み) | XdtConversion.Core 他 |
@@ -85,6 +86,21 @@
 - 設定変更直後は古い読み値が残るので捨てる(`DiscardStaleReadings`。Bus トリガなら不要)
 - 実機での確認内容は `Wrappers/Instruments/docs/7351E実機確認.md`(移植前の AS110NoiseTest での確認)。移植後は 2026-11-04 に AS110NoiseTest の範囲(DCI・200mA・BUS トリガでの読み取り)を実機で確認(`Apps/AS110NoiseTest/README.md`)。200mA 以外のレンジ・Immediate トリガは移植後未確認
 
+### GC16 精密デジタル圧力計(`Gc16Session`、`Wrappers/Instruments`。2026-11-13 追加)
+
+説明書 TY-GC15-004 Ver.2(2021 年版)の「10. 外部インターフェース」で作った。最初に使うのは AS110AllCheck の校正の自動読み取り(`Apps/AS110AllCheck/README.md`「校正の自動読み取り」)。
+
+- 探す(`Gc16Session.Find(new Gc16SearchOptions { PreferredPort, ExcludedPorts })`): PC の COM ポートを、先に試す番号(前回見つけた番号など)→ 残りを番号順で開き、状態を変えない問い合わせ `RM,Q` に `RM,0` / `RM,1` が返ったポートを GC16 とする。除くポート(マイコンなど)には何も送らない。1 ポートの問い合わせは既定 1 秒で諦める。見つからなければ試したポートと理由を付けて `InvalidOperationException`。変換ケーブルの種類・識別番号には頼らない。見分ける問い合わせと返事の判定は `ProbeCommand` / `IsProbeReply` で差し替えられる(実機で `RM,Q` が通らなかったとき用)
+- 操作: `EnterRemote`(`RM,1`。通信で操作する状態。電源キー以外の前面キーが効かなくなる)、`ExitRemote`(`RM,0`)、`QueryRemoteState`(`RM,Q`)、`ReadPressure`(`MP`。表示の単位のまま)、`ReadUnit`(`PU,Q`)、`ReadPressureKilopascals`(単位を 1 回問い合わせて Pa・kPa・MPa を kPa に換算)、`ZeroAdjust`(`ZA`)、任意のコマンド `Query`
+- `ER0`〜`ER3` の返事は意味を付けて `Gc16Exception`(`IOException` の仲間)。返事が来なければ `TimeoutException`(既定 3 秒)
+- `Dispose` は、この接続で `RM,1` にしていれば `RM,0` を試してから閉じる(前面キーが効かないまま残さない)
+
+**制約**
+- 9600 bps・8 ビット・パリティなし・ストップ 1・RTS/CTS(既定。速度は `BaudRate` で変えられる)。本体の設定 S-1 を `rS` にしておく(出荷時は `non`)。コマンドの終わりは CR だけ。返事を受け取ってから次を送る
+- 単位がスケーリング(U1・U2)と絶対圧(kPa abs・MPa abs)のときは kPa に換算しない(例外)
+- **実機では未確認**(2026-11-13 時点で GC16・変換ケーブルが手元に無い)。2005 年製の本体が 2021 年版の説明書のコマンド・返事の形(`RM,Q`・`MP,値`・`PU,KP`・返事の終わりが CR か)で動くか、`ZA` の範囲外で `ER3` を返すか、CTS が来ないとき送信の期限で止まるかは確かめていない。テスト(`Instruments.Tests`)は通信を模擬に差し替えた範囲だけ
+- 使っているアプリ: AS110AllCheck(校正の自動読み取り)
+
 ### Arduino(`Wrappers/Arduino`、`PSCAutomation.Wrappers.Arduino`)
 
 `ArduinoConnection`(元 AllCheck)と `ArduinoDiagnosticLog`(元 SwitchController の `Configure` 方式 + AllCheck の `SHUTDOWN_ERROR`)。
@@ -93,6 +109,7 @@
   - 接続(`ConnectAsync(request, isReply)`): COM ポートを総当たりで開き、1.7 秒待ってから `request` を送り、`isReply` が真を返す行が 2 秒以内に来たポートを使う。送る文字列と応答の判定はアプリが渡す
   - 確認(`VerifyAsync`): 接続済みなら同じやり取りで生存確認、未接続なら接続する。失敗したらポートを閉じる
   - 受信は `LineReceived` イベント(専用スレッドから呼ばれる)、切断は `Disconnected` イベント。再接続の方針はアプリ側
+  - つないでいる COM ポートの名前(`PortName`、つないでいなければ null。2026-11-13 追加): ほかの機器(GC16 など)を探すときに、このポートを除くため
 - 異常ログ(`ArduinoDiagnosticLog`): 正常時は直近 1 分をメモリに持つだけ。異常種別(`COM_DISAPPEARED` `PORT_CLOSED` `RX_STALE` `WRITE_ERROR` `READER_ERROR` `SHUTDOWN_ERROR` 等)を書くと、直近 1 分の記録ごとファイルに保存し始める。復旧(`CompleteIfActive`)後 30 秒は同じファイルにまとめる
   - アプリ名と固有の異常種別は起動時に `ArduinoDiagnosticLog.Configure("アプリ名", "NF_STALE", ...)` で注入する(通信を始める前に 1 回)
   - 保存先は実行ファイルの隣の `Logs\ArduinoIncident_*.log`。書けないときは `%LOCALAPPDATA%\<アプリ名>\Logs`(`PrimaryDirectory` / `FallbackDirectory`)
@@ -164,7 +181,7 @@ WAVE LOGGER を起動せずに、出力ファイルを直接読み書きする�
 
 | アプリ | 内容 | 使う機器 |
 |---|---|---|
-| AS110AllCheck | AS110 の全数検査(動き検査・校正・リーク・Excel 転記) | NR-X / NR-500、WF1973 or SDG1032X、Arduino(M5Stack)、Excel |
+| AS110AllCheck | AS110 の全数検査(動き検査・校正・リーク・Excel 転記) | NR-X / NR-500、WF1973 or SDG1032X、Arduino(M5Stack)、Excel、GC16(校正の自動読み取り。2026-11-13 追加) |
 | AS110BoltCheck | AS110 の動き検査 | NR-X、WF1973 or SDG1032X、Arduino(NF インターロック) |
 | AS100201SwitchController | AS100-201 のスイッチ制御。**移植済み**(`Apps/AS100201SwitchController`、`AS100201SwitchController.slnf`) | NR-500 / NR-X(USB だけ)、WF1973(連続・三角波)、Arduino(スイッチ・READY LED) |
 | AS110NoiseTest | AS110 のノイズ測定(電流を変えながら制御圧力の p-p を判定) | NR-500、WF1973(DC)、ADCMT 7351E、Excel |

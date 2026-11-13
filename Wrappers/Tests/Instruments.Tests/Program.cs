@@ -356,7 +356,99 @@ void Same(IEnumerable<string> actual, string[] expected, string name)
     Console.WriteLine("PASS Adcmt7351ESession: 設定ごとの ERR?・測定値の読み捨て・BUS トリガ・解放の流れが元と同じ");
 }
 
+// ---------- Gc16Session(GC16 精密デジタル圧力計、RS-232C。2026-11-13 追加) ----------
+{
+    // 試す順: 前回の番号 → 残りを番号順。除くポートは入れない
+    var order = Gc16Session.OrderCandidates(new[] { "COM10", "COM3", "com2", "COM7", "COM3" },
+        new Gc16SearchOptions { PreferredPort = "COM7", ExcludedPorts = new[] { "COM3" } });
+    Check(order.SequenceEqual(new[] { "COM7", "com2", "COM10" }), "試す順: " + string.Join(",", order));
+    Check(Gc16Session.OrderCandidates(new[] { "COM4", "COM1" }, new Gc16SearchOptions { PreferredPort = "COM9" }).SequenceEqual(new[] { "COM1", "COM4" }),
+        "前回の番号が無ければ番号順");
+
+    // 探す: 開けないポート・返事の無いポート・違う返事のポートは飛ばし、RM,Q に RM,0 を返したポートを GC16 とする。状態は変えない
+    var opened = new List<FakeLineChannel>();
+    var gc16 = new FakeLineChannel("COM5", c => c switch
+    {
+        "RM,Q" => "RM,0", "RM,1" => "OK", "RM,0" => "OK", "PU,Q" => "PU,MP", "MP" => "MP, 0.5401", "ZA" => "OK", "XX" => "ER0", _ => null
+    });
+    var ports = new Dictionary<string, Func<FakeLineChannel>>
+    {
+        ["COM1"] = () => throw new UnauthorizedAccessException("使用中"),
+        ["COM2"] = () => new FakeLineChannel("COM2", _ => null),
+        ["COM4"] = () => new FakeLineChannel("COM4", _ => "AS110_READY:1"),
+        ["COM5"] = () => gc16,
+        ["COM6"] = () => throw new Exception("COM6 は試さないはず"),
+    };
+    var session = Gc16Session.Find(new Gc16SearchOptions { ExcludedPorts = new[] { "COM3" }, ProbeTimeoutMilliseconds = 10 },
+        new[] { "COM6", "COM5", "COM4", "COM3", "COM2", "COM1" },
+        (name, timeout) => { var c = ports[name](); opened.Add(c); return c; });
+    Check(session.PortName == "COM5" && !session.IsRemote, "見つけたポート");
+    Check(opened.Count == 3 && opened.Take(2).All(c => c.Disposals == 1) && gc16.Disposals == 0, "違うポートは閉じ、GC16 のポートは開いたまま");
+    Check(gc16.Writes.SequenceEqual(new[] { "RM,Q\r" }) && opened[0].Writes.SequenceEqual(new[] { "RM,Q\r" }), "問い合わせは RM,Q + CR だけ");
+
+    // 操作: RM,1 → 単位(MPa)→ kPa に換算 → ZA → エラーの返事 → Dispose で RM,0
+    session.EnterRemote();
+    Check(session.IsRemote, "RM,1 でコマンド入力状態");
+    Check(Math.Abs(session.ReadPressureKilopascals() - 540.1) < 1e-9, "MPa の表示を kPa に換算");
+    Check(Math.Abs(session.ReadPressureKilopascals() - 540.1) < 1e-9 && gc16.Writes.Count(w => w == "PU,Q\r") == 1, "単位は 1 回だけ問い合わせる");
+    session.ZeroAdjust();
+    var error = Fails<Gc16Exception>(() => session.Query("XX"), "ER0 の返事");
+    Check(error.Reply == "ER0" && error.Message.Contains("コマンドの相違"), "エラーの意味を付ける");
+    Fails<ArgumentException>(() => session.Query("MP\r"), "CR を含むコマンド");
+    Check(gc16.Discards == gc16.Writes.Count, "送る前に古い受信を捨てる");
+    gc16.Writes.Clear();
+    session.Dispose();
+    session.Dispose();
+    Check(gc16.Writes.SequenceEqual(new[] { "RM,0\r" }) && gc16.Disposals == 1 && !session.IsRemote, "Dispose で RM,0 を送ってから 1 回だけ閉じる");
+    Fails<ObjectDisposedException>(() => session.ReadPressure(), "Dispose 後の読み取り");
+
+    // 返事の解釈
+    Check(Gc16Session.ParsePressureReply("MP,-0.02") == -0.02 && Gc16Session.ParsePressureReply(" MP,+540.0 ") == 540.0, "MP の返事");
+    Fails<Gc16Exception>(() => Gc16Session.ParsePressureReply("MP,OVER"), "数でない MP");
+    Fails<Gc16Exception>(() => Gc16Session.ParsePressureReply("ME,1.0"), "MP 以外の返事");
+    Check(Gc16Session.ParseUnitReply("PU,KP") == Gc16PressureUnit.Kilopascal && Gc16Session.ParseUnitReply("PU,PA") == Gc16PressureUnit.Pascal &&
+        Gc16Session.ParseUnitReply("PU,AK") == Gc16PressureUnit.KilopascalAbsolute, "PU,Q の返事");
+    var absolute = new Gc16Session(new FakeLineChannel("COM8", c => c == "PU,Q" ? "PU,AK" : c == "MP" ? "MP,101.3" : null), 10);
+    Fails<Gc16Exception>(() => absolute.ReadPressureKilopascals(), "絶対圧の単位は換算しない");
+    var silent = new Gc16Session(new FakeLineChannel("COM9", _ => null), 10);
+    Fails<TimeoutException>(() => silent.ReadPressure(), "返事が無い");
+
+    // 見つからないとき: 試したポートと理由を付ける。M5Stack など除くポートしか無いときも
+    var none = Fails<InvalidOperationException>(() => Gc16Session.Find(new Gc16SearchOptions { ProbeTimeoutMilliseconds = 10 },
+        new[] { "COM2", "COM4" }, (name, _) => name == "COM2" ? new FakeLineChannel("COM2", _ => null) : new FakeLineChannel("COM4", _ => "ER2")), "見つからない");
+    Check(none.Message.Contains("COM2:") && none.Message.Contains("COM4:"), "見つからない理由にポートを付ける: " + none.Message);
+    var onlyExcluded = Fails<InvalidOperationException>(() => Gc16Session.Find(new Gc16SearchOptions { ExcludedPorts = new[] { "COM4" } },
+        new[] { "COM4" }, (_, _) => throw new Exception("除いたポートを開いた")), "除くポートしか無い");
+    Check(onlyExcluded.Message.Contains("試せる COM ポートがありません"), "試せるポートが無い");
+    // 見分け方は差し替えられる(実機で RM,Q が通らなかったときのため)
+    var custom = Gc16Session.Find(new Gc16SearchOptions { ProbeCommand = "MO,Q", IsProbeReply = r => r.StartsWith("MO,"), ProbeTimeoutMilliseconds = 10 },
+        new[] { "COM1" }, (_, _) => new FakeLineChannel("COM1", c => c == "MO,Q" ? "MO,1" : null));
+    Check(custom.PortName == "COM1", "見分ける問い合わせの差し替え");
+    custom.Dispose();
+    Console.WriteLine("PASS Gc16Session: 探す順・除くポート・見分け方・RM,1/RM,0・単位の換算・ゼロ調整・エラーの返事");
+}
+
 Console.WriteLine("Instruments: すべての検査に合格(機器には何も送っていない)");
+
+// GC16 の RS-232C の代わり。送った文字を記録し、直前のコマンド(CR を除く)から返事を決める(null は返事なし = タイムアウト)。
+sealed class FakeLineChannel(string portName, Func<string, string?> responder) : ISerialLineChannel
+{
+    private string? _pending;
+    public string PortName { get; } = portName;
+    public List<string> Writes { get; } = new();
+    public int Discards { get; private set; }
+    public int Disposals { get; private set; }
+    public void DiscardInput() { Discards++; _pending = null; }
+    public void Write(string text) { Writes.Add(text); _pending = responder(text.TrimEnd('\r')); }
+    public string ReadLine(int timeoutMilliseconds)
+    {
+        if (Disposals > 0) throw new ObjectDisposedException(PortName);
+        string? reply = _pending;
+        _pending = null;
+        return reply ?? throw new TimeoutException("GC16 から返事がありません。");
+    }
+    public void Dispose() => Disposals++;
+}
 
 // 機器の代わり。送ったコマンドを記録し、読み出しには Reads(先に入れたもの)か Responder(直前のコマンドから)で答える。
 sealed class FakeInstrument(string identity) : IInstrumentSession

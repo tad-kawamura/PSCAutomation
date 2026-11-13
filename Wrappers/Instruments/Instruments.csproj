@@ -10,6 +10,10 @@
     <!-- 通信部分の探索ループを、模擬の通信で確かめるため -->
     <InternalsVisibleTo Include="Instruments.Tests" />
   </ItemGroup>
+  <ItemGroup>
+    <!-- GC16(RS-232C)の通信。Arduino の箱と同じ版(2026-11-13 追加) -->
+    <PackageReference Include="System.IO.Ports" Version="10.0.12" />
+  </ItemGroup>
   <!-- NI-VISA の COM 相互運用 DLL(移植元 3 アプリの csproj と同じ探し方) -->
   <PropertyGroup>
     <VisaProgramFiles Condition="'$(ProgramW6432)' != ''">$(ProgramW6432)</VisaProgramFiles>

@@ -1,6 +1,6 @@
-# Instruments(VISA 機器)
+# Instruments(VISA 機器・RS-232C の計測器)
 
-発振器(NF WF1973、SIGLENT SDG1032X)と DMM(ADCMT 7351E)を VISA(NI-VISA の COM)で操作する箱。namespace は `PSCAutomation.Wrappers.Instruments`、`net9.0-windows`。
+発振器(NF WF1973、SIGLENT SDG1032X)と DMM(ADCMT 7351E)を VISA(NI-VISA の COM)で操作する箱。2026-11-13 に GC16 精密デジタル圧力計(RS-232C、`Gauges/Gc16Session`)を足した。namespace は `PSCAutomation.Wrappers.Instruments`、`net9.0-windows`。
 できること・制約の一覧は `docs/capabilities.md`、移植の出どころと変更点は `docs/移行記録.md`「手順 4」。
 
 ## 構成
@@ -12,6 +12,7 @@ Visa/        通信部分(探索・送受信・切断)
   VisaSearchOptions       探し方(パターン・リソース指定・USB 限定・失敗時の詳細)
 Generators/  発振器
 Meters/      DMM
+Gauges/      GC16 精密デジタル圧力計(RS-232C。COM ポートを問い合わせで見分ける。2026-11-13 追加、実機未確認)
 docs/        7351E の実機確認メモ(元 AS110NoiseTest)、WF1973 の実機確認(移植後)
 ```
 
@@ -28,6 +29,8 @@ WF1973 は使い方ごとに 3 つのクラスがある(判断 4、2026-11-04。
 | DC のオフセット電圧を出し、出力を切らずに電圧だけ変える(電流指令など) | `Wf1973DcSource` | `Wf1973DcSource.Connect()`(USB の VID/PID で探す) | AS110NoiseTest の `Wf1973DcSource` |
 
 7351E は `Adcmt7351ESession.Connect()` → `ApplySettings(new Adcmt7351ESettings())` → `ReadMilliamps()`。
+
+GC16 は `Gc16Session.Find(new Gc16SearchOptions { PreferredPort = 前回の番号, ExcludedPorts = [マイコンの COM] })` → `EnterRemote()` → `ReadPressureKilopascals()` / `ZeroAdjust()` → `Dispose()`(RM,0 に戻して閉じる)。シリアル通信は待ちがあるので、画面のあるアプリでは別のスレッドで呼ぶ。
 
 ## アプリから使う
 

@@ -174,6 +174,12 @@ public sealed class ArduinoConnection : IDisposable
         get { try { return !_disposed && _port?.IsOpen == true; } catch (ObjectDisposedException) { return false; } }
     }
 
+    // いまつないでいる COM ポートの名前(つないでいなければ null)。ほかの機器(GC16 など)を探すときに、このポートを除くため(2026-11-13 追加)。
+    public string? PortName
+    {
+        get { try { var port = _port; return !_disposed && port?.IsOpen == true ? port.PortName : null; } catch (ObjectDisposedException) { return null; } }
+    }
+
     // 再接続方針は呼び出し側に任せる。終了とは別にポートだけ閉じる。
     public async Task DisconnectAsync()
     {
