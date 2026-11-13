@@ -7,6 +7,8 @@
 //     スペーサー(上げる / 下げる)。どれも「戻る」で 1 画面目に戻れる(何も送らない)
 //   - 取消: 確認「直前の○○を取り消しますか」→ はい で UNDO を送る
 //   - 2 画面目の選択と取消の確認はパネルの中で完結させ、確定した 1 行だけを PC に送る
+//   - 2026-11-13 追記: 「PC と切れました」は USB の未接続が 1.5 秒続いたときだけ出す(一瞬の揺れで出ていたため)。
+//     やり取り(版 1)は変えていない
 //
 // PC とのやり取り(115200bps 相当・LF の行単位。USB-C の内蔵 USB シリアル):
 //   PC → パネル  AS100201_PANEL_PING           → パネルは AS100201_PANEL_READY:1 を返す
@@ -30,6 +32,10 @@ static const char* const HELLO_REQUEST = "AS100201_PANEL_PING";
 static const char* const HELLO_REPLY = "AS100201_PANEL_READY:1";   // 版 1。PC 側 As100201PanelProtocol.PanelVersion と揃える
 const unsigned long FRAME_INTERVAL_MS = 250;
 const unsigned long REPLY_TIMEOUT_MS = 2000;   // 送ってから ACK / NAK が来ないと「返事なし」を出す
+// USB の「つながっていない」がこの時間続いたときだけ「PC と切れました」にする。
+// ESP32 の内蔵 USB シリアルの接続判定((bool)Serial)は、正常な接続でも一瞬 false になることがある
+// (esp32 3.3.12 の HWCDC.cpp の注記)。1 回の false で切れたとすると、通信が続いているのに表示だけ切れる。
+const unsigned long DISCONNECT_CONFIRM_MS = 1500;
 
 // 横置きの向き。上下が逆に見えたら true にして書き込み直す。
 const bool FLIP_LANDSCAPE = false;
@@ -63,7 +69,9 @@ char side = 'P';     // ノズル・スペーサーの P / R
 char degree = '2';   // ノズルの程度 1=微調整 2=普通 3=大きく
 
 // ---- 状態 ---------------------------------------------------------------
-bool usbConnected = false;    // PC が USB シリアルを開いている
+bool usbConnected = false;    // PC が USB シリアルを開いている(一瞬の揺れは無視した値)
+unsigned long lastUsbSeenAt = 0;  // 最後に USB がつながっていると見えた時刻(受信があったときも含む)
+bool lostShown = false;       // 「PC と切れました」を出したあと、まだつながり直していない
 bool verified = false;        // USB がつながってから PC の確認(PING)を受けた
 String pendingLine;           // 送って返事を待っている行(空なら待っていない)
 unsigned long pendingAt = 0;
@@ -116,8 +124,9 @@ void setMessage(MessageKind kind, const String& title, const String& detail) {
 
 // ---- 送信 ---------------------------------------------------------------
 // PC がポートを開いていないときに書き込みで止まらないよう、送れる分が空いているときだけ送る。
+// (bool)Serial は見ない(一瞬 false になるため)。つながっていない間に書いた分は ESP32 の送信バッファに
+// 残り、あふれたら古い方から捨てられる(HWCDC の動き)。操作の行を送ってよいかは sendCommand が usbConnected で決める。
 bool writeLine(const char* line) {
-  if (!Serial) return false;
   size_t length = strlen(line) + 2;
   if (Serial.availableForWrite() < (int)length) return false;
   Serial.print(line);
@@ -128,7 +137,7 @@ bool writeLine(const char* line) {
 void sendCommand(const String& line) {
   screen = HOME;
   pressedId = B_NONE;
-  if (!writeLine(line.c_str())) {
+  if (!usbConnected || !writeLine(line.c_str())) {
     setMessage(MSG_ERROR, "送れませんでした：" + describe(line), "USB ケーブルと PC のアプリを確かめて、押し直してください");
     return;
   }
@@ -481,6 +490,7 @@ void setup() {
   setupColors();
 
   usbConnected = (bool)Serial;
+  lastUsbSeenAt = millis();
   writeLine("DIAG_BOOT:1");
   drawScreen();
 }
@@ -489,17 +499,27 @@ void loop() {
   M5.update();
   unsigned long now = millis();
 
-  bool connected = (bool)Serial;
-  if (connected != usbConnected) {
-    usbConnected = connected;
-    if (!connected) {
-      verified = false;
-      if (pendingLine.length()) {
-        setMessage(MSG_WARN, "PC と切れました：" + describe(pendingLine), "記録されたか PC のアプリの画面で確かめてください");
-        pendingLine = "";
-      } else {
-        setMessage(MSG_ERROR, "PC と切れました", "USB ケーブルを確かめてください");
+  // 受信があれば、その時点で USB は生きている。
+  bool seen = (bool)Serial || Serial.available() > 0;
+  if (seen) {
+    lastUsbSeenAt = now;
+    if (!usbConnected) {
+      usbConnected = true;
+      if (lostShown) {
+        lostShown = false;
+        setMessage(MSG_INFO, "USB がつながりました", "PC のアプリで「確認」を押すと、操作できるようになります");
       }
+      dirty = true;
+    }
+  } else if (usbConnected && now - lastUsbSeenAt >= DISCONNECT_CONFIRM_MS) {
+    usbConnected = false;
+    verified = false;
+    lostShown = true;
+    if (pendingLine.length()) {
+      setMessage(MSG_WARN, "PC と切れました：" + describe(pendingLine), "記録されたか PC のアプリの画面で確かめてください");
+      pendingLine = "";
+    } else {
+      setMessage(MSG_ERROR, "PC と切れました", "USB ケーブルを確かめてください");
     }
     dirty = true;
   }
