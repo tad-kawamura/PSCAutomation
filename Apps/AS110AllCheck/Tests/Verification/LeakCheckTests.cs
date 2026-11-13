@@ -141,6 +141,10 @@ internal static class LeakCheckTests
         Check(channel.ApiChannel==1 && channel.Scale(5.4f)==(double)(float)(100*5.4f-1),"pressure channel scales like XdtChannel.ReadScaledValues");
         Check(channel.Scale(3.4e38f) is null && channel.Scale(float.NaN) is null && channel.Scale(float.PositiveInfinity) is null,"invalid raw values are not scaled");
 
+        // 「人の判断で合格」の確認の始めの文(2026-11-13。以前は「漏れ判定は判定できませんです。」になった)。
+        Check(LeakOutcomeText.OverrideQuestion(LeakOutcome.Fail)=="漏れ判定は不合格です。"
+            && LeakOutcomeText.OverrideQuestion(LeakOutcome.Unmeasurable)=="漏れ判定は判定できませんでした。","override question reads naturally for failed and unmeasurable results");
+
         // 雛形の圧力 CH2 の係数と移動平均を読める(作業用 xdt と同じ形式)。
         string template=Path.Combine(AppContext.BaseDirectory,"Fixtures","AS110データ調整・データ取り用.xdt");
         var fromXdt=LeakPressureChannel.FromXdt(template,2);
@@ -237,6 +241,34 @@ internal static class LeakCheckTests
         data.AddRange(Enumerable.Repeat(540f,50));failing.Poll(TimeSpan.Zero);
         data.AddRange(Enumerable.Repeat(538.5f,10));
         Check(failing.Poll(TimeSpan.FromMilliseconds(10)) && failing.Judge.Decided==LeakOutcome.Fail,"averaged drop over the threshold fails");
+
+        // 試験の終わり際に値が来なくなったら判定できない(2026-11-13、全体見直し。以前は 2 秒たつ前に試験が終わると、途中までの値で合格になった)。
+        // 最後の読み出しの時点で、点が増えてから 0.5 秒以上たっていたら判定できない。0.5 秒未満(実機の遅れは最大 0.17 秒)は合格のまま。
+        LeakMonitor Stalled(double lastDataSeconds,double endSeconds)
+        {
+            data.Clear();
+            var monitor=new LeakMonitor(new LeakPressureChannel(2,1,0,7),1.0,Read,530.0);
+            for(double t=0.01;t<=endSeconds+1e-9;t+=0.01)
+            {
+                if(t<=lastDataSeconds+1e-9)data.AddRange(Enumerable.Repeat(540f,5));
+                if(monitor.Poll(TimeSpan.FromSeconds(t)))break;
+            }
+            return monitor;
+        }
+        var gap=Stalled(8.1,10.0);
+        Check(gap.Finish()==LeakOutcome.Unmeasurable && gap.Judge.Problem!.Contains("試験の終わりの 1.9 秒は値を読めませんでした"),
+            "values stopping 1.9 s before the end make the test unmeasurable (it used to pass on the first 8.1 s)");
+        Check(Stalled(9.5,10.0).Finish()==LeakOutcome.Unmeasurable,"values stopping 0.5 s before the end are unmeasurable");
+        var late=Stalled(9.7,10.0);
+        Check(late.Finish()==LeakOutcome.Pass && late.Judge.Points==4850,"a delay under 0.5 s at the end still passes");
+        Check(Stalled(10.0,10.0).Finish()==LeakOutcome.Pass,"values arriving until the end pass as before");
+        var stalledEarly=Stalled(7.9,10.0);
+        Check(stalledEarly.Judge.Decided==LeakOutcome.Unmeasurable && stalledEarly.Judge.Problem!.Contains("2 秒増えません"),"a 2-second stall during the test is still reported as before");
+        // 不合格が決まっていれば、終わり際の値切れより不合格を優先する。
+        data.Clear();
+        var failedThenStalled=new LeakMonitor(channel,1.0,Read);
+        data.AddRange([540f,538f]);failedThenStalled.Poll(TimeSpan.FromSeconds(1));
+        Check(failedThenStalled.Finish()==LeakOutcome.Fail,"a decided failure is kept");
     }
 
     // XdtChannel.ReadProcessedValues と同じ計算(検査用に写したもの)。
@@ -272,6 +304,16 @@ internal static class LeakCheckTests
             && LeakTestInput.ValidateFailDisplay("0.5",out _) is null && LeakTestInput.ValidateFailDisplay("10",out _) is null,"fail display inputs are valid");
         foreach(string text in new[]{"0.4","10.1","2.05","","x"})
             Check(LeakTestInput.ValidateFailDisplay(text,out _) is not null,$"invalid fail display rejected: '{text}'");
+        // 試験秒数は LOGGER の収集の長さ(雛形の点数 × 周期)まで(2026-11-13、全体見直し)。漏れ試験はデータ取りと同じ雛形で収集し、
+        // LOGGER は雛形の点数で自分で止まる(以前は 14 秒が 13 秒ぶんで合格、15 秒以上は必ず「判定できません」になった)。
+        var length=LeakTestInput.AcquisitionLength(Path.Combine(AppContext.BaseDirectory,"Fixtures","AS110データ調整・データ取り用.xdt"));
+        Check(length==TimeSpan.FromSeconds(13),$"the data template collects for 13 s (6500 points x 2 ms): {length}");
+        Check(LeakTestInput.ValidateDuration(10,length) is null && LeakTestInput.ValidateDuration(13,length) is null,"test seconds up to the template length are valid");
+        string? tooLong=LeakTestInput.ValidateDuration(14,length);
+        Check(tooLong is not null && tooLong.Contains("14 秒は長すぎます") && tooLong.Contains("13 秒で収集が終わる") && tooLong.Contains("13 秒までにしてください"),"test seconds over the template length are rejected with the limit: "+tooLong);
+        Check(LeakTestInput.ValidateDuration(60,length) is not null,"60 s is rejected for the 13 s template");
+        Check(LeakTestInput.ValidateDuration(26,TimeSpan.FromSeconds(26)) is null && LeakTestInput.ValidateDuration(27,TimeSpan.FromSeconds(26))!.Contains("26 秒まで"),"AS110-006 data acquisition (13000 points) allows up to 26 s");
+        Check(LeakTestInput.ValidateDuration(60,null) is null,"unknown template length is not checked");
         // 設定の既定値: 下限 AS110-035 530 kPa・AS110-015 550 kPa・AS110-006 550 kPa、不合格の表示 2 秒。古い設定ファイル(項目なし)を読んでも同じ。
         var defaults=TransferSettings.FromJson("{\"LeakTestSeconds\":12}");
         Check(defaults.LeakTestSeconds==12 && defaults.LeakFailDisplaySeconds==2.0 && defaults.LeakMaximumLowerLimitKpa.Count==3
@@ -337,6 +379,39 @@ internal static class LeakCheckTests
             Check(!File.Exists(Path.Combine(root,"完了記録.txt")),"completion journal is not touched");
         }
         finally { Directory.Delete(root,true); }
+
+        // 途中で終わった試験の行(結果「中断」)と、始める前の書けるかの確かめ(2026-11-13、全体見直し)。
+        root=Path.Combine(Path.GetTempPath(),"AS110AllCheck-leak-"+Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            string path=LeakTestRecordFile.PathOf(root);
+            LeakTestRecordFile.EnsureWritable(root);
+            Check(File.Exists(path) && new FileInfo(path).Length==0,"the writable check creates an empty record file when none exists");
+            var at=new DateTime(2026,11,13,9,0,0);
+            LeakTestRecordFile.AppendAborted(root,"00101","AS110-035",new LeakTestResult(at,LeakOutcome.Unmeasurable,10,1.0,540.2,540.1,0.3,1234,"M5Stack の通信が途切れたため、\n漏れ試験を中断しました",530.0));
+            LeakTestRecordFile.AppendAborted(root,"00101","AS110-035",new LeakTestResult(at.AddMinutes(1),LeakOutcome.NotJudged,10,1.0,double.NaN,double.NaN,double.NaN,0,"NR-X は自動判定なし / アプリ終了のため中断"));
+            string[] lines=File.ReadAllLines(path,System.Text.Encoding.UTF8);
+            Check(lines.Length==3 && lines[0]==LeakTestRecordFile.Header && lines.All(l=>l.Split('\t').Length==12),"the header is written on the first line after the writable check; aborted lines have 12 columns");
+            Check(lines[1]=="2026-11-13 09:00:00\t00101\tAS110-035\t中断\t10\t1.0\t540.200\t540.100\t0.300\t1234\tM5Stack の通信が途切れたため、 漏れ試験を中断しました\t530.0","aborted test line keeps the values read so far and the reason on one line");
+            Check(lines[2].Split('\t')[3]=="中断" && lines[2].Split('\t')[6]=="-" && lines[2].Split('\t')[9]=="-","aborted NR-X line has no values");
+            LeakTestRecordFile.EnsureWritable(root);
+            Check(File.ReadAllLines(path,System.Text.Encoding.UTF8).Length==3,"the writable check does not change an existing record");
+            // Excel などで開かれている(書き込みを許さない開き方)と、始める前の確かめで分かる。
+            using(var other=new FileStream(path,FileMode.Open,FileAccess.Read,FileShare.Read))
+            {
+                bool locked=false;
+                try { LeakTestRecordFile.EnsureWritable(root); } catch(IOException){locked=true;}
+                Check(locked,"a record file opened elsewhere is detected before the test");
+            }
+            string advice=LeakTestRecordFile.UnwritableAdvice(root,new IOException("used by another process"));
+            Check(advice.Contains("「漏れ試験記録.txt」を Excel やメモ帳で開いていたら閉じてください") && advice.Contains(path) && advice.Contains("used by another process"),"unwritable advice tells to close the file and shows the path");
+        }
+        finally { Directory.Delete(root,true); }
+        bool missing=false;
+        try { LeakTestRecordFile.EnsureWritable(Path.Combine(Path.GetTempPath(),"AS110AllCheck-missing-"+Guid.NewGuid().ToString("N"),"x")); }
+        catch(DirectoryNotFoundException){missing=true;}
+        Check(missing,"the writable check fails for a missing save folder");
         bool failed=false;
         try { LeakTestRecordFile.Append(Path.Combine(Path.GetTempPath(),"AS110AllCheck-missing-"+Guid.NewGuid().ToString("N"),"x"),"1","m",new LeakTestResult(DateTime.Now,LeakOutcome.Pass,10,1,1,1,0,1,"")); }
         catch(DirectoryNotFoundException){failed=true;}

@@ -21,6 +21,10 @@ internal static class LeakOutcomeText
         LeakOutcome.Unmeasurable => "判定できません",
         _ => "判定なし（人が判断）",
     };
+
+    // 「人の判断で合格」の確認の始めの文(2026-11-13、全体見直し。以前は「漏れ判定は判定できませんです。」になった)。
+    public static string OverrideQuestion(LeakOutcome outcome) =>
+        outcome == LeakOutcome.Unmeasurable ? "漏れ判定は判定できませんでした。" : "漏れ判定は不合格です。";
 }
 
 // 圧力のチャンネル。換算は校正を適用した作業用 xdt の係数(XdtChannel.ReadScaledValues と同じ式、float に丸める)。
@@ -124,18 +128,25 @@ internal sealed class LeakJudge
 
 // 試験中の読み出しと判定。LOGGER から前回の続きの点を取り出し、換算・移動平均をして LeakJudge に渡す
 // (取り出しは関数で受け取る。機器なしで確かめられる)。
-// 移動平均は中心の窓なので、窓の右半分(7 点なら 3 点 = 30 ms)がそろった点から判定する。最後(Finish)は残りを窓を縮めて判定する。
+// 移動平均は中心の窓なので、窓の右半分(7 点なら 3 点。今の雛形は 2 ms 周期なので 6 ms)がそろった点から判定する。最後(Finish)は残りを窓を縮めて判定する。
 // 値が取れない(例外・点数が減った・無効値・点数が 2 秒増えない)ときは「判定できない」にして打ち切る。
+// 試験秒数を終えたとき、最後に点が増えてから 0.5 秒以上たっていたら「判定できない」(終わり際の値を見ないまま合格にしない。2026-11-13、全体見直し)。
 internal sealed class LeakMonitor
 {
     // メーカー API のユニット番号(NR-500 は 1。AS100201SwitchController の取り込みと同じ)。
     public const int Unit = 1;
     // 測定中なのに点数が増えないまま、この秒数たったら判定できない(実機の遅れは最大 0.17 秒、2026-11-11 NR-500)。
     public static readonly TimeSpan StallLimit = TimeSpan.FromSeconds(2);
+    // 試験秒数を終えたとき、最後に点が増えてからこの時間たっていたら判定できない(2026-11-13、全体見直し。人が承認)。
+    // 以前は StallLimit の 2 秒がたつ前に試験が終わると、途中までの値だけで合格になった(10 秒の試験で 8.1 秒から値が来なくても合格)。
+    // 実機の遅れ(最大 0.17 秒)の 3 倍ほど。実機で「判定できません」が出るようなら、ここを見直す。
+    public static readonly TimeSpan EndGapLimit = TimeSpan.FromSeconds(0.5);
 
     private readonly Func<int, IReadOnlyList<int>, long, LoggerRawDataBlock> _read;
     private long _readPos;
     private TimeSpan _lastProgress = TimeSpan.Zero;
+    // 最後に読み出しを試みた時刻(試験の終わりに、値が来なくなってからの時間を見る)。
+    private TimeSpan _lastPoll = TimeSpan.Zero;
     // 換算した値(移動平均の前)と、判定に渡し終えた点数。
     private readonly List<double> _scaled = [];
     private int _judged;
@@ -154,6 +165,7 @@ internal sealed class LeakMonitor
     public bool Poll(TimeSpan elapsed)
     {
         if (Judge.Decided is not null) return true;
+        _lastPoll = elapsed;
         LoggerRawDataBlock block;
         try { block = _read(Unit, [Channel.ApiChannel], _readPos); }
         catch (Exception ex) { Judge.MarkUnmeasurable("LOGGER から値を取り出せません：" + ex.Message); return true; }
@@ -188,9 +200,13 @@ internal sealed class LeakMonitor
     }
 
     // 試験時間を終えたときの結果。移動平均の窓がそろわず残っていた最後の点も判定してから決める。
+    // 終わり際に値が来なくなっていたら(最後の読み出しの時点で、点が増えてから EndGapLimit 以上)判定できない。
     public LeakOutcome Finish()
     {
         if (Judge.Decided is null) JudgeAvailable(final: true);
+        TimeSpan gap = _lastPoll - _lastProgress;
+        if (Judge.Decided is null && _readPos > 0 && gap >= EndGapLimit)
+            Judge.MarkUnmeasurable($"試験の終わりの {gap.TotalSeconds:F1} 秒は値を読めませんでした（{_readPos} 点のまま）");
         return Judge.Finish();
     }
 
@@ -233,6 +249,24 @@ internal static class LeakTestInput
             return $"しきい値は {MinThreshold:F1}〜{MaxThreshold:F1} kPa を 0.1 刻みで入力してください（今：「{thresholdText.Trim()}」）。";
         threshold = Math.Round(threshold, 1);
         return null;
+    }
+
+    // 試験秒数が LOGGER の収集の長さ(雛形の点数 × 周期)を超えていないか(2026-11-13、全体見直し。人が承認)。
+    // 漏れ試験はデータ取りと同じ雛形で収集するので、LOGGER は雛形の点数で自分で止まる(今の雛形は 6500 点 × 2 ms = 13 秒。
+    // AS110-006 のデータ取りは 13000 点 = 26 秒)。それより長い秒数では、止まった後の値を見られない
+    // (以前は 14 秒が 13 秒ぶんだけで合格、15 秒以上は必ず「判定できません」になった)。長さが分からないとき(null)は確かめない。
+    public static string? ValidateDuration(int seconds, TimeSpan? acquisitionLength)
+    {
+        if (acquisitionLength is not TimeSpan length || length <= TimeSpan.Zero || seconds <= length.TotalSeconds + 1e-9) return null;
+        return $"試験秒数 {seconds} 秒は長すぎます。いまの LOGGER 雛形は {length.TotalSeconds:0.###} 秒で収集が終わるので、{Math.Floor(length.TotalSeconds + 1e-9):0} 秒までにしてください。";
+    }
+
+    // xdt の雛形の収集の長さ(点数 × 周期)。周期を読めなければ null。
+    public static TimeSpan? AcquisitionLength(string xdtPath)
+    {
+        var file = XdtFile.Load(xdtPath);
+        return file.SampleInterval is TimeSpan interval && interval > TimeSpan.Zero && file.Info.Samples > 0
+            ? TimeSpan.FromTicks(interval.Ticks * file.Info.Samples) : null;
     }
 
     // 最大値の下限(型式ごと)。空欄はだめ(自動判定しないときは呼ばない)。

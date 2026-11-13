@@ -67,6 +67,8 @@ internal sealed partial class MainForm : Form
         string? problem=LeakTestInput.Validate(_leakSecondsBox.Text,_leakThresholdBox.Text,out int seconds,out double threshold);
         string? displayProblem=LeakTestInput.ValidateFailDisplay(_leakFailDisplayBox.Text,out double failDisplay);
         problem??=displayProblem;
+        // LOGGER が雛形の点数で自分で止まるより長い秒数は始めない(覚えもしない)。
+        problem??=LeakTestInput.ValidateDuration(seconds,LeakAcquisitionLength());
         double? lowerLimit=null;
         if(problem is null && autoJudge)
         {
@@ -92,72 +94,134 @@ internal sealed partial class MainForm : Form
     private async Task LeakCheckAsync()
     {
         if(!_leakButton.Enabled)return;
+        await RunOperationAsync("漏れチェック",RunLeakCheckAsync);
+        if(_closeAfterLeak && !IsDisposed) BeginInvoke((Action)Close);
+    }
+
+    // NR-X(ydt)の雛形の周期。ydt からは読めないので決め打ち(README「共用YDTは…2ms・6500点の単発収集設定」)。試験秒数の上限を見るのに使う。
+    private static readonly TimeSpan NrxSampleInterval=TimeSpan.FromMilliseconds(2);
+
+    // 漏れ試験で LOGGER が収集する長さ(雛形の点数 × 周期)。これを超える試験秒数は始めない(LeakTestInput.ValidateDuration)。
+    // NR-500 は作業用の xdt から読む。NR-X は転送設定の測定点数(型式・モードの倍率込み)× 2 ms。読めなければ null(確かめない)。
+    private TimeSpan? LeakAcquisitionLength()
+    {
+        if(!LeakAutoJudgeAvailable)return TimeSpan.FromTicks(NrxSampleInterval.Ticks*ModelTransferSettings.ExpectedSamples);
+        try { return LeakTestInput.AcquisitionLength(_workingTemplatePath!); }
+        // 読めないときは、この後の換算係数の読み出しで「雛形から…読めません」と知らせる。
+        catch(Exception ex) when(ex is IOException or InvalidDataException or ArgumentException or UnauthorizedAccessException) { return null; }
+    }
+
+    // 漏れ試験 1 回の本体(RunOperationAsync の中で呼ぶ。エラーの表示と処理中の状態は RunOperationAsync が持つ)。
+    // 2026-11-13 に LeakCheckAsync から分けた(機器なしの検査から、本物のエラーのポップアップを出さずに呼べるように)。
+    private async Task<string> RunLeakCheckAsync()
+    {
+        if(!_flow.HasSaved || !_leakOutputReady)throw new InvalidOperationException("最新データ一式を保存し、+30mAを押してください。");
+        if(_logger.GetState()!=1)throw new InvalidOperationException("LOGGERの完全停止を確認してから漏れチェックしてください。");
+        bool autoJudge=LeakAutoJudgeAvailable;
+        var (seconds,threshold,lowerLimit,failDisplay)=ReadLeakInputs(autoJudge);
+        string root=_rootBox.Text,serial=_flow.Serial,model=_flow.Model.Name;
+        if(root.Length==0)throw new InvalidOperationException("保存先を選択してください（漏れ試験記録を保存先に残します）。");
+        // 記録を書けるかを先に確かめる(ほかで開かれていて書けないことに、試験が終わってから気づかないように。2026-11-13)。
+        try { LeakTestRecordFile.EnsureWritable(root); }
+        catch(Exception ex) when(ex is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
+        {
+            throw new IOException($"漏れ試験記録を書けません。漏れ試験は始めていません（+30mA の出力は続いています）。\n{LeakTestRecordFile.UnwritableAdvice(root,ex)}",ex);
+        }
+        LeakMonitor? monitor=null;
+        if(autoJudge)
+        {
+            try { monitor=new LeakMonitor(LeakPressureChannel.FromXdt(_workingTemplatePath!,_transferSettings.PressureChannel),threshold,_logger.ReadRawData,lowerLimit); }
+            catch(Exception ex) when(ex is IOException or InvalidDataException or ArgumentException or UnauthorizedAccessException)
+            { throw new InvalidDataException($"雛形から圧力（CH{_transferSettings.PressureChannel}）の換算係数を読めません。漏れ試験は始めていません。\n{ex.Message}",ex); }
+        }
+        else AppendLog("漏れ判定：NR-X（YDT）は自動判定しません。LOGGERの画面で判断してください。");
+        _flow.LeakStarted();_lastLeakResult=null;
+        _leakRunning=true;_leakCancel=new CancellationTokenSource();UpdateControls();
         LeakJudgeWindow? window=null;
-        await RunOperationAsync("漏れチェック",async ()=> {
-            if(!_flow.HasSaved || !_leakOutputReady)throw new InvalidOperationException("最新データ一式を保存し、+30mAを押してください。");
-            if(_logger.GetState()!=1)throw new InvalidOperationException("LOGGERの完全停止を確認してから漏れチェックしてください。");
-            bool autoJudge=LeakAutoJudgeAvailable;
-            var (seconds,threshold,lowerLimit,failDisplay)=ReadLeakInputs(autoJudge);
-            string root=_rootBox.Text;
-            if(root.Length==0)throw new InvalidOperationException("保存先を選択してください（漏れ試験記録を保存先に残します）。");
-            LeakMonitor? monitor=null;
-            if(autoJudge)
-            {
-                try { monitor=new LeakMonitor(LeakPressureChannel.FromXdt(_workingTemplatePath!,_transferSettings.PressureChannel),threshold,_logger.ReadRawData,lowerLimit); }
-                catch(Exception ex) when(ex is IOException or InvalidDataException or ArgumentException or UnauthorizedAccessException)
-                { throw new InvalidDataException($"雛形から圧力（CH{_transferSettings.PressureChannel}）の換算係数を読めません。漏れ試験は始めていません。\n{ex.Message}",ex); }
-            }
-            else AppendLog("漏れ判定：NR-X（YDT）は自動判定しません。LOGGERの画面で判断してください。");
-            _flow.LeakStarted();_lastLeakResult=null;
-            _leakRunning=true;_leakCancel=new CancellationTokenSource();UpdateControls();
+        // 記録を書いた(書こうとした)か。まだなら、途中で終わったときに 1 行残す。
+        bool recorded=false;
+        LeakTestResult Result(LeakOutcome outcome,string note)
+        {
+            var judge=monitor?.Judge;
+            return new LeakTestResult(DateTime.Now,outcome,seconds,threshold,
+                judge?.Maximum ?? double.NaN,judge?.Latest ?? double.NaN,judge?.MaxDifference ?? double.NaN,judge?.Points ?? 0,
+                note,judge?.MaximumLowerLimit ?? double.NaN);
+        }
+        // 途中で終わった試験(停止の失敗・通信が切れた・アプリを閉じた)も記録に残す(2026-11-13、全体見直し。SPEC 9「試験のたびに 1 行」)。
+        // 判定が決まっていればその結果(備考に後の異常)、決まる前なら結果「中断」。ここで書けなくても、元の異常の表示を優先する(ログに残す)。
+        void RecordInterrupted(string reason)
+        {
+            recorded=true;
+            string cause=reason.Replace("\r"," ").Replace("\n"," ");
             try
             {
-                ShowLoggerInFront("漏れチェック",()=>_leakRunning);
-                if(monitor is not null)
-                {
-                    // LOGGER を前に出した後に出す(入力先は奪わない)。最前面なので LOGGER の上に残る。
-                    window=new LeakJudgeWindow(seconds,threshold,lowerLimit,failDisplay,Font);
-                    window.Show();
-                    AppendLog($"漏れ判定：圧力 CH{monitor.Channel.Number}（係数 {monitor.Channel.Gain.ToString(CultureInfo.InvariantCulture)} / {monitor.Channel.Offset.ToString(CultureInfo.InvariantCulture)}、移動平均 {monitor.Channel.AverageWindow} 点）を {seconds} 秒、しきい値 {threshold:F1} kPa、最大値の下限 {lowerLimit:F1} kPa（{_flow.Model.Name}）で判定します。");
-                }
-                Stopwatch? sinceStart=null;
-                try
-                {
-                    await LeakCheckSequence.RunAsync(
-                        ()=>{long result=_logger.StartSingleAcquisition();sinceStart=Stopwatch.StartNew();AppendLog($"漏れチェック LOGGER Start：戻り値={result}");return result;},
-                        StopLeakOutput,
-                        StopLeakLoggerAsync,
-                        TimeSpan.FromSeconds(seconds),
-                        monitor is null?TimeSpan.FromSeconds(seconds):TimeSpan.FromMilliseconds(LeakPollMilliseconds),
-                        ()=>PollLeak(monitor,window,sinceStart?.Elapsed ?? TimeSpan.Zero),
-                        _leakCancel.Token);
-                }
-                catch(OperationCanceledException) when(_closeAfterLeak) { return "アプリ終了のため発振器出力とLOGGER収集を停止しました。"; }
-                if(!ConnectionsReady || !_arduino.MeasurementInputReady)throw new IOException("通信を確認できません。漏れチェックをやり直してください。");
-                var judge=monitor?.Judge;
-                LeakOutcome outcome=monitor?.Finish() ?? LeakOutcome.NotJudged;
-                if(window is not null){window.ShowResult(outcome);window.CloseAfterResult();}
-                var record=new LeakTestResult(DateTime.Now,outcome,seconds,threshold,
-                    judge?.Maximum ?? double.NaN,judge?.Latest ?? double.NaN,judge?.MaxDifference ?? double.NaN,judge?.Points ?? 0,
-                    judge?.Problem ?? (monitor is null?"NR-X は自動判定なし":""),judge?.MaximumLowerLimit ?? double.NaN);
-                string path;
-                try { path=LeakTestRecordFile.Append(root,_flow.Serial,_flow.Model.Name,record); }
-                catch(Exception ex) when(ex is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
-                {
-                    throw new IOException($"漏れ試験記録を書けないため「合格」に進めません（判定：{LeakOutcomeText.Of(outcome)}）。保存先を確認して、「+30mA」から漏れ試験をやり直してください。\n{LeakTestRecordFile.PathOf(root)}\n{ex.Message}",ex);
-                }
-                _flow.LeakFinished(outcome);_lastLeakResult=record;
-                AppendLog("漏れ試験記録："+path);
-                return "漏れ判定："+record.Summary;
+                string path=monitor?.Judge.Decided is LeakOutcome decided
+                    ?LeakTestRecordFile.Append(root,serial,model,Result(decided,$"{monitor.Judge.Problem} / 判定のあとで異常：{cause}"))
+                    :LeakTestRecordFile.AppendAborted(root,serial,model,Result(monitor is null?LeakOutcome.NotJudged:LeakOutcome.Unmeasurable,(monitor is null?"NR-X は自動判定なし / ":"")+cause));
+                AppendLog("漏れ試験記録（途中で終わった試験）："+path);
             }
-            finally
+            catch(Exception ex) when(ex is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
+            { AppendLog("漏れ試験記録：途中で終わった試験を記録できませんでした / "+ex.Message); }
+        }
+        try
+        {
+            ShowLoggerInFront("漏れチェック",()=>_leakRunning);
+            if(monitor is not null)
             {
-                _leakRunning=false;_leakCancel?.Dispose();_leakCancel=null;
-                // 結果を出さずに終わった(途中の異常・終了要求)ときは、「合格」を出したまま残さずすぐ閉じる。
-                if(window is { IsDisposed:false,ResultShown:false })window.Close();
+                // LOGGER を前に出した後に出す(入力先は奪わない)。最前面なので LOGGER の上に残る。
+                window=new LeakJudgeWindow(seconds,threshold,lowerLimit,failDisplay,Font);
+                window.Show();
+                AppendLog($"漏れ判定：圧力 CH{monitor.Channel.Number}（係数 {monitor.Channel.Gain.ToString(CultureInfo.InvariantCulture)} / {monitor.Channel.Offset.ToString(CultureInfo.InvariantCulture)}、移動平均 {monitor.Channel.AverageWindow} 点）を {seconds} 秒、しきい値 {threshold:F1} kPa、最大値の下限 {lowerLimit:F1} kPa（{model}）で判定します。");
             }
-        });
-        if(_closeAfterLeak && !IsDisposed) BeginInvoke((Action)Close);
+            Stopwatch? sinceStart=null;
+            try
+            {
+                await LeakCheckSequence.RunAsync(
+                    ()=>{long result=_logger.StartSingleAcquisition();sinceStart=Stopwatch.StartNew();AppendLog($"漏れチェック LOGGER Start：戻り値={result}");return result;},
+                    StopLeakOutput,
+                    StopLeakLoggerAsync,
+                    TimeSpan.FromSeconds(seconds),
+                    monitor is null?TimeSpan.FromSeconds(seconds):TimeSpan.FromMilliseconds(LeakPollMilliseconds),
+                    ()=>PollLeak(monitor,window,sinceStart?.Elapsed ?? TimeSpan.Zero),
+                    _leakCancel.Token);
+            }
+            catch(OperationCanceledException) when(_closeAfterLeak)
+            {
+                RecordInterrupted("アプリ終了のため中断");
+                return "アプリ終了のため発振器出力とLOGGER収集を停止しました。";
+            }
+            // 終了要求でない中断は M5Stack の通信切れ(ArduinoDisconnected)。出力 OFF と LOGGER 停止は済んでいる(失敗していれば別の例外になる)。
+            // 以前は「A task was canceled.」がそのまま出た(2026-11-13、全体見直し)。
+            catch(OperationCanceledException ex)
+            {
+                throw new IOException("M5Stack の通信が途切れたため、漏れ試験を中断しました（発振器の出力 OFF と LOGGER の停止は行いました）。接続を確かめて「確認」を押し、「+30mA」から漏れ試験をやり直してください。",ex);
+            }
+            if(!ConnectionsReady || !_arduino.MeasurementInputReady)throw new IOException("通信を確認できません。漏れチェックをやり直してください。");
+            LeakOutcome outcome=monitor?.Finish() ?? LeakOutcome.NotJudged;
+            if(window is not null){window.ShowResult(outcome);window.CloseAfterResult();}
+            var record=Result(outcome,monitor?.Judge.Problem ?? (monitor is null?"NR-X は自動判定なし":""));
+            string path;
+            recorded=true;
+            try { path=LeakTestRecordFile.Append(root,serial,model,record); }
+            catch(Exception ex) when(ex is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
+            {
+                throw new IOException($"漏れ試験記録を書けないため「合格」に進めません（判定：{LeakOutcomeText.Of(outcome)}）。次を確かめて、「+30mA」から漏れ試験をやり直してください。\n{LeakTestRecordFile.UnwritableAdvice(root,ex)}",ex);
+            }
+            _flow.LeakFinished(outcome);_lastLeakResult=record;
+            AppendLog("漏れ試験記録："+path);
+            return "漏れ判定："+record.Summary;
+        }
+        catch(Exception ex) when(!recorded)
+        {
+            RecordInterrupted(ex.Message);
+            throw;
+        }
+        finally
+        {
+            _leakRunning=false;_leakCancel?.Dispose();_leakCancel=null;
+            // 結果を出さずに終わった(途中の異常・終了要求)ときは、「合格」を出したまま残さずすぐ閉じる。
+            if(window is { IsDisposed:false,ResultShown:false })window.Close();
+        }
     }
 
     // 試験中の読み出し 1 回。判定画面を更新し、不合格・判定できないが決まったら打ち切る(true)。
@@ -192,9 +256,12 @@ internal sealed partial class MainForm : Form
         DialogResult answer;
         try
         {
-            answer=ErrorNotification.Show(this,
-                $"漏れ判定は{LeakOutcomeText.Of(_flow.LastLeakOutcome ?? LeakOutcome.Fail)}です。\n{result}\n\nそれでも合格にしますか？\n「はい」：人の判断で合格にする（漏れ試験記録に残します）\n「いいえ」：合格にしない（「+30mA」から漏れ試験をやり直せます）",
-                "漏れ判定：人の判断で合格",MessageBoxButtons.YesNo,MessageBoxIcon.Warning);
+            // 既定のボタンは「いいえ」(Enter・スペースで合格にならない。2026-11-13、全体見直し。以前は共通のメッセージボックスで既定が「はい」だった)。
+            using var dialog=new LeakOverrideDialog(
+                $"{LeakOutcomeText.OverrideQuestion(_flow.LastLeakOutcome ?? LeakOutcome.Fail)}\r\n{result}\r\n\r\nそれでも合格にしますか？\r\n「はい」：人の判断で合格にする（漏れ試験記録に残します）\r\n「いいえ」：合格にしない（「+30mA」から漏れ試験をやり直せます）",
+                Font);
+            dialog.Shown+=(_,_)=>ActivateJudgmentNotice(dialog,dialog.NoButton);
+            answer=dialog.ShowDialog(this);
         }
         finally { UseWaitCursor=true; }
         if(answer!=DialogResult.Yes)return false;

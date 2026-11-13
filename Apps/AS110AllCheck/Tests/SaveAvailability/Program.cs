@@ -14,6 +14,7 @@ internal static class Program
         var assembly=Assembly.Load("AS110AllCheck");
         CalibrationDialogTests.Run(assembly);
         LeakJudgeWindowTests.Run(assembly);
+        LeakCheckFormTests.Run(assembly);
         var type=assembly.GetType("PSCAutomation.Apps.AS110AllCheck.MainForm")!;
         using var form=(Form)Activator.CreateInstance(type)!;
         object Field(string name)=>type.GetField(name,Private)!.GetValue(form)!;
