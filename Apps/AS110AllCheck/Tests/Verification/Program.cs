@@ -5,6 +5,7 @@ static void Check(bool b,string name){if(!b)throw new Exception(name);Console.Wr
 await LeakCheckTests.RunAsync();
 CalibrationTests.Run();
 CalibrationRecordTests.Run();
+await AutoCalibrationTests.RunAsync();
 await SupplyPressureTests.RunAsync();
 ShippingDataTests.Run();
 MeasurementProfileTests.Run();

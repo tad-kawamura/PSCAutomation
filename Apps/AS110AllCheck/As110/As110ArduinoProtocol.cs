@@ -37,6 +37,8 @@ internal sealed class As110ArduinoProtocol : IDisposable
     public event Action? NfStatusChanged;
     public event Action? Disconnected;
     public bool IsConnected => _connection.IsConnected;
+    // M5Stack のつながっている COM ポート(GC16 を探すときに除く。2026-11-13)。
+    public string? PortName => _connection.PortName;
     public bool NfEnergized { get { lock (_statusGate) return _nfEnergized; } }
     public DateTime LastNfStatusUtc { get { lock (_statusGate) return _lastNfStatusUtc; } }
     // 警告猶予を延ばしても、測定許可には1秒以内の通電情報を要求する。

@@ -370,6 +370,8 @@ internal sealed partial class MainForm : Form
             _checkingConnections = false;
             UpdateControls();
         }
+        // 前回、校正の読み取りの途中でアプリが終わっていたら、ここで後片付けを知らせる(2026-11-13)。
+        await RecoverInterruptedCalibrationAsync();
         // モードを先に選んでいたときは、接続確認が済んだここで校正画面を開く。
         OpenCalibrationIfPending();
     }

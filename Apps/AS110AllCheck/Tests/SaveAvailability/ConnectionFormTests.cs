@@ -104,7 +104,7 @@ internal static class ConnectionFormTests
             rig.Logger.LastSavedFrom = null;
             int savesBefore = rig.Logger.Saves;
             string working = (string)rig.Call("CreateWorkingTemplate", template, null, null)!;
-            rig.Call("LoadWorkingTemplate", template, working, null, "NR-500", (Action<string>)(_ => { }), null);
+            rig.Call("LoadWorkingTemplate", template, working, null, "NR-500", (Action<string>)(_ => { }), null, null);
             if (rig.FlowIs("CaptureFailed") || rig.FlowIs("HasCapture") || rig.FlowIs("Measuring"))
                 throw new Exception("Reloading the template must discard a measurement whose capture failed");
             if (!rig.Log.Contains("一時保存できなかった測定を破棄しました") || !rig.NextStep.Contains("※一時保存できなかった測定は破棄しました。測り直してください"))

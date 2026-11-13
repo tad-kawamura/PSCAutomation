@@ -78,19 +78,26 @@ internal sealed partial class MainForm : Form
             string hardware = _detectedHardwareName;
             string templateName = Path.GetFileName(originalPath);
             As110Calibration? calibration = null;
+            CalibrationReading? reading = null;
             XdtScalingEditor? editor = null;
             if (supportsCalibration)
             {
                 editor = new XdtScalingEditor(originalPath);
                 // 初期値は雛形の値。入れ直しのときだけ、いま適用している値から直せるようにする。
+                // 「GC16 で読み取る」(校正の自動読み取り 段階 1)。読み取りの電圧は、LOGGER にファイルが無ければこの雛形を開いて読む。
                 using var dialog = new CalibrationDialog(hardware, templateName,
-                    _calibrationApplied && _appliedCalibration is not null ? _appliedCalibration : As110Calibration.FromTemplate(editor));
+                    _calibrationApplied && _appliedCalibration is not null ? _appliedCalibration : As110Calibration.FromTemplate(editor),
+                    (model, owner) => ReadCalibrationWithGauge(model, originalPath, owner));
                 UseWaitCursor = false;
                 try
                 {
                     if (dialog.ShowDialog(this) != DialogResult.OK)
+                    {
+                        CloseTemplateOpenedForReading();
                         return _calibrationApplied ? "校正値の変更をキャンセルしました。" : "校正値の入力をキャンセルしました。「校正値を入力」から入力してください。";
+                    }
                     calibration = dialog.Calibration;
+                    reading = dialog.Reading;
                 }
                 finally { UseWaitCursor = true; }
                 if (_closeRequested || !ConnectionsReady || _detectedHardwareName != hardware)
@@ -107,14 +114,15 @@ internal sealed partial class MainForm : Form
             string workingPath = CreateWorkingTemplate(originalPath, calibration, editor);
             // 手動で開かれた未適用のファイルも、設定済みの雛形に置き換える。
             // 保存先が決まっていれば(データ取りで、データ調整から移る前などに選んでいたとき)ここで校正記録を書く。書けなければ設定完了にしない。
+            _templateOpenedForReading = false;
             LoadWorkingTemplate(originalPath, workingPath, calibration, hardware,
                 result =>
                 {
-                    if (calibration is not null) AppendLog("校正値適用：" + calibration.Summary);
+                    if (calibration is not null) AppendLog("校正値適用：" + calibration.Summary + (reading is null ? "" : "（" + reading.MethodText + "）"));
                     else AppendLog("NR-Xの校正は未対応のため、雛形の値のまま読み込みました。");
                     AppendLog("雛形読み込み：" + result);
                 },
-                afterRecord: RefreshReferenceCandidates);
+                afterRecord: RefreshReferenceCandidates, reading: reading);
             return "成功 / 型式（参照波形）を選択してください。";
         });
     }
@@ -136,7 +144,8 @@ internal sealed partial class MainForm : Form
         As110Calibration? calibration = _appliedCalibration;
         string workingPath = CreateWorkingTemplate(originalPath, calibration);
         LoadWorkingTemplate(originalPath, workingPath, calibration, _detectedHardwareName,
-            result => AppendLog("雛形読み直し（型式で雛形が替わるため、同じ校正値で読み込み）：" + result));
+            result => AppendLog("雛形読み直し（型式で雛形が替わるため、同じ校正値で読み込み）：" + result),
+            reading: _appliedCalibrationRecord?.Reading);
     }
 
     private static bool IsXdt(string path) =>
@@ -164,8 +173,9 @@ internal sealed partial class MainForm : Form
 
     // 作業用ファイルを LOGGER に読み込み、適用中の状態(校正値・雛形・校正記録)をそろえる。ApplyCalibration と ReloadTemplateForModel の共通部分(2026-11-13)。
     // 開いているファイルを閉じてから読み込む。読み込み後のログ(loaded)・校正記録の書き込み・afterRecord のどこで失敗しても雛形待ちに戻す(校正からやり直す)。
+    // reading は校正記録に書く読み取り方(手入力 / GC16。2026-11-13)。
     private void LoadWorkingTemplate(string originalPath, string workingPath, As110Calibration? calibration, string hardware,
-        Action<string> loaded, Action? afterRecord = null)
+        Action<string> loaded, Action? afterRecord = null, CalibrationReading? reading = null)
     {
         if (_logger.HasActiveFile())
         {
@@ -183,7 +193,7 @@ internal sealed partial class MainForm : Form
             _workingTemplateSource = originalPath;
             _appliedCalibration = calibration;
             _appliedCalibrationRecord = calibration is null ? null :
-                new CalibrationRecord(DateTimeOffset.Now, calibration, _modeBox.Text, hardware, Path.GetFileName(originalPath));
+                new CalibrationRecord(DateTimeOffset.Now, calibration, _modeBox.Text, hardware, Path.GetFileName(originalPath), reading);
             _calibrationRecordedRoot = null;
             loaded(result);
             try { WriteCalibrationRecordIfReady(); }

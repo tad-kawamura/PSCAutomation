@@ -74,7 +74,7 @@ internal static class Program
         modeBox.SelectedIndex=2;Call("ChangeTestMode");
         var calibrationType=assembly.GetType("PSCAutomation.Apps.AS110AllCheck.As110Calibration")!;
         object calibration=Activator.CreateInstance(calibrationType,new PSCAutomation.Wrappers.LoggerFiles.ScalingPoints(-0.002f,0.01f,0.993f,30f),new PSCAutomation.Wrappers.LoggerFiles.ScalingPoints(-0.001f,0f,5.524f,540f))!;
-        object record=Activator.CreateInstance(assembly.GetType("PSCAutomation.Apps.AS110AllCheck.CalibrationRecord")!,DateTimeOffset.Now,calibration,"データ取り","NR-500","test.xdt")!;
+        object record=Activator.CreateInstance(assembly.GetType("PSCAutomation.Apps.AS110AllCheck.CalibrationRecord")!,DateTimeOffset.Now,calibration,"データ取り","NR-500","test.xdt",null)!;
         var recordField=type.GetField("_appliedCalibrationRecord",Private)!;var recordedRootField=type.GetField("_calibrationRecordedRoot",Private)!;
         var transferSettings=Field("_transferSettings");var saveRootProperty=transferSettings.GetType().GetProperty("SaveRoot")!;
         string originalSaveRoot=(string)saveRootProperty.GetValue(transferSettings)!;
