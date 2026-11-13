@@ -110,7 +110,7 @@ internal sealed partial class MainForm : Form
             }
             // 接続確認時に波形設定は準備済み。ここでは出力ONにしない。
             ConfigureProduct();
-            if (_flow.Mode != TestMode.Motion && (_selectedReferencePath is null || !System.Text.RegularExpressions.Regex.IsMatch(Path.GetFileNameWithoutExtension(_selectedReferencePath), System.Text.RegularExpressions.Regex.Escape(_flow.Model.Name) + @"(?![A-Za-z0-9])", System.Text.RegularExpressions.RegexOptions.IgnoreCase)))
+            if (_flow.Mode != TestMode.Motion && !ReferenceLoadedForFlowModel)
                 throw new InvalidOperationException("選択した型式の参照波形を読み込んでください。");
             _generator!.PrepareBurst(CurrentBurstSettings);
             long preparedAt = Stopwatch.GetTimestamp();

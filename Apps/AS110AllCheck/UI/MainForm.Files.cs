@@ -144,7 +144,8 @@ internal sealed partial class MainForm : Form
             {
                 if (model is null)
                     throw new InvalidOperationException($"参照波形「{reference.DisplayName}」に対応する型式がありません。ファイル名に型式名（{string.Join("・", ProductModel.All.Select(m => m.Name))}）を含めてください。");
-                if (!CanChangeSetup && model != _flow.Model)
+                // 出荷データは工程の型式(AS110-116B350)ではなく、参照波形で選んだ型式(AS110-116B)と比べる(同じ参照波形の選び直しを止めない)。
+                if (!CanChangeSetup && model != _flow.TemplateModel)
                     throw new InvalidOperationException("測定結果が残っている間は型式（参照波形）を変えられません。「設定変更（測定を破棄）」を先に押してください。");
                 // Excel 雛形の無い型式は、測る前に止める(転送してから気づかないように)。
                 ExcelTemplatePathFor(model);
@@ -181,12 +182,21 @@ internal sealed partial class MainForm : Form
     // 型式名の直後が英数字でないものだけを合致とし、長い名前を優先する。合う型式が無ければ null。
     private static ProductModel? FindModelForReference(string path)
     {
-        string name = Path.GetFileNameWithoutExtension(path);
         return ProductModel.All
-            .Where(m => Regex.IsMatch(name, Regex.Escape(m.Name) + @"(?![A-Za-z0-9])", RegexOptions.IgnoreCase))
+            .Where(m => ReferenceNameMatches(path, m))
             .OrderByDescending(m => m.Name.Length)
             .FirstOrDefault();
     }
+
+    // 参照波形のファイル名にその型式名が入っているか(型式名の直後が英数字でないものだけ。「AS110-116B」は「AS110-116B350」のファイルに合わない)。
+    private static bool ReferenceNameMatches(string path, ProductModel model) =>
+        Regex.IsMatch(Path.GetFileNameWithoutExtension(path), Regex.Escape(model.Name) + @"(?![A-Za-z0-9])", RegexOptions.IgnoreCase);
+
+    // 測定開始のときの確かめ: いまの工程で使う型式の参照波形を読み込んでいるか。
+    // 出荷データ(AS110-116B350)は専用の参照波形を作らず、判定した型式(AS110-116B)の参照波形のまま測る(SPEC「AS110-116B350 の出荷データ」6)。
+    // 工程の型式(_flow.Model)で照合すると出荷データは必ず合わず、測定を始められなかった(2026-11-13、全体見直しで見つけた)。
+    private bool ReferenceLoadedForFlowModel =>
+        _selectedReferencePath is not null && ReferenceNameMatches(_selectedReferencePath, _flow.TemplateModel);
 
     private string LoadTemplateFile(string path)
     {

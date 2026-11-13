@@ -59,6 +59,30 @@ internal static class ShippingDataFormTests
             serialBox.Text = "75633"; Configure(); Call("UpdateProductionControls");
             if (!(bool)Field("_judgedPassed") || (bool)Field("_serialCompleted")) throw new Exception("A serial completed at 490 kPa must be allowed for shipping data");
 
+            // 出荷データは専用の参照波形を作らず、判定した型式(AS110-116B)の参照波形のまま測る。測定開始の確かめがそれを通すこと
+            // (2026-11-13、全体見直し。以前は工程の型式 AS110-116B350 の名前で照合し、出荷データは必ず「選択した型式の参照波形を読み込んでください」で止まった)。
+            var referencePath = type.GetField("_selectedReferencePath", Private)!;
+            object? originalReference = referencePath.GetValue(form);
+            bool ReferenceLoaded() => (bool)type.GetProperty("ReferenceLoadedForFlowModel", Private)!.GetValue(form)!;
+            try
+            {
+                referencePath.SetValue(form, @"C:\雛形\参照ﾃﾞｰﾀ_AS110-116B.xyb");
+                if (!ReferenceLoaded()) throw new Exception("Shipping data must start with the judged model's reference waveform (AS110-116B)");
+                referencePath.SetValue(form, @"C:\雛形\参照ﾃﾞｰﾀ_AS110-035.xyb");
+                if (ReferenceLoaded()) throw new Exception("Another model's reference waveform must not allow shipping data");
+                referencePath.SetValue(form, null);
+                if (ReferenceLoaded()) throw new Exception("No reference waveform must not allow the start");
+                // ふつうのデータ取り(490 kPa)は今までどおり、選んだ型式の参照波形だけを通す。
+                SetField("_shippingDataSelected", false); Configure();
+                referencePath.SetValue(form, @"C:\雛形\参照ﾃﾞｰﾀ_AS110-116B.xyb");
+                if (!ReferenceLoaded()) throw new Exception("Data acquisition must accept its own model's reference waveform");
+                referencePath.SetValue(form, @"C:\雛形\参照ﾃﾞｰﾀ_AS110-116B350.xyb");
+                if (ReferenceLoaded()) throw new Exception("AS110-116B must not accept a reference waveform named AS110-116B350");
+                SetField("_shippingDataSelected", true); Configure(); Call("UpdateProductionControls");
+            }
+            finally { referencePath.SetValue(form, originalReference); }
+            Console.WriteLine("PASS shipping data passes the start check with the AS110-116B reference waveform; other models' waveforms do not");
+
             // データ取りの完了記録を読めないとき(ここではロックのファイルを先に握って読めなくする)は、合格していない扱いで止め、
             // 「合格していません」ではなく、先に確かめること → 再起動の順の案内を出す(2026-11-13、人の指示)。読めるようになれば選び直しで戻る。
             using (new FileStream(Path.Combine(root, "完了記録.lock"), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None))

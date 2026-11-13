@@ -232,7 +232,9 @@ internal sealed partial class MainForm : Form
     {
         if(!CanEnterSerial)return;
         string text=_serialBox.Text.Trim();
-        if(text==_appliedSerialText)return;
+        // 工程の S/N とも同じときだけ飛ばす。合格で次の番号へ進んだあとに直前の番号(前に確定した文字)へ戻したとき、
+        // 覚えだけで比べると確定されず、状態欄と M5Stack が次の番号のまま残っていた(2026-11-13、全体見直し)。
+        if(text==_appliedSerialText && text==_flow.Serial)return;
         RunOperation("測定開始S/N設定",()=>{
             // S/N が空のまま残っていた測定結果(データ調整のものなど)は、S/N を入れた時点で破棄される(S/N なしではデータ取りに使えない)。
             bool discarded=_flow.HasCapture && _flow.SerialMissing && text.Length>0;
@@ -462,6 +464,10 @@ internal sealed partial class MainForm : Form
         if(_flow.Mode!=TestMode.Production)return "データ取り以外";
         if(!_flow.HasTransfer)return "最新測定の転送未完了";
         if(_serialCompleted)return $"S/N {_flow.Serial} は完了済み（保護中）";
+        // データ調整の結果を残したままデータ取りへ移ると、S/N が空(保存先もまだのことがある)のまま転送まで進める。保存はできないので押せなくする
+        // (2026-11-13、全体見直し。以前は押せて、保存先なしだと保存失敗が残り、「保存先選択」も S/N 欄も使えなくなっていた)。
+        // S/N を入れると測定結果は破棄されるので、S/N のある測定結果は保存先を選んでから測ったものだけ(保存先なしは SaveLatest でも止める)。
+        if(_flow.SerialMissing)return "測定開始S/N 未入力";
         if(!_lastExcelPass)return _excelJudgmentStatus;
         if(_reviewStage)return "一式保存後の工程";
         return "";
@@ -547,8 +553,10 @@ internal sealed partial class MainForm : Form
             _lastExcelPass=false; _flow.TransferFailed();
             // 初回転送の途中で応答待ちになっても、この所有先を次の再試行へ引き継ぐ。
             _excel ??= new ExcelWorkSession();
+            // データ取りでも S/N が空(データ調整の結果のままデータ取りへ移った)なら、データ調整と同じ「-」を見出しに書く。
+            // 空文字を書くと見出しの「S/N 数字」が無くなり、S/N を入れた後の転送で置き換えられず、S/N の無い Excel・PDF が保存される(事前準備が S/N を待つのと同じ理由)。
             _excel=ExcelWorkSession.Open(ExcelTemplatePath,ExcelWorkPath,_capturePath,ModelTransferSettings,_flow.Model,
-                _flow.Mode==TestMode.Production?_flow.Serial:"-",_flow.MeasuredAt,_excel,AppendLog);
+                _flow.Mode==TestMode.Production && !_flow.SerialMissing?_flow.Serial:"-",_flow.MeasuredAt,_excel,AppendLog);
             var calculationTimer=Stopwatch.StartNew();
             bool pass=await _excel.IsPassAsync();
             _excelJudgmentError="";
@@ -610,24 +618,28 @@ internal sealed partial class MainForm : Form
         if(!_saveButton.Enabled)return;
         RunOperation("正式保存",()=> {
             _saveNotice?.Close(); _saveNotice=null;
-            _flow.SaveFailed=true;
+            // 「保存失敗」(同じ番号で再保存)にするのは、保存先へ書き始めてからだけ(下の「ここから書き込む」)。
+            // それより前で止まったときは何も書いていないので、保存失敗にしない(2026-11-13、全体見直し。以前は最初に保存失敗にしてから
+            // 止まる所ごとに戻していて、戻し忘れた所(保存先なし・完了記録を読めない)で保存失敗が残った)。
             if(_excel is null || !_flow.HasTransfer || _capturePath is null)throw new InvalidOperationException("最新結果をExcelへ転送してください。");
-            if(!_flow.ShippingData && !_excel.IsPass()) { _lastExcelPass=false; _flow.SaveFailed=false;throw new InvalidOperationException("E21・L21の両方がOKではありません。"); }
-            // 出荷データは、保存の直前にもデータ取りの合格を確かめる(測ったあとで保護を外された場合など)。何も書いていないので保存失敗にはしない。
+            if(_flow.SerialMissing)throw new InvalidOperationException("測定開始S/N を入力してください（S/N なしの測定結果は保存できません）。");
+            if(_rootBox.Text.Length==0)throw new InvalidOperationException("保存先を選択してください。");
+            if(!_flow.ShippingData && !_excel.IsPass()) { _lastExcelPass=false;throw new InvalidOperationException("E21・L21の両方がOKではありません。"); }
+            // 出荷データは、保存の直前にもデータ取りの合格を確かめる(測ったあとで保護を外された場合など)。
             if(_flow.ShippingData)
             {
                 RefreshJudgedPass();
-                if(!_judgedPassed) { _flow.SaveFailed=false;throw new InvalidOperationException(JudgedBlockedText(afterMeasurement:true)); }
+                if(!_judgedPassed)throw new InvalidOperationException(JudgedBlockedText(afterMeasurement:true));
             }
-            // 保存先フォルダー名「SN開始-最後」と合わないときは書き込まずに止める(何も書いていないので再保存の扱いにはしない)。
+            // 保存先フォルダー名「SN開始-最後」と合わないときは書き込まずに止める。
             string rangeProblem=SaveFolder.CheckRange(_rootBox.Text,_flow.Serial);
-            if(rangeProblem.Length>0) { _flow.SaveFailed=false;throw new InvalidOperationException(rangeProblem); }
+            if(rangeProblem.Length>0)throw new InvalidOperationException(rangeProblem);
             var store=Store;using var held=store.Lock();
             if(store.IsComplete(_flow.Serial))
             {
                 // 測定を始めたあとで(別の PC などから)完了済みになった番号。まだ何も書いていないので「保存失敗」にはせず、
                 // 完了済みとして「保存」を押せなくし、「次にすること」に解除してから保存する道筋を出す(2026-11-06。以前は保存失敗が残って S/N 欄と「設定変更」が固まっていた)。
-                _flow.SaveFailed=false;_serialCompleted=true;
+                _serialCompleted=true;
                 throw new InvalidOperationException($"S/N {_flow.Serial} は完了済み（保護中）のため上書きできません。\n今回の測定で上書きするなら「完了番号の保護と解除」で S/N {_flow.Serial} のチェックを外してから「保存」を押してください。");
             }
             string root=Path.GetFullPath(SaveRootPath),baseName=_flow.BaseName;
@@ -642,7 +654,6 @@ internal sealed partial class MainForm : Form
             {
                 // 前に同じ S/N を保存したファイル(合格にはしていない)が残っている。まだ何も書いていないので「保存失敗」にはせず、
                 // 上書きするかを人に聞く。上書きしないときは「次にすること」に取れる手を出す(2026-11-06、人の指摘: 何をすればいいか分からなかった)。
-                _flow.SaveFailed=false;
                 _saveConflict=$"S/N {_flow.Serial} の保存ファイルがすでにあります（{string.Join("・",existing.Select(f=>Path.GetFileName(Path.GetDirectoryName(f)!)))}）";
                 UseWaitCursor=false;
                 DialogResult answer;
@@ -660,6 +671,8 @@ internal sealed partial class MainForm : Form
             }
             _saveConflict=null;
             _ownedSaveBase=ownership;
+            // ここから書き込む。途中で止まったら保存失敗(同じ番号で再保存)。成功したら SaveSucceeded が戻す。
+            _flow.SaveFailed=true;
             foreach(string file in new[]{excel,pdf,logger})Directory.CreateDirectory(Path.GetDirectoryName(file)!);
             // 生成は一時ファイルへ。個別の置換が失敗してもSavedRevisionは更新しない。
             string stage=Path.Combine(root,"tmp",Guid.NewGuid().ToString("N"));Directory.CreateDirectory(stage);
@@ -767,7 +780,8 @@ internal sealed partial class MainForm : Form
             bool excelAlreadyClosed=_excel.CloseVerifiedOrAlreadyClosed();
             if(excelAlreadyClosed)AppendLog("合格確定：Excel は先に閉じられていました（閉じた扱いで記録します）。");
             store.Append("COMPLETE",_flow.Serial,_flow.Model.Name,_flow.BaseName);
-            string previous=_flow.Serial;_flow.Advance();_serialBox.Text=_flow.Serial;_reviewStage=false;_ownedSaveBase=null;
+            // 次の番号は確定済みとして覚える(欄を離れただけで、同じ番号をもう一度確定してログを出さないように)。
+            string previous=_flow.Serial;_flow.Advance();_serialBox.Text=_appliedSerialText=_flow.Serial;_reviewStage=false;_ownedSaveBase=null;
             // 次の番号がすでに完了済み(測り直しの途中など)なら、押す前に分かるようにしておく。
             _serialCompleted=store.IsComplete(_flow.Serial);
             // 出荷データは次の番号もデータ取りで合格しているかを確かめておく(データ取りの完了記録はロックのファイルが別)。

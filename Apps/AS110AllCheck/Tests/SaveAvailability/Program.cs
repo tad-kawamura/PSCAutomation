@@ -204,6 +204,12 @@ internal static class Program
         // S/N が空のまま測定結果が残っていても(データ調整の結果のままデータ取りへ移ったとき)、測定開始S/N の欄は入力できる。S/N が入った結果が残っているときは変えられない(「設定変更（測定を破棄）」)。
         flowType.GetMethod("BeginMeasurement")!.Invoke(flow,[DateTime.Now]);flowType.GetMethod("CaptureSucceeded")!.Invoke(flow,null);Call("UpdateProductionControls");
         if(!(bool)flowType.GetProperty("HasCapture")!.GetValue(flow)! || !serialBox.Enabled)throw new Exception("Measurement serial box must stay editable while the serial is empty, even with a capture");
+        // S/N が空の測定結果は、転送して判定が OK でも「保存」を押せない(2026-11-13、全体見直し。以前は押せて、保存先なしだと保存失敗が残り、保存先選択も S/N 欄も使えなくなった)。
+        flowType.GetMethod("TransferSucceeded")!.Invoke(flow,null);type.GetField("_lastExcelPass",Private)!.SetValue(form,true);Call("UpdateProductionControls");
+        string missingSerialSaveReason=(string)type.GetMethod("GetSaveBlockReason",Private)!.Invoke(form,null)!;
+        if(((Button)Field("_saveButton")).Enabled || !missingSerialSaveReason.Contains("S/N") || !serialBox.Enabled)throw new Exception("A capture without a serial must not enable save, and the serial box must stay editable: "+missingSerialSaveReason);
+        type.GetField("_lastExcelPass",Private)!.SetValue(form,false);
+        Console.WriteLine("PASS a transferred capture without a serial cannot be saved: "+missingSerialSaveReason);
         flowType.GetMethod("Configure")!.Invoke(flow,["123",product]);flowType.GetMethod("BeginMeasurement")!.Invoke(flow,[DateTime.Now]);flowType.GetMethod("CaptureSucceeded")!.Invoke(flow,null);Call("UpdateProductionControls");
         if(serialBox.Enabled)throw new Exception("Measurement serial box must be locked while a capture with a serial exists");
         Console.WriteLine("PASS measurement serial is editable while empty even with a capture, locked once a capture has a serial");
@@ -260,6 +266,21 @@ internal static class Program
         }
         // AS110-116B の供給圧力と、350 kPa の出荷データ(データ取り２)。
         ShippingDataFormTests.Run(form, type, assembly);
+        // 合格で次の番号へ進んだあと、直前に確定した番号へ欄を戻しても確定される(2026-11-13、全体見直し。以前は「前に確定した文字と同じ」として飛ばし、
+        // 欄は 100・状態欄と M5Stack は 101 のままになった)。次の番号へ進める所は合格のとき(CompleteProduct)と同じ操作をここで行う。
+        var serialOf=flowType.GetProperty("Serial")!;
+        serialBox.Text="100";Call("ApplySerialInput");
+        if((string)serialOf.GetValue(flow)!!="100")throw new Exception("Typing a serial must configure it");
+        flowType.GetMethod("Advance")!.Invoke(flow,null);
+        type.GetField("_appliedSerialText",Private)!.SetValue(form,(string)serialOf.GetValue(flow)!);serialBox.Text=(string)serialOf.GetValue(flow)!;
+        serialBox.Text="100";Call("ApplySerialInput");
+        if((string)serialOf.GetValue(flow)!!="100")throw new Exception("Typing the previous serial again after advancing must configure it: "+serialOf.GetValue(flow));
+        // 次へ進んだときの覚えが古いまま(以前の合格の動き)でも確定される。
+        flowType.GetMethod("Advance")!.Invoke(flow,null);serialBox.Text=(string)serialOf.GetValue(flow)!;
+        serialBox.Text="100";Call("ApplySerialInput");
+        if((string)serialOf.GetValue(flow)!!="100" || !((Label)Field("_flowLabel")).Text.Contains("S/N 100"))throw new Exception("A stale applied-serial memory must not skip the input: "+((Label)Field("_flowLabel")).Text);
+        serialBox.Text="";Call("ApplySerialInput");
+        Console.WriteLine("PASS typing the previous serial again after advancing to the next one is applied");
         string[] fileArgs = args.Where(arg => !arg.StartsWith("--", StringComparison.Ordinal)).ToArray();
         if(fileArgs.Length==2)
         {
