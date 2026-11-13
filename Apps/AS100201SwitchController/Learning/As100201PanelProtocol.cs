@@ -20,7 +20,8 @@ internal sealed class As100201PanelProtocol : IDisposable
     public const string HelloRequest = "AS100201_PANEL_PING";
     public const string HelloPrefix = "AS100201_PANEL_READY:";
     // 版 2(2026-11-13): USB と Wi-Fi の両方でつながり、電池残量 BATT: を送る。版 1 の行はそのまま。
-    public const int PanelVersion = 2;
+    // 版 3(2026-11-13): ノズルは方向だけ、スペーサーは厚さと表示との差を付ける、パネルに触れたら HOLD を送る。
+    public const int PanelVersion = 3;
     private string? _helloReply;
 
     public event Action<As100201PanelCommand>? CommandReceived;
@@ -76,7 +77,7 @@ internal sealed class As100201PanelProtocol : IDisposable
         lock (_gate) _verified = true;
     }
 
-    // 確認応答の版を見る。版 1 なら null、それ以外は人に見せる理由。
+    // 確認応答の版を見る。今の版なら null、それ以外は人に見せる理由。
     public static string? CheckHello(string? reply)
     {
         string version = reply is not null && reply.StartsWith(HelloPrefix, StringComparison.Ordinal)
@@ -222,7 +223,9 @@ internal sealed class As100201PanelProtocol : IDisposable
             else
             {
                 ArduinoDiagnosticLog.Write("PANEL_COMMAND_DROPPED", "復旧確認中の操作を破棄 / " + line);
-                TrySend(Nak("接続の確認中です。少し待ってから押し直してください"));
+                // HOLD は人が待つ返事ではないので、断りを返さない(パネルの表示を乱さない)。
+                if (command.Kind != As100201PanelCommandKind.Hold)
+                    TrySend(Nak("接続の確認中です。少し待ってから押し直してください"));
             }
         }
         else if (!line.StartsWith(HelloPrefix, StringComparison.Ordinal))

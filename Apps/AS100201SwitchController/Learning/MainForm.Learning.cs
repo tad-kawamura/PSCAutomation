@@ -215,7 +215,8 @@ internal sealed partial class MainForm : Form
                 Stopwatch.GetElapsedTime(receivedAt).TotalSeconds >= 1)
             {
                 ArduinoDiagnosticLog.Write("PANEL_COMMAND_DROPPED", "遅延または復旧前の操作を破棄 / " + command.Line);
-                _panel.TrySend(As100201PanelProtocol.Nak("接続の確認中です。押し直してください"));
+                if (command.Kind != As100201PanelCommandKind.Hold)
+                    _panel.TrySend(As100201PanelProtocol.Nak("接続の確認中です。押し直してください"));
                 return;
             }
             ExecutePanelCommand(command);
@@ -236,13 +237,15 @@ internal sealed partial class MainForm : Form
         }
         try
         {
-            if (command.Kind == As100201PanelCommandKind.Operation && !_learning.Blocked &&
-                _measurementStarted && _logger.IsInitialized && _templateLoaded)
+            if (_measurementStarted && _logger.IsInitialized && _templateLoaded)
             {
-                // 測定中に操作ボタンが押されたら止めて、そこまでの波形を測定の行として残す(人の案)。
+                // 測定中にパネルが押されたら止めて、そこまでの波形を測定の行として残す(人の案)。
+                // 版 3(2026-11-13、人の指示)からは、操作ボタンを確定したときだけでなく、パネルに触れた時点(HOLD:
+                // 1 画面目のボタン・暗い画面を明るくしたとき)・完了・取消でも止める。人が次の行動を決めた所までを
+                // 学習データとして切り出すため。保存できず止まっているときも止める(sw4 と同じく測定の行は覚えておく)。
                 _logger.Stop();
                 _measurementState.ReadAfter = 0;
-                AppendLog("操作ボタンのため WAVE LOGGER へ停止を要求しました。");
+                AppendLog($"タッチパネル（{command.DisplayName}）のため WAVE LOGGER へ停止を要求しました。");
                 LearningMeasurementStopped(As100201LearningSession.StopByPanel);
                 RefreshLoggerState();
             }

@@ -38,10 +38,10 @@ internal static class LearningChecks
         panel.Disconnected += () => disconnected++;
         link.LineSent += sent.Add;
 
-        // 並べる行は全部パネルの行として読め、重複がない(着磁 1・減磁 2・ノズル 12・スペーサー 4・完了・取消)。
+        // 並べる行は全部パネルの行として読め、重複がない(着磁 1・減磁 2・ノズル 4・スペーサー 4・完了・取消・HOLD)。
         var lines = As100201VirtualPanelLink.AllCommands.Select(c => c.Line).ToList();
-        Check(lines.Count == 21 && lines.Distinct().Count() == 21 && lines.Contains("ACT:NOZZLE:R:OUT:3") && lines.Contains("ACT:SPACER:P:DOWN") &&
-            lines[^2] == "DONE" && lines[^1] == "UNDO", "virtual panel command list");
+        Check(lines.Count == 14 && lines.Distinct().Count() == 14 && lines.Contains("ACT:NOZZLE:R:OUT") && lines.Contains("ACT:SPACER:P:DOWN:0.450:NA") &&
+            lines[^3] == "DONE" && lines[^2] == "UNDO" && lines[^1] == "HOLD", "virtual panel command list");
         Check(!link.Press("ACT:MAG") && received.Count == 0, "pressed before connection");
 
         await panel.VerifyAsync();
@@ -49,8 +49,8 @@ internal static class LearningChecks
         // 定期応答はアプリの中で 250ms ごとに出る。1 秒の安定確認のあとに受け付ける。
         await Task.Delay(1600);
         Check(panel.InputReady, "virtual panel frames did not make input ready");
-        Check(link.Press("ACT:NOZZLE:P:IN:2") && received.Count == 1 && received[0].DisplayName == "ノズル P 側（押し込む・普通）", "virtual press not delivered");
-        Check(panel.TrySend(As100201PanelProtocol.Ack(received[0])) && sent.SequenceEqual(new[] { "ACK:ACT:NOZZLE:P:IN:2" }), "reply to virtual panel not shown");
+        Check(link.Press("ACT:NOZZLE:P:IN") && received.Count == 1 && received[0].DisplayName == "ノズル P 側（近づける）", "virtual press not delivered");
+        Check(panel.TrySend(As100201PanelProtocol.Ack(received[0])) && sent.SequenceEqual(new[] { "ACK:ACT:NOZZLE:P:IN" }), "reply to virtual panel not shown");
 
         // 定期応答を止める: 1 秒で受け付けなくなり、押しても NAK。再開すると 1 秒後に戻る。
         link.FramesPaused = true;
@@ -86,7 +86,7 @@ internal static class LearningChecks
             Check(dev.UsesVirtualPanel && dev.IsLearningMode && dev.Text == As100201Application.LearningWindowTitle + As100201Application.VirtualPanelTitleSuffix, "virtual panel title");
             Check(dev.Controls.Count == 5 && FindLabels(dev).Any(l => l.Text.StartsWith("パネルへの返事")), "virtual panel controls missing");
         }
-        Pass("virtual panel (--virtual-panel, dev only): 21 panel lines, same protocol path, 250 ms frames -> ready, ACK/NAK shown, pause -> stale + NAK, unplug/replug reconnect, only with the switch in learning mode");
+        Pass("virtual panel (--virtual-panel, dev only): 14 panel lines, same protocol path, 250 ms frames -> ready, ACK/NAK shown, pause -> stale + NAK, unplug/replug reconnect, only with the switch in learning mode");
     }
 
     // 1. パネルの行の読み取り
@@ -96,28 +96,42 @@ internal static class LearningChecks
             c.Operation == As100201Operation.Magnetize && c.Direction == "" && c.Degree == "" && c.OperationText == "着磁" && c.DisplayName == "着磁", "MAG");
         Check(As100201PanelCommand.TryParse("ACT:DEMAG:FULL", out c) && c.Operation == As100201Operation.Demagnetize && c.Degree == "しっかり" && c.DisplayName == "減磁（しっかり）", "DEMAG FULL");
         Check(As100201PanelCommand.TryParse("ACT:DEMAG:TAP", out c) && c.Degree == "ちょんちょん", "DEMAG TAP");
-        Check(As100201PanelCommand.TryParse("ACT:NOZZLE:P:IN:2", out c) && c.Operation == As100201Operation.NozzleP && c.Direction == "押し込む" &&
-            c.Degree == "普通" && c.OperationText == "ノズル P" && c.DisplayName == "ノズル P 側（押し込む・普通）", "NOZZLE P IN 2");
-        Check(As100201PanelCommand.TryParse("ACT:NOZZLE:R:OUT:1", out c) && c.Operation == As100201Operation.NozzleR && c.Direction == "外に出す" && c.Degree == "微調整", "NOZZLE R OUT 1");
-        Check(As100201PanelCommand.TryParse("ACT:NOZZLE:R:IN:3", out c) && c.Degree == "大きく", "NOZZLE R IN 3");
-        Check(As100201PanelCommand.TryParse("ACT:SPACER:P:UP", out c) && c.Operation == As100201Operation.SpacerP && c.Direction == "上げる" && c.Degree == "" &&
-            c.DisplayName == "スペーサー P 側（上げる）", "SPACER P UP");
-        Check(As100201PanelCommand.TryParse("ACT:SPACER:R:DOWN", out c) && c.Operation == As100201Operation.SpacerR && c.Direction == "下げる", "SPACER R DOWN");
+        // 版 3(2026-11-13): ノズルは方向だけ(IN=近づける、OUT=離す)。
+        Check(As100201PanelCommand.TryParse("ACT:NOZZLE:P:IN", out c) && c.Operation == As100201Operation.NozzleP && c.Direction == "近づける" &&
+            c.Degree == "" && c.Thickness == "" && c.OperationText == "ノズル P" && c.DisplayName == "ノズル P 側（近づける）", "NOZZLE P IN");
+        Check(As100201PanelCommand.TryParse("ACT:NOZZLE:R:OUT", out c) && c.Operation == As100201Operation.NozzleR && c.Direction == "離す" && c.Degree == "", "NOZZLE R OUT");
+        // スペーサーは向き・厚さ(箱の表示)・表示との差(μm。NA は測っていない)。差は「程度」の列の言葉にする。
+        Check(As100201PanelCommand.TryParse("ACT:SPACER:P:UP:0.450:+2", out c) && c.Operation == As100201Operation.SpacerP && c.Direction == "上げる" &&
+            c.Thickness == "0.450" && c.Degree == "差+2μm" && c.DisplayName == "スペーサー P 側（上げる・0.450・差+2μm）", "SPACER P UP +2");
+        Check(As100201PanelCommand.TryParse("ACT:SPACER:R:DOWN:0.271:-3", out c) && c.Operation == As100201Operation.SpacerR && c.Direction == "下げる" && c.Degree == "差-3μm", "SPACER R DOWN -3");
+        Check(As100201PanelCommand.TryParse("ACT:SPACER:R:DOWN:0.593:0", out c) && c.Degree == "差0μm", "SPACER diff 0");
+        Check(As100201PanelCommand.TryParse("ACT:SPACER:P:UP:0.400:NA", out c) && c.Degree == "差未測定" && c.Thickness == "0.400", "SPACER not measured");
+        Check(As100201PanelCommand.TryParse("ACT:SPACER:P:UP:0.400:+50", out _) && !As100201PanelCommand.TryParse("ACT:SPACER:P:UP:0.400:+51", out _), "SPACER diff limit");
         Check(As100201PanelCommand.TryParse("DONE", out c) && c.Kind == As100201PanelCommandKind.Done && c.Operation is null && c.DisplayName == "完了", "DONE");
         Check(As100201PanelCommand.TryParse("UNDO", out c) && c.Kind == As100201PanelCommandKind.Undo && c.DisplayName == "取消", "UNDO");
-        foreach (string bad in new[] { "ACT", "ACT:", "ACT:MAG:1", "ACT:DEMAG", "ACT:DEMAG:HALF", "ACT:NOZZLE:P:IN", "ACT:NOZZLE:P:IN:4", "ACT:NOZZLE:X:IN:2",
-            "ACT:NOZZLE:P:UP:2", "ACT:SPACER:P", "ACT:SPACER:P:IN", "ACT:SPACER:P:UP:0.1", "act:mag", "DONE ", "UNDO:1", "PC_go", "DIAG_FRAME:1:250", "AS100201_PANEL_READY:1", "" })
+        Check(As100201PanelCommand.TryParse("HOLD", out c) && c.Kind == As100201PanelCommandKind.Hold && c.Operation is null && c.DisplayName == "パネルに触れた", "HOLD");
+        // 版 2 までの行(ノズルの程度・厚さのないスペーサー)は受け付けない。
+        foreach (string bad in new[] { "ACT", "ACT:", "ACT:MAG:1", "ACT:DEMAG", "ACT:DEMAG:HALF", "ACT:NOZZLE:P:IN:2", "ACT:NOZZLE:P", "ACT:NOZZLE:X:IN",
+            "ACT:NOZZLE:P:UP", "ACT:SPACER:P", "ACT:SPACER:P:UP", "ACT:SPACER:R:DOWN", "ACT:SPACER:P:IN:0.450:0", "ACT:SPACER:P:UP:0.45:0", "ACT:SPACER:P:UP:.4500:0",
+            "ACT:SPACER:P:UP:0.450", "ACT:SPACER:P:UP:0.450:2", "ACT:SPACER:P:UP:0.450:+0", "ACT:SPACER:P:UP:0.450:na", "ACT:SPACER:P:UP:0.450:+2:1",
+            "act:mag", "DONE ", "UNDO:1", "HOLD:1", "PC_go", "DIAG_FRAME:1:250", "AS100201_PANEL_READY:1", "" })
             Check(!As100201PanelCommand.TryParse(bad, out _), "accepted bad panel line: " + bad);
-        Check(As100201PanelProtocol.Ack(As100201PanelCommand.Parse("ACT:NOZZLE:P:IN:2")) == "ACK:ACT:NOZZLE:P:IN:2", "ACK format");
+        Check(As100201PanelProtocol.Ack(As100201PanelCommand.Parse("ACT:NOZZLE:P:IN")) == "ACK:ACT:NOZZLE:P:IN", "ACK format");
         Check(As100201PanelProtocol.Nak("理由") == "NAK:理由", "NAK format");
-        // 版 2(2026-11-13、USB / Wi-Fi と電池残量)。版 1 のスケッチは書き込み直しを求める。
-        Check(As100201PanelProtocol.CheckHello("AS100201_PANEL_READY:2") is null, "panel version 2 rejected");
+        // 代わりのパネル: スペーサーだけ厚さと差を差し替える。
+        Check(As100201VirtualPanelLink.WithSpacer(As100201PanelCommand.Parse("ACT:SPACER:R:UP:0.450:NA"), "0.510", "-1").Line == "ACT:SPACER:R:UP:0.510:-1" &&
+            As100201VirtualPanelLink.WithSpacer(As100201PanelCommand.Parse("ACT:MAG"), "0.510", "-1").Line == "ACT:MAG", "virtual spacer");
+        Check(As100201SpacerCatalog.Thicknesses.Count == 49 && As100201SpacerCatalog.Thicknesses.Distinct().Count() == 49 &&
+            As100201SpacerCatalog.Thicknesses.All(t => As100201PanelCommand.TryParse($"ACT:SPACER:P:UP:{t}:NA", out _)) &&
+            As100201SpacerCatalog.Differences.All(d => As100201PanelCommand.TryParse($"ACT:SPACER:P:UP:0.450:{d}", out _)), "spacer catalog");
+        // 版 3(2026-11-13、ノズルは方向だけ・スペーサーの厚さ・HOLD)。版 2 までのスケッチは書き込み直しを求める。
+        Check(As100201PanelProtocol.CheckHello("AS100201_PANEL_READY:3") is null, "panel version 3 rejected");
+        Check(As100201PanelProtocol.CheckHello("AS100201_PANEL_READY:2")?.Contains("版 2") == true, "panel version 2 accepted");
         Check(As100201PanelProtocol.CheckHello("AS100201_PANEL_READY:1")?.Contains("版 1") == true, "panel version 1 accepted");
-        Check(As100201PanelProtocol.CheckHello("AS100201_PANEL_READY:3")?.Contains("版 3") == true, "panel version 3 accepted");
         Check(As100201PanelProtocol.CheckHello("AS100201_READY:2") is not null && As100201PanelProtocol.CheckHello(null)?.Contains("不明") == true, "Arduino reply accepted as panel");
         Check(As100201PanelProtocol.HelloRequest != "AS100201_PING" && !As100201PanelProtocol.HelloPrefix.StartsWith(As100201ArduinoProtocol.HelloPrefix) &&
             !As100201ArduinoProtocol.HelloPrefix.StartsWith(As100201PanelProtocol.HelloPrefix), "panel and Arduino hello strings collide");
-        Pass("panel lines: ACT:MAG / DEMAG / NOZZLE / SPACER / DONE / UNDO parsed with ledger words; malformed lines rejected; ACK/NAK; panel version 2 only");
+        Pass("panel lines (v3): ACT:MAG / DEMAG / NOZZLE direction / SPACER thickness+diff / DONE / UNDO / HOLD parsed with ledger words; v2 and malformed lines rejected; ACK/NAK; panel version 3 only");
     }
 
     // 2. 台帳の行の組み立て(CSV の形)
@@ -127,8 +141,8 @@ internal static class LearningChecks
         Check(As100201LedgerRow.HeaderLine == "日時,種類,側,位相,停止のきっかけ,操作,方向,程度,厚さ,ファイル,備考", "header columns");
         var measurement = new As100201LedgerRow(time, As100201LedgerEventKind.Measurement) { Side = "PC（2回押し）", Phase = "75", StopTrigger = "sw4", File = "20261109_130507_PC2.xdt" };
         Check(measurement.ToCsvLine() == "2026-11-09 13:05:07,測定,PC（2回押し）,75,sw4,,,,,20261109_130507_PC2.xdt,", "measurement row");
-        var operation = new As100201LedgerRow(time, As100201LedgerEventKind.Operation) { Operation = "ノズル P", Direction = "押し込む", Degree = "普通", Note = "完了の取消、直前の測定なし" };
-        Check(operation.ToCsvLine() == "2026-11-09 13:05:07,操作,,,,ノズル P,押し込む,普通,,,完了の取消、直前の測定なし", "operation row");
+        var operation = new As100201LedgerRow(time, As100201LedgerEventKind.Operation) { Operation = "ノズル P", Direction = "近づける", Degree = "", Note = "完了の取消、直前の測定なし" };
+        Check(operation.ToCsvLine() == "2026-11-09 13:05:07,操作,,,,ノズル P,近づける,,,,完了の取消、直前の測定なし", "operation row");
         Check(new As100201LedgerRow(time, As100201LedgerEventKind.Done).KindText == "完了" && new As100201LedgerRow(time, As100201LedgerEventKind.Undo).KindText == "取消", "kind text");
         // 保存先は exe の隣の「学習データ」(2026-11-10。雛形のフォルダーではない)。台帳の「ファイル」列は日付フォルダー付き。
         Check(MainForm.LearningDataDirectory(@"C:\apps\AS100201") == @"C:\apps\AS100201\学習データ" && MainForm.LedgerFileName == "調整記録.csv" &&
@@ -219,7 +233,7 @@ internal static class LearningChecks
         var created = new List<string>();
         var (s, ledger, saved, logs, _) = NewSession(new DateTime(2026, 11, 9, 9, 0, 0), created);
         var mag = As100201PanelCommand.Parse("ACT:MAG");
-        var nozzle = As100201PanelCommand.Parse("ACT:NOZZLE:P:IN:2");
+        var nozzle = As100201PanelCommand.Parse("ACT:NOZZLE:P:IN");
         var done = As100201PanelCommand.Parse("DONE");
         var undo = As100201PanelCommand.Parse("UNDO");
 
@@ -233,7 +247,7 @@ internal static class LearningChecks
         // 台帳の前に保存先を、xdt の前に日付フォルダーを作る(2026-11-10)。
         Check(created.Contains(@"C:\fake") && created[^1] == @"C:\fake\20261109", "save folder / date folder not created before writing");
         // 操作 → 測定(操作ボタンで止めた) → 操作 → 測定(LOGGER が自動で止まった: 行と xdt を一緒に)
-        Check(s.HandleCommand(nozzle) == "ACK:ACT:NOZZLE:P:IN:2" && ledger.Rows[^1] is { Operation: "ノズル P", Direction: "押し込む", Degree: "普通", Note: "" }, "operation after measurement");
+        Check(s.HandleCommand(nozzle) == "ACK:ACT:NOZZLE:P:IN" && ledger.Rows[^1] is { Operation: "ノズル P", Direction: "近づける", Degree: "", Thickness: "", Note: "" }, "operation after measurement");
         s.MeasurementStopped("CR（2回押し）", "CR2", "250", As100201LearningSession.StopByPanel);
         s.MeasurementCompleted("CR（2回押し）", "CR2", "250");
         Check(ledger.Rows[^1] is { Kind: As100201LedgerEventKind.Measurement, Side: "CR（2回押し）", Phase: "250", StopTrigger: "操作ボタン", File: @"20261109\20261109_090004_CR2.xdt" }, "measurement stopped by panel");
@@ -254,13 +268,14 @@ internal static class LearningChecks
         Check(s.HandleCommand(undo) == "ACK:UNDO" && ledger.Rows[^1] is { Kind: As100201LedgerEventKind.Undo } && ledger.Rows[^1].Note.StartsWith("取消の対象: 09:00:") &&
             ledger.Rows[^1].Note.EndsWith(" 着磁") && s.OperationCount == 3, "undo row");
         Check(s.HandleCommand(undo).StartsWith("NAK:"), "second undo");
-        Check(s.HandleCommand(nozzle) == "ACK:ACT:NOZZLE:P:IN:2" && ledger.Rows[^1].Note == "直前の測定なし", "state restored after undo");
+        Check(s.HandleCommand(nozzle) == "ACK:ACT:NOZZLE:P:IN" && ledger.Rows[^1].Note == "直前の測定なし", "state restored after undo");
         // 測定の次の操作は取り消せるが、測定を挟むと取り消せない。
         s.MeasurementStopped("PC", "PC", "0", As100201LearningSession.StopBySwitch);
         s.MeasurementCompleted("PC", "PC", "0");
         Check(s.HandleCommand(undo).StartsWith("NAK:"), "undo across measurement");
-        Check(s.HandleCommand(As100201PanelCommand.Parse("ACT:SPACER:R:DOWN")) == "ACK:ACT:SPACER:R:DOWN" && ledger.Rows[^1].Note == "", "spacer after measurement");
-        Check(s.HandleCommand(undo) == "ACK:UNDO" && ledger.Rows[^1].Note.EndsWith(" スペーサー R（下げる）"), "undo spacer");
+        Check(s.HandleCommand(As100201PanelCommand.Parse("ACT:SPACER:R:DOWN:0.450:+2")) == "ACK:ACT:SPACER:R:DOWN:0.450:+2" && ledger.Rows[^1] is { Operation: "スペーサー R", Direction: "下げる", Thickness: "0.450", Degree: "差+2μm", Note: "" }, "spacer after measurement");
+        Check(s.HandleCommand(As100201PanelCommand.Parse("HOLD")) == "ACK:HOLD" && ledger.Rows[^1].Operation == "スペーサー R", "hold wrote a ledger row");
+        Check(s.HandleCommand(undo) == "ACK:UNDO" && ledger.Rows[^1].Note.EndsWith(" スペーサー R（下げる・0.450・差+2μm）"), "undo spacer");
         // 完了 → 測定: 新しい個体(件数を 0 から)。
         Check(s.HandleCommand(done) == "ACK:DONE", "done 2");
         s.MeasurementStopped("", "", "", As100201LearningSession.StopBySwitch);
@@ -390,7 +405,7 @@ internal static class LearningChecks
         public event Action<string>? LineReceived;
         public event Action? Disconnected;
         public bool IsConnected { get; private set; }
-        public string HelloReply = "AS100201_PANEL_READY:2";
+        public string HelloReply = "AS100201_PANEL_READY:3";
         public bool Fail;
         public List<string> Sent { get; } = new();
         public List<string> Requests { get; } = new();
@@ -432,8 +447,8 @@ internal static class LearningChecks
         for (int i = 0; i < 6; i++) { link.Receive($"DIAG_FRAME:{seq}:{seq * 250}"); seq++; await Task.Delay(250); }
         Check(panel.InputReady, "not ready after 1 s of frames");
         long version = panel.RequestVersion;
-        link.Receive("ACT:NOZZLE:R:OUT:3");
-        Check(received.Count == 1 && received[0].Line == "ACT:NOZZLE:R:OUT:3" && link.Sent.Count == 1, "command while ready not delivered");
+        link.Receive("ACT:NOZZLE:R:OUT");
+        Check(received.Count == 1 && received[0].Line == "ACT:NOZZLE:R:OUT" && link.Sent.Count == 1, "command while ready not delivered");
         // 定期応答が 1 秒止まる: 操作禁止、見張りが知らせる、まだ再接続はしない。
         await Task.Delay(1100);
         Check(!panel.InputReady && panel.IsConnected, "stale frames still ready");
@@ -456,7 +471,7 @@ internal static class LearningChecks
         await panel.MaintainAsync();
         Check(!panel.IsConnected && statuses[^1].Contains("版 9"), "wrong version accepted");
         // 起動通知で古い状態を捨てる。
-        link.HelloReply = "AS100201_PANEL_READY:2";
+        link.HelloReply = "AS100201_PANEL_READY:3";
         await Task.Delay(2100);
         await panel.MaintainAsync();
         for (int i = 0; i < 6; i++) { link.Receive($"DIAG_FRAME:{seq}:{seq * 250}"); seq++; await Task.Delay(250); }

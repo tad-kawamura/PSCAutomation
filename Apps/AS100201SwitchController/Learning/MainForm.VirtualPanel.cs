@@ -59,12 +59,28 @@ internal sealed partial class MainForm : Form
             _virtualCommandComboBox.Items.Add(command);
         _virtualCommandComboBox.SelectedIndex = 0;
         commands.Controls.Add(_virtualCommandComboBox);
+        // スペーサーのときだけ使う: 厚さ(箱の表示)と表示との差(μm)。パネルの 3・4 画面目の代わり。
+        var thickness = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Width = 80, Margin = new Padding(0, 6, 4, 0) };
+        foreach (string t in As100201SpacerCatalog.Thicknesses) thickness.Items.Add(t);
+        thickness.SelectedItem = As100201SpacerCatalog.DefaultThickness;
+        var difference = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Width = 60, Margin = new Padding(0, 6, 8, 0) };
+        foreach (string d in As100201SpacerCatalog.Differences) difference.Items.Add(d);
+        difference.SelectedItem = As100201PanelCommand.NotMeasured;
+        void UpdateSpacerInputs() => thickness.Enabled = difference.Enabled =
+            _virtualCommandComboBox.SelectedItem is As100201PanelCommand { Operation: As100201Operation.SpacerP or As100201Operation.SpacerR };
+        _virtualCommandComboBox.SelectedIndexChanged += (_, _) => UpdateSpacerInputs();
+        UpdateSpacerInputs();
+        commands.Controls.Add(new Label { AutoSize = true, Text = "厚さ", Margin = new Padding(0, 10, 2, 0), ForeColor = SystemColors.ControlText });
+        commands.Controls.Add(thickness);
+        commands.Controls.Add(new Label { AutoSize = true, Text = "差μm", Margin = new Padding(0, 10, 2, 0), ForeColor = SystemColors.ControlText });
+        commands.Controls.Add(difference);
         commands.Controls.Add(VirtualButton("送る", () =>
         {
-            if (_virtualCommandComboBox.SelectedItem is As100201PanelCommand selected) PressVirtualPanel(selected);
+            if (_virtualCommandComboBox.SelectedItem is As100201PanelCommand selected)
+                PressVirtualPanel(As100201VirtualPanelLink.WithSpacer(selected, (string)thickness.SelectedItem!, (string)difference.SelectedItem!));
         }));
-        // よく使うものはボタンにも出す。
-        foreach (string line in new[] { "ACT:MAG", "DONE", "UNDO" })
+        // よく使うものはボタンにも出す。HOLD はパネルに触れた(1 画面目のボタン・暗い画面)ときに送る行。
+        foreach (string line in new[] { "ACT:MAG", "DONE", "UNDO", "HOLD" })
         {
             var command = As100201PanelCommand.Parse(line);
             commands.Controls.Add(VirtualButton(command.DisplayName, () => PressVirtualPanel(command)));

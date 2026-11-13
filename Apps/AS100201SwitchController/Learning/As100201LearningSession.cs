@@ -179,6 +179,8 @@ internal sealed class As100201LearningSession
     // パネルの行を 1 つ処理し、パネルへ返す行(ACK / NAK)を返す。
     public string HandleCommand(As100201PanelCommand command)
     {
+        // パネルに触れた合図(HOLD)は台帳に書かない。LOGGER を止めるのは呼び出し側(MainForm)。
+        if (command.Kind == As100201PanelCommandKind.Hold) return As100201PanelProtocol.Ack(command);
         if (Blocked)
         {
             Log?.Invoke($"{command.DisplayName} を受信しましたが、保存できるまで記録を止めています（{BlockReason}）。");
@@ -204,6 +206,7 @@ internal sealed class As100201LearningSession
             Operation = command.OperationText,
             Direction = command.Direction,
             Degree = command.Degree,
+            Thickness = command.Thickness,
             Note = string.Join("、", notes)
         };
         if (!TryWrite("操作の行", row, out string nak)) return nak;
@@ -256,7 +259,7 @@ internal sealed class As100201LearningSession
 
     private static string DescribeOperation(As100201LedgerRow row)
     {
-        string details = string.Join("・", new[] { row.Direction, row.Degree }.Where(s => s.Length > 0));
+        string details = string.Join("・", new[] { row.Direction, row.Thickness, row.Degree }.Where(s => s.Length > 0));
         return $"{row.Time:HH:mm:ss} {row.Operation}" + (details.Length == 0 ? "" : $"（{details}）");
     }
 

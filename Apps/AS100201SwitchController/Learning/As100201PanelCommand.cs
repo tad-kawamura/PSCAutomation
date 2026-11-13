@@ -1,3 +1,5 @@
+using System.Globalization;
+
 namespace PSCAutomation.Apps.AS100201SwitchController;
 
 internal enum As100201PanelCommandKind
@@ -7,7 +9,9 @@ internal enum As100201PanelCommandKind
     // 完了ボタン(盲栓確認 OK。1 個体の終わり)
     Done,
     // 取消ボタン(直前の操作の記録を無効にする。パネル側で確認「はい」を押したあとに届く)
-    Undo
+    Undo,
+    // パネルに触れた(版 3、2026-11-13)。人が次の行動を決めた合図。測定中なら LOGGER を止める。台帳の操作の行にはしない
+    Hold
 }
 
 internal enum As100201Operation
@@ -21,12 +25,18 @@ internal enum As100201Operation
 }
 
 // タッチパネル(M5Stack Tab5)から届く確定済みの 1 行(SPEC_調整操作の記録.md「タッチパネルとのやり取り」)。
-// 2 画面目の選択と取消の確認はパネルの中で完結し、PC には確定した 1 行だけが届く。
-//   ACT:MAG / ACT:DEMAG:FULL|TAP / ACT:NOZZLE:P|R:IN|OUT:1|2|3 / ACT:SPACER:P|R:UP|DOWN / DONE / UNDO
-// 台帳に書く言葉(操作・方向・程度)はここで決める。スペーサーの厚さは「いずれ決める」なので、まだ受け取らない。
+// 2 画面目以降の選択と取消の確認はパネルの中で完結し、PC には確定した 1 行だけが届く。
+//   ACT:MAG / ACT:DEMAG:FULL|TAP / ACT:NOZZLE:P|R:IN|OUT / ACT:SPACER:P|R:UP|DOWN:<厚さ>:<差> / DONE / UNDO / HOLD
+// 版 3(2026-11-13、人の指示): ノズルは程度を選ばず方向だけ(IN=近づける、OUT=離す)。
+// スペーサーは向きのあとに厚さ(箱の表示、mm。例 0.450)と、表示との差(μm。例 +2 / -1 / 0、測っていなければ NA)を選ぶ。
+// 台帳に書く言葉(操作・方向・程度・厚さ)はここで決める。スペーサーの差は「程度」の列に書く(列を増やさないため。仮決め)。
 internal readonly record struct As100201PanelCommand(
-    string Line, As100201PanelCommandKind Kind, As100201Operation? Operation, string Direction, string Degree)
+    string Line, As100201PanelCommandKind Kind, As100201Operation? Operation, string Direction, string Degree, string Thickness = "")
 {
+    // 表示との差として受け付ける範囲(μm)。パネルが出すのは ±3 程度だが、パネル側の選択肢を広げても PC を直さなくてよいようにする。
+    public const int MaxThicknessDifferenceMicrometers = 50;
+    public const string NotMeasured = "NA";
+
     public string OperationText => Operation switch
     {
         As100201Operation.Magnetize => "着磁",
@@ -38,16 +48,17 @@ internal readonly record struct As100201PanelCommand(
         _ => ""
     };
 
-    // ログに出す名前。例: 「ノズル P 側（押し込む・普通）」「減磁（しっかり）」「完了」
+    // ログに出す名前。例: 「ノズル P 側（近づける）」「スペーサー R 側（上げる・0.450・差+2μm）」「減磁（しっかり）」「完了」
     public string DisplayName
     {
         get
         {
             if (Kind == As100201PanelCommandKind.Done) return "完了";
             if (Kind == As100201PanelCommandKind.Undo) return "取消";
+            if (Kind == As100201PanelCommandKind.Hold) return "パネルに触れた";
             string name = Operation is As100201Operation.NozzleP or As100201Operation.NozzleR
                 or As100201Operation.SpacerP or As100201Operation.SpacerR ? OperationText + " 側" : OperationText;
-            string details = string.Join("・", new[] { Direction, Degree }.Where(s => s.Length > 0));
+            string details = string.Join("・", new[] { Direction, Thickness, Degree }.Where(s => s.Length > 0));
             return details.Length == 0 ? name : $"{name}（{details}）";
         }
     }
@@ -68,6 +79,11 @@ internal readonly record struct As100201PanelCommand(
             result = new(line, As100201PanelCommandKind.Undo, null, "", "");
             return true;
         }
+        if (line == "HOLD")
+        {
+            result = new(line, As100201PanelCommandKind.Hold, null, "", "");
+            return true;
+        }
         if (!line.StartsWith("ACT:", StringComparison.Ordinal)) return false;
         string[] parts = line.Split(':');
         switch (parts[1])
@@ -79,19 +95,40 @@ internal readonly record struct As100201PanelCommand(
                 result = new(line, As100201PanelCommandKind.Operation, As100201Operation.Demagnetize, "",
                     parts[2] == "FULL" ? "しっかり" : "ちょんちょん");
                 return true;
-            case "NOZZLE" when parts.Length == 5 && parts[2] is "P" or "R" && parts[3] is "IN" or "OUT" && parts[4] is "1" or "2" or "3":
+            case "NOZZLE" when parts.Length == 4 && parts[2] is "P" or "R" && parts[3] is "IN" or "OUT":
                 result = new(line, As100201PanelCommandKind.Operation,
                     parts[2] == "P" ? As100201Operation.NozzleP : As100201Operation.NozzleR,
-                    parts[3] == "IN" ? "押し込む" : "外に出す",
-                    parts[4] switch { "1" => "微調整", "2" => "普通", _ => "大きく" });
+                    parts[3] == "IN" ? "近づける" : "離す", "");
                 return true;
-            case "SPACER" when parts.Length == 4 && parts[2] is "P" or "R" && parts[3] is "UP" or "DOWN":
+            case "SPACER" when parts.Length == 6 && parts[2] is "P" or "R" && parts[3] is "UP" or "DOWN" &&
+                IsThickness(parts[4]) && TryDescribeDifference(parts[5], out string difference):
                 result = new(line, As100201PanelCommandKind.Operation,
                     parts[2] == "P" ? As100201Operation.SpacerP : As100201Operation.SpacerR,
-                    parts[3] == "UP" ? "上げる" : "下げる", "");
+                    parts[3] == "UP" ? "上げる" : "下げる", difference, parts[4]);
                 return true;
             default:
                 return false;
         }
+    }
+
+    // 箱の表示の厚さ(mm)。「0.450」の形(整数 1 桁・小数 3 桁)だけ受け付ける。
+    private static bool IsThickness(string text) =>
+        text.Length == 5 && char.IsAsciiDigit(text[0]) && text[1] == '.' &&
+        char.IsAsciiDigit(text[2]) && char.IsAsciiDigit(text[3]) && char.IsAsciiDigit(text[4]);
+
+    // 表示との差(μm)。NA(測っていない)・0・+n・-n。台帳の「程度」の列に書く言葉にする。
+    private static bool TryDescribeDifference(string text, out string description)
+    {
+        description = "";
+        if (text == NotMeasured)
+        {
+            description = "差未測定";
+            return true;
+        }
+        if (text.Length == 0 || (text != "0" && text[0] is not ('+' or '-'))) return false;
+        if (!int.TryParse(text, NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out int value) ||
+            Math.Abs(value) > MaxThicknessDifferenceMicrometers || (value == 0 && text != "0")) return false;
+        description = value == 0 ? "差0μm" : $"差{value:+0;-0}μm";
+        return true;
     }
 }

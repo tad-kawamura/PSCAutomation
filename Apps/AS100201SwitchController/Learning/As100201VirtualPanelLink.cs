@@ -51,7 +51,7 @@ internal sealed class As100201VirtualPanelLink : IAs100201SerialLink
         if (_unplugged)
             throw new InvalidOperationException("タッチパネル（代わり・開発用）は「抜いた状態」です。画面のチェックを外すと再接続します。");
         timingLog?.Invoke("タッチパネル内訳：代わり（開発用）。COM ポートは開かず、画面の代わりのボタンで操作します。");
-        // パネルのスケッチと同じく、専用の確認文字列にだけ版 1 で答える。
+        // パネルのスケッチと同じく、専用の確認文字列にだけ今の版で答える。
         if (request != As100201PanelProtocol.HelloRequest ||
             !isReply(As100201PanelProtocol.HelloPrefix + As100201PanelProtocol.PanelVersion))
             throw new InvalidOperationException("タッチパネル（代わり）の確認応答を受け付けませんでした。");
@@ -107,13 +107,23 @@ internal sealed class As100201VirtualPanelLink : IAs100201SerialLink
         var lines = new List<string> { "ACT:MAG", "ACT:DEMAG:FULL", "ACT:DEMAG:TAP" };
         foreach (string side in new[] { "P", "R" })
             foreach (string direction in new[] { "IN", "OUT" })
-                foreach (string degree in new[] { "1", "2", "3" })
-                    lines.Add($"ACT:NOZZLE:{side}:{direction}:{degree}");
+                lines.Add($"ACT:NOZZLE:{side}:{direction}");
+        // スペーサーは厚さと差の組み合わせが多いので、ここでは既定の厚さ・差「測っていない」で並べ、
+        // 画面の「厚さ」「差」の選択で WithSpacer に差し替えて送る。
         foreach (string side in new[] { "P", "R" })
             foreach (string direction in new[] { "UP", "DOWN" })
-                lines.Add($"ACT:SPACER:{side}:{direction}");
+                lines.Add($"ACT:SPACER:{side}:{direction}:{As100201SpacerCatalog.DefaultThickness}:{As100201PanelCommand.NotMeasured}");
         lines.Add("DONE");
         lines.Add("UNDO");
+        lines.Add("HOLD");
         return lines.Select(As100201PanelCommand.Parse).ToList();
+    }
+
+    // スペーサーの行の厚さと差を差し替える。スペーサー以外はそのまま。
+    public static As100201PanelCommand WithSpacer(As100201PanelCommand command, string thickness, string difference)
+    {
+        if (command.Operation is not (As100201Operation.SpacerP or As100201Operation.SpacerR)) return command;
+        string[] parts = command.Line.Split(':');
+        return As100201PanelCommand.Parse($"ACT:SPACER:{parts[2]}:{parts[3]}:{thickness}:{difference}");
     }
 }
