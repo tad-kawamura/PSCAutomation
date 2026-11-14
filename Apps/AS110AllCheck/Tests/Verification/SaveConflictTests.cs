@@ -53,9 +53,9 @@ internal static class SaveConflictTests
         Check(settings.ExpectedSamples == 6500 && settings.Compression == 5 && settings.DataSheet == "sheet1" && settings.SaveRoot == @"C:\前の保存先" && settings.CurrentCell == "A4",
             "editing the draft does not change the settings (closing the dialog discards the edits)");
         settings.ApplyEdited(draft);
-        Check(settings.ExpectedSamples == 1234 && settings.Compression == 2 && settings.DataSheet == "別シート" && settings.SaveRoot == @"C:\新しい保存先" && settings.CurrentCell == "C7"
+        Check(settings.ExpectedSamples == 1234 && settings.Compression == 2 && settings.DataSheet == "別シート" && settings.SaveRoot == @"C:\前の保存先" && settings.CurrentCell == "C7"
             && settings.CurrentChannel == 1 && settings.PressureChannel == 2 && settings.JudgmentSheet == "sheet1" && settings.PressureCell == "B4",
-            "saving applies every edited grid item and keeps the others");
+            "saving applies every edited grid item and keeps the others (the save folder is not a grid item)");
         Check(!settings.AllowLeakOverride && settings.LeakTestSeconds == 10, "items hidden from the grid (leak settings) are not taken from the draft");
     }
 }

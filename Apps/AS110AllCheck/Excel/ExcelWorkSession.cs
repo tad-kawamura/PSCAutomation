@@ -19,6 +19,8 @@ internal sealed class ExcelWorkSession : IDisposable
     private Dictionary<string,SheetCells>? _baseline;
     private (string Sheet,int Column1,int Column2,int FirstRow1,int FirstRow2,int Count)? _dataArea;
     private string? _approvedEdits;
+    // このアプリが起動した Excel のプロセス ID(起動していない・切れているときは null)。異常終了のあとの後片付けのために覚える(SessionFolders)。
+    public int? ExcelProcessId { get { try { return _app?.ProcessId; } catch { return null; } } }
     public bool Closed { get; private set; }
     public string JudgmentDescription { get; private set; } = "未確認";
     internal ExcelWorkSession() { }

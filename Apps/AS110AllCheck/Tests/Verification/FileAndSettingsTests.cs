@@ -232,6 +232,58 @@ internal static class FileAndSettingsTests
         finally { try { Directory.Delete(Path.GetDirectoryName(root)!, true); } catch { } }
     }
 
+    // 異常終了で残った一時フォルダーの後片付け(SessionFolders)。
+    public static void RunSessionFolders()
+    {
+        string parent = Path.Combine(Path.GetTempPath(), "AS110AllCheck.Verification", Guid.NewGuid().ToString("N"));
+        try
+        {
+            string Folder(string name) { string path = Path.Combine(parent, name); Directory.CreateDirectory(path); File.WriteAllText(Path.Combine(path, "latest.xdt"), "x"); return path; }
+            string Id() => Guid.NewGuid().ToString("N");
+            var now = DateTime.Now;
+            string own = Folder("ver3-" + Id()), running = Folder("ver3-" + Id()), crashed = Folder("ver3-" + Id()), oldRecent = Folder("ver3-" + Id()), oldStale = Folder(Id());
+            string other = Folder("メモ"), almost = Folder("ver3-123");
+            using var ownLock = SessionFolders.Hold(own);
+            using var runningLock = SessionFolders.Hold(running);
+            // 異常終了したフォルダー: lock のファイルだけが残っている(持ち主はいない)。Excel の覚えもある。
+            File.WriteAllText(Path.Combine(crashed, SessionFolders.LockFileName), "");
+            File.WriteAllText(Path.Combine(crashed, SessionFolders.ExcelFileName), "123	456");
+            Directory.SetLastWriteTime(oldStale, now - SessionFolders.UnlockedAge - TimeSpan.FromHours(1));
+            Check(ownLock is not null && runningLock is not null && File.Exists(Path.Combine(own, SessionFolders.LockFileName)), "a folder in use holds its lock file");
+
+            var asked = new List<string>();
+            var notes = SessionFolders.Cleanup(parent, [own], now, folder => { asked.Add(folder); return folder == crashed ? "Excel を終了しました" : null; });
+            Check(Directory.Exists(own) && Directory.Exists(running), "the own folder and a folder locked by a running app are left alone");
+            Check(!Directory.Exists(crashed) && asked.Contains(crashed) && notes.Contains("Excel を終了しました") && notes.Any(n => n.Contains("消しました") && n.Contains(crashed)),
+                "a folder whose owner is gone is removed after its hidden Excel is stopped");
+            Check(Directory.Exists(oldRecent) && !Directory.Exists(oldStale), "a folder without a lock (an older version) is removed only when older than three days");
+            Check(Directory.Exists(other) && Directory.Exists(almost) && !asked.Contains(other), "folders that are not session folders are never touched");
+            Check(SessionFolders.Cleanup(Path.Combine(parent, "無い"), [], now).Count == 0, "a missing parent folder does nothing");
+
+            // 消せないフォルダー(中のファイルを開いている)は残し、次にまた試す。
+            string busy = Folder("ver3-" + Id()); File.WriteAllText(Path.Combine(busy, SessionFolders.LockFileName), "");
+            using (new FileStream(Path.Combine(busy, "latest.xdt"), FileMode.Open, FileAccess.Read, FileShare.None))
+                Check(SessionFolders.Cleanup(parent, [own], now, _ => null).Any(n => n.Contains("消せませんでした") && n.Contains(busy)) && Directory.Exists(busy), "a folder that cannot be removed is reported and kept");
+            Check(SessionFolders.Cleanup(parent, [own], now, _ => null).Any(n => n.Contains("消しました")) && !Directory.Exists(busy), "it is removed at the next start");
+
+            // 覚えた Excel かどうか: 名前が EXCEL で、起動時刻が合うものだけ(プロセス ID は使い回される)。
+            Check(SessionFolders.ReadExcelProcess(own) is null, "no record gives nothing");
+            using var self = System.Diagnostics.Process.GetCurrentProcess();
+            SessionFolders.WriteExcelProcess(own, self.Id);
+            Check(SessionFolders.ReadExcelProcess(own) == (self.Id, self.StartTime.Ticks), "the process id and start time are recorded");
+            Check(SessionFolders.StopHiddenExcel(own) is null && !self.HasExited, "a recorded process that is not Excel is never stopped");
+            long t = now.Ticks;
+            Check(SessionFolders.IsRecordedExcel("EXCEL", t, t) && SessionFolders.IsRecordedExcel("excel", t + TimeSpan.FromSeconds(1).Ticks, t)
+                && !SessionFolders.IsRecordedExcel("EXCEL", t + TimeSpan.FromSeconds(5).Ticks, t) && !SessionFolders.IsRecordedExcel("notepad", t, t),
+                "only an Excel process started at the recorded time matches");
+            File.WriteAllText(Path.Combine(own, SessionFolders.ExcelFileName), "こわれた");
+            Check(SessionFolders.ReadExcelProcess(own) is null && SessionFolders.StopHiddenExcel(own) is null, "a broken record is ignored");
+            ownLock!.Dispose();
+            Check(!File.Exists(Path.Combine(own, SessionFolders.LockFileName)), "the lock file disappears when it is released");
+        }
+        finally { try { Directory.Delete(parent, true); } catch { } }
+    }
+
     private static string Message(Action action)
     {
         try { action(); return ""; }

@@ -24,7 +24,9 @@ internal sealed class TransferSettings
     public string CurrentCell { get; set; } = "A4";
     [DisplayName("圧力の開始セル")]
     public string PressureCell { get; set; } = "B4";
-    [DisplayName("保存先フォルダ")]
+    // 前回の保存先(「保存先選択」の画面の初期フォルダーに使う)。転送設定の表には出さない(2026-11-14、全体見直し・区切り 5、人の指示。
+    // それまでは表で手打ちでき、無いパスを打つとそのままフォルダーが作られた)。保存先は「保存先選択」のボタンで選ぶ。
+    [Browsable(false)]
     public string SaveRoot { get; set; } = "";
     // 漏れ試験の自動判定(2026-11-12)。PC ごとに覚える。古い版はこの項目を読み飛ばす。
     // 回避のチェックは転送設定の画面の下に置く(表の中には出さない)。秒数・しきい値はメイン画面の記入欄。

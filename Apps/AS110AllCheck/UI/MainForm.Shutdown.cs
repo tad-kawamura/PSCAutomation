@@ -92,6 +92,7 @@ internal sealed partial class MainForm
         RunShutdownStep("遅延観測の終了", StopPcDelayObservation);
         RunShutdownStep("漏れ試験の中断", () => _leakCancel?.Cancel());
         RunShutdownStep("Excelの解放", () => _excel?.Dispose());
+        RunShutdownStep("一時フォルダーの印の解放", ReleaseTemporaryFolderLocks);
         RunShutdownStep("一時測定ファイルの削除", () =>
         {
             if (Directory.Exists(_sessionFolder)) Directory.Delete(_sessionFolder, true);

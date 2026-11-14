@@ -622,6 +622,7 @@ internal sealed partial class MainForm : Form
             // 空文字を書くと見出しの「S/N 数字」が無くなり、S/N を入れた後の転送で置き換えられず、S/N の無い Excel・PDF が保存される(事前準備が S/N を待つのと同じ理由)。
             _excel=ExcelWorkSession.Open(ExcelTemplatePath,ExcelWorkPath,_capturePath,ModelTransferSettings,_flow.Model,
                 _flow.Mode==TestMode.Production && !_flow.SerialMissing?_flow.Serial:"-",_flow.MeasuredAt,_excel,AppendLog);
+            RecordExcelProcess();
             var calculationTimer=Stopwatch.StartNew();
             bool pass=await _excel.IsPassAsync();
             _excelJudgmentError="";
@@ -1031,7 +1032,6 @@ internal sealed partial class MainForm : Form
             AppendLog("転送設定：保存しません / "+string.Join(" ",problems));
             ErrorNotification.Show(dialog,"この設定は保存できません。直してから「設定保存」を押してください（やめるなら × で閉じる）。\n\n・"+string.Join("\n・",problems),"転送設定の確認",MessageBoxButtons.OK,MessageBoxIcon.Warning);
         };
-        string previousSaveRoot=_transferSettings.SaveRoot;
         if(dialog.ShowDialog(this)!=DialogResult.OK){AppendLog("転送設定：保存せずに閉じました（設定は変えていません）。");return;}
         RunOperation("転送設定保存",()=>{
             // 設定が変わるので、前の設定で転送した結果では保存させない(転送し直す)。
@@ -1041,7 +1041,5 @@ internal sealed partial class MainForm : Form
             _transferSettings.AllowLeakOverride=allowLeakOverride.Checked;_transferSettings.Save();
             return "設定しました。"+(overrideChanged?(allowLeakOverride.Checked?"漏れ判定の不合格を人の判断で合格にできます。":"漏れ判定の不合格では合格にできません。"):"");});
         UpdateControls();
-        // 転送設定の「保存先フォルダ」を書き換えたときは、「保存先選択」で選んだのと同じ扱いにする(変えていなければ今の保存先のまま)。
-        if(_transferSettings.SaveRoot!=previousSaveRoot && _transferSettings.SaveRoot.Length>0) SelectSaveRoot(_transferSettings.SaveRoot);
     }
 }

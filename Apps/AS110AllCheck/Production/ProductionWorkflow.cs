@@ -110,8 +110,6 @@ internal sealed class ProductionWorkflow
     public bool LeakNeedsOverride => Mode == TestMode.Production && !ShippingData && HasSaved && LeakChecks > 0 && LastLeakOutcome is LeakOutcome.Fail or LeakOutcome.Unmeasurable;
     // 保存するファイル名(拡張子なし)。末尾の点数「_6500」は 2026-11-12 にやめた(人の指示。AS110-006 は 13000 点で名前と合わなくなるため)。
     public string BaseName => $"{Model.Name}_SN{Serial}_{MeasuredAt:yyyyMMdd}";
-    // 2026-11-12 より前の版が付けていた名前(末尾 _6500)。同じ S/N の保存ファイルを探すときに、こちらも見る。
-    public string LegacyBaseName => BaseName + "_6500";
     public void Configure(string serial, ProductModel model) => ConfigureFor(serial, model, null);
     // 出荷データ(データ取り２)の工程を含めて設定する。judgedModel は判定に使った型式(ふつうは null)。
     public void ConfigureFor(string serial, ProductModel model, ProductModel? judgedModel)

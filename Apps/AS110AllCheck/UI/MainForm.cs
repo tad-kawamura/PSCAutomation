@@ -49,6 +49,9 @@ internal sealed partial class MainForm : Form
     protected override async void OnShown(EventArgs e)
     {
         base.OnShown(e);
+        // 使う一時フォルダーに印を置いてから、前の起動の残りを片づける(SessionFolders)。
+        HoldTemporaryFolders();
+        _ = CleanupLeftoversAsync();
         // 設定ファイルを読めずに初期値で起動したときは、最初に知らせる(TransferSettings.LoadFrom)。
         if (_transferSettings.LoadWarning is { } warning)
         {
