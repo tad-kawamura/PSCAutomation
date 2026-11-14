@@ -798,11 +798,9 @@ internal sealed partial class MainForm : Form
             return(_flow.ShippingData?$"Excel・PDF・LOGGERをすべて保存しました（{root}）。「完了」を押してください（漏れ試験はしません）。":"Excel・PDF・LOGGERをすべて保存しました。漏れチェックを行ってください。")+keptNote;
         });
     }
-    // 作業用 Excel の書き換えを見せて、パスワードを聞く。合って「このまま保存する」なら true。検査では差し替える。
-    private Func<IReadOnlyList<WorkbookEdit>,bool>? _confirmWorkbookEditsOverride;
+    // 作業用 Excel の書き換えを見せて、パスワードを聞く。合って「このまま保存する」なら true。
     private bool ConfirmWorkbookEdits(IReadOnlyList<WorkbookEdit> edits)
     {
-        if(_confirmWorkbookEditsOverride is { } replaced)return replaced(edits);
         UseWaitCursor=false;
         try
         {
@@ -990,11 +988,9 @@ internal sealed partial class MainForm : Form
             return shippingNote+(parts.Count==0?"選んだS/Nはすでにその状態でした。":string.Join("。",parts)+"。");
         });
     }
-    // 出荷データの消去の確認(既定は「いいえ」)。検査では差し替える。
-    private Func<IReadOnlyList<ShippingDataFound>,bool>? _confirmDeleteShippingDataOverride;
+    // 出荷データの消去の確認(既定は「いいえ」)。
     private bool ConfirmDeleteShippingData(IReadOnlyList<ShippingDataFound> found)
     {
-        if(_confirmDeleteShippingDataOverride is { } replaced)return replaced(found);
         using var dialog=new LeakOverrideDialog(ShippingDataDeleteQuestion(found),Font,"保護の解除：出荷データの消去");
         dialog.Shown+=(_,_)=>ActivateJudgmentNotice(dialog,dialog.NoButton);
         return dialog.ShowDialog(this)==DialogResult.Yes;

@@ -133,6 +133,14 @@ GitHubへのpushは運用PCへの配布ではありません。オフライン�
 
 YDT一時保存失敗の推定原因、当面の単発収集への変更と検証範囲は [調査記録](docs/data-acquisition-save-issue.md) を参照してください。マニュアルトリガ運用の長期方針は検討中です。
 
+### 作業用 Excel を書き換えたまま保存するときのパスワード（2026-11-14）
+
+正式保存のとき、作業用 Excel の規格値などが雛形から書き換えられていると、書き換えたところの一覧とパスワードの欄が出ます（`specs/AS110AllCheck/SPEC.md`「区切り 5 の 2」）。
+
+- パスワードはアプリに固定で、設定画面には出ません。大文字・小文字も区別します
+- **忘れたとき**: `Apps/AS110AllCheck/Excel/WorkbookEdits.cs` の `Password` の行に書いてあります（Claude Code に「Excel 書き換えのパスワードを教えて」と聞けば、この行を読んで答えます）。事故を防ぐためのもので、秘密を守るためのものではありません
+- 変えるときは同じ行を直して発行し直します
+
 ## M5Stack
 
 書込元は `firmware/AS110M5Stack/AS110M5Stack.ino`。Arduino IDEではボードM5Core（esp32 3.x。古い版ではM5Stack-Core-ESP32）とM5Unifiedを使用します。準備から書き込みまでの手順は [Arduino IDE の準備](docs/m5stack-arduino-ide-setup.md) を参照してください。PlatformIOでは次を実行します（リポジトリ直下から）。
