@@ -133,6 +133,26 @@ internal static class ShippingDataFormTests
             if ((bool)Field("_shippingDataSelected") || FlowBool("ShippingData") || !(bool)Field("_judgedPassed"))
                 throw new Exception("Changing the mode must return to 490 kPa and clear the shipping data check");
             Console.WriteLine("PASS back to 490 kPa and mode change restore the normal data acquisition");
+
+            // データ取りで測って保存する前にモードを替えると、測定結果が破棄される。替える前に聞く(既定「いいえ」。2026-11-14、区切り 1 の残り)。
+            // データ調整の結果は保存しないので聞かない。
+            object Mode() => flowType.GetProperty("Mode")!.GetValue(flow)!;
+            void Measure() { flowType.GetMethod("BeginMeasurement")!.Invoke(flow, [DateTime.Now]); flowType.GetMethod("CaptureSucceeded")!.Invoke(flow, null); }
+            var asked = new List<string>(); bool answer = false;
+            SetField("_confirmModeChange", (Func<string, bool>)(w => { asked.Add(w); return answer; }));
+            modeBox.SelectedIndex = 2; Call("ChangeTestMode"); serialBox.Text = "75640"; Configure();
+            if (asked.Count != 0) throw new Exception("Changing the mode with no measurement must not ask");
+            Measure();
+            modeBox.SelectedIndex = 1; Call("ChangeTestMode");
+            if (asked.Count != 1 || !asked[0].Contains("S/N 75640") || !asked[0].Contains("データ調整") || !asked[0].Contains("破棄") || modeBox.SelectedIndex != 2 || Mode().ToString() != "Production" || !FlowBool("HasCapture"))
+                throw new Exception("Answering no must keep the mode and the unsaved measurement: " + string.Join(" / ", asked));
+            answer = true;
+            modeBox.SelectedIndex = 1; Call("ChangeTestMode");
+            if (asked.Count != 2 || Mode().ToString() != "Adjustment" || FlowBool("HasCapture")) throw new Exception("Answering yes must change the mode and discard the measurement");
+            Measure();
+            modeBox.SelectedIndex = 2; Call("ChangeTestMode");
+            if (asked.Count != 2 || Mode().ToString() != "Production") throw new Exception("A data adjustment result must not ask when the mode changes");
+            Console.WriteLine("PASS mode change asks before discarding an unsaved data acquisition result (no keeps it, yes discards); adjustment results do not ask");
         }
         finally
         {

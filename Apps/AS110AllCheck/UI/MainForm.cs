@@ -18,6 +18,7 @@ internal sealed partial class MainForm : Form
     public MainForm()
     {
         _confirmClose = AskClose;
+        _confirmModeChange = AskModeChange;
         // LOGGER 本体ソフトの起動(約 7 秒)だけ先に始め、画面準備・発振器確認と重ねる。
         BeginLoggerStartup();
         _nr500Connection = new Nr500Connection(_logger);

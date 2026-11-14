@@ -46,8 +46,23 @@ internal sealed class TransferSettings
     [Browsable(false)]
     public Dictionary<string,double> LeakMaximumLowerLimitKpa { get; set; } = new(DefaultLeakMaximumLowerLimitKpa);
     // 移動平均はLOGGERのチャンネル設定をXdtReaderが適用する。
-    public static string SettingsPath => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"AS110BoltCheck","ver3.json");
-    public static TransferSettings Load() => LoadFrom(SettingsPath);
+    // 置き場はアプリ名(2026-11-14、人の決定)。ver3.01 までは移植前の名前のまま(LegacySettingsPath)だった。
+    public static string SettingsPath => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"AS110AllCheck","ver3.json");
+    public static string LegacySettingsPath => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"AS110BoltCheck","ver3.json");
+    public static TransferSettings Load() => LoadFrom(SettingsPath,LegacySettingsPath);
+    // 新しい置き場にまだ設定が無く、前の置き場にあれば、写してから読む(現場 PC の設定を引き継ぐ)。前の置き場のファイルは消さない
+    // (前の版の exe を使っても、そのときの設定で動く。写したあとは別々の設定になる)。写せなければ、前の置き場のものをそのまま読む。
+    internal static TransferSettings LoadFrom(string path,string legacyPath)
+    {
+        if(File.Exists(path) || !File.Exists(legacyPath)) return LoadFrom(path);
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+            File.Copy(legacyPath,path);
+        }
+        catch(Exception ex) when(ex is IOException or UnauthorizedAccessException) { return LoadFrom(legacyPath); }
+        return LoadFrom(path);
+    }
     // 設定ファイルを読めなかったときの知らせ(読めたときは null)。起動したら画面に出す。ファイルには書かない。
     [Browsable(false)]
     [System.Text.Json.Serialization.JsonIgnore]

@@ -98,7 +98,10 @@ internal sealed partial class MainForm : Form
     // 正式保存で同名ファイルがあって保存しなかったときの案内(「次にすること」に赤字で出す)。転送結果が無効になるか保存できたら消す。
     private string? _saveConflict;
     private CancellationTokenSource? _leakCancel;
-    private readonly string _sessionFolder=Path.Combine(Path.GetTempPath(),"AS110BoltCheck","ver3-"+Guid.NewGuid().ToString("N"));
+    // 一時フォルダーの置き場はアプリ名(2026-11-14、人の決定。それまでは移植前の名前 AS110BoltCheck のままだった)。
+    private readonly string _sessionFolder=Path.Combine(Path.GetTempPath(),"AS110AllCheck","ver3-"+Guid.NewGuid().ToString("N"));
+    // 前の版(ver3.01 まで)が使っていた一時フォルダーの置き場。前の版が異常終了で残したものを、起動のときに片づける。
+    private static readonly string LegacySessionParent=Path.Combine(Path.GetTempPath(),"AS110BoltCheck");
 
     // モードを選ぶまで全体を非表示にする。型式・Excel転送はデータ調整とデータ取りで、保存先・S/N・保存・漏れ試験・合格はデータ取りを選んだときだけ表示する。
     // 並びは上から 型式 → 保存先 → 開始S/N・最後S/N(フォルダー名から) → 測定開始S/N → 保護解除・転送設定 → ボタン → 状態。表示/非表示を切り替えても並びが変わらないよう、行も列も TableLayoutPanel で位置を固定する。
@@ -327,12 +330,36 @@ internal sealed partial class MainForm : Form
         // 完了済みかどうかが決まってから、保存ファイルがすでにある番号かを見直す。
         finally { RefreshSavedSerialNotice(); }
     }
+    // モードを替えると破棄される、データ取りの測定結果(保存していないもの)があれば、その説明(無ければ null)。
+    // 2026-11-14、全体見直し・区切り 1 の残り(人の決定)。それまでは、データ取りで測って保存する前にモードを替えると、聞かずに破棄した。
+    // 聞くのは終了の確認(CloseWarning)と同じく、保存する工程(データ取り)の結果だけ。データ調整の結果は保存しないので聞かない。
+    // S/N なしの結果(データ調整から持ってきたもの)は、データ調整へ戻しても残るので聞かない。
+    private string? ModeChangeWarning(TestMode next)
+    {
+        if(!_modeSelected || next==_flow.Mode || _flow.Mode!=TestMode.Production || !_flow.HasCapture || _flow.SerialMissing)return null;
+        return $"S/N {_flow.Serial} の測定結果を、まだ保存していません。\r\nモードを「{_modeBox.Items[(int)next]}」に替えると、この測定結果は破棄されます。";
+    }
+    // 検査では、画面を出さずに答えを差し替える(既定は「いいえ」の確認画面)。
+    private Func<string,bool> _confirmModeChange;
+    private bool AskModeChange(string warning)
+    {
+        using var dialog=new LeakOverrideDialog(
+            warning+"\r\n\r\nモードを替えますか？\r\n「はい」：替える（測定結果を破棄する）\r\n「いいえ」：替えない（このまま続ける）",Font,"モード変更の確認");
+        dialog.Shown+=(_,_)=>ActivateJudgmentNotice(dialog,dialog.NoButton);
+        return dialog.ShowDialog(this)==DialogResult.Yes;
+    }
     private void ChangeTestMode()
     {
         if(_operationInProgress || _flow.Measuring || _flow.SaveFailed || _flow.CaptureFailed || _leakRunning) { _modeBox.SelectedIndex=(int)_flow.Mode;return; }
         TestMode next=(TestMode)_modeBox.SelectedIndex;
         if (_modeBox.SelectedIndex < 0) return;
         if(next==TestMode.Motion && _flow.HasCapture) { _modeBox.SelectedIndex=(int)_flow.Mode;return; }
+        if(ModeChangeWarning(next) is { } warning)
+        {
+            AppendLog("モード選択："+warning.Replace("\r\n"," "));
+            if(!_confirmModeChange(warning)) { _modeBox.SelectedIndex=(int)_flow.Mode;AppendLog("モード選択：替えませんでした。");return; }
+            AppendLog("モード選択：測定結果を破棄して替えます。");
+        }
         bool templatePurposeChanged = (_flow.Mode == TestMode.Motion) != (next == TestMode.Motion);
         CloseJudgmentNotice();
         _flow.Mode=next;

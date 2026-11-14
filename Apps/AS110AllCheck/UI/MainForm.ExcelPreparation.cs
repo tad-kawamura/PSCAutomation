@@ -60,8 +60,17 @@ internal sealed partial class MainForm : Form
         try
         {
             var now = DateTime.Now;
-            var notes = await Task.Run(() => new[] { _sessionFolder, _workingTemplateFolder }
-                .SelectMany(own => SessionFolders.Cleanup(Path.GetDirectoryName(own)!, [own], now)).ToList());
+            // いまの置き場(2 つのフォルダーは同じ親)と、前の版の置き場(AS110BoltCheck)を見る。前の版の置き場は、空になったら消す。
+            string[] own = [_sessionFolder, _workingTemplateFolder];
+            var notes = await Task.Run(() =>
+            {
+                var done = own.Select(folder => Path.GetDirectoryName(folder)!).Append(LegacySessionParent)
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .SelectMany(parent => SessionFolders.Cleanup(parent, own, now)).ToList();
+                try { if (Directory.Exists(LegacySessionParent)) Directory.Delete(LegacySessionParent, false); }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+                return done;
+            });
             if (IsDisposed || _closeRequested) return;
             foreach (string note in notes) AppendLog("起動時の後片付け：" + note);
         }

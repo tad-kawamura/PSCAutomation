@@ -150,6 +150,18 @@ internal static class FileAndSettingsTests
             Check(TransferSettings.LoadFrom(path).ExpectedSamples == 4321, "the settings file that was only locked is intact");
             var draft = loaded.CreateDraft(); loaded.ApplyEdited(draft);
             Check(new TransferSettings().FindProblems().Count == 0, "the warning does not disturb the settings dialog copy");
+
+            // ---- 設定ファイルの置き場をアプリ名に変えた(2026-11-14): 前の置き場の設定を写して引き継ぐ ----
+            string legacy = Path.Combine(folder, "AS110BoltCheck", "ver3.json"), current = Path.Combine(folder, "AS110AllCheck", "ver3.json");
+            Check(TransferSettings.LoadFrom(current, legacy) is { LoadWarning: null, ExpectedSamples: 6500 } && !File.Exists(current), "no settings in either place starts with defaults and writes nothing");
+            new TransferSettings { ExpectedSamples = 1111, SaveRoot = @"C:\前の保存先" }.SaveTo(legacy);
+            var migrated = TransferSettings.LoadFrom(current, legacy);
+            Check(migrated.ExpectedSamples == 1111 && migrated.SaveRoot == @"C:\前の保存先" && File.Exists(current) && File.ReadAllText(current) == File.ReadAllText(legacy),
+                "settings in the old place are copied to the new place and the old file is kept");
+            new TransferSettings { ExpectedSamples = 2222 }.SaveTo(current);
+            Check(TransferSettings.LoadFrom(current, legacy).ExpectedSamples == 2222 && TransferSettings.LoadFrom(legacy).ExpectedSamples == 1111,
+                "once the new place has settings, the old place is no longer read or changed");
+            Check(TransferSettings.SettingsPath.Contains(@"\AS110AllCheck\") && TransferSettings.LegacySettingsPath.Contains(@"\AS110BoltCheck\"), "the settings live under the application name");
         }
         finally { try { Directory.Delete(root, true); } catch { } }
     }
