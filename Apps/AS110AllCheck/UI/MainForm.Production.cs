@@ -1033,6 +1033,10 @@ internal sealed partial class MainForm : Form
             ErrorNotification.Show(dialog,"この設定は保存できません。直してから「設定保存」を押してください（やめるなら × で閉じる）。\n\n・"+string.Join("\n・",problems),"転送設定の確認",MessageBoxButtons.OK,MessageBoxIcon.Warning);
         };
         if(dialog.ShowDialog(this)!=DialogResult.OK){AppendLog("転送設定：保存せずに閉じました（設定は変えていません）。");return;}
+        // 何も変えずに「設定保存」を押したときは、何もしない(転送済みを取り消さない。2026-11-14、全体見直し・区切り 5。
+        // それまでは値が同じでも「設定が変わった」として転送済みを取り消し、転送のやり直しが要った)。
+        if(_transferSettings.SameEditableValues(draft) && _transferSettings.AllowLeakOverride==allowLeakOverride.Checked)
+        {AppendLog("転送設定：変えた項目が無いので、何もしていません（転送済みの結果もそのままです）。");return;}
         RunOperation("転送設定保存",()=>{
             // 設定が変わるので、前の設定で転送した結果では保存させない(転送し直す)。
             _flow.TransferFailed();

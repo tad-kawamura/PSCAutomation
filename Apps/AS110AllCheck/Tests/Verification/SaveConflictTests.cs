@@ -18,6 +18,11 @@ internal static class SaveConflictTests
             string legacyPdf = Make("PDF", "AS110-035_SN0150_20261113_6500.pdf");
             string todayExcel = Make("Excel", "AS110-035_SN150_20261113.xlsx");
             Make("Excel", "AS110-035_SN151_20261113.xlsx"); Make("PDF", "AS110-035_SN1500_20261113.pdf"); Make("Excel", "メモ_SN150.xlsx");
+            // Excel が開いている間の一時ファイルと、Windows が作るファイルは保存データに数えない。
+            Make("Excel", "~$AS110-035_SN150_20261113.xlsx"); Make("PDF", "Thumbs.db"); Make("LOGGER", "desktop.ini");
+            Check(!SaveFolder.IsDataFile("~$AS110-035_SN150_20261113.xlsx") && !SaveFolder.IsDataFile("thumbs.DB") && !SaveFolder.IsDataFile(Path.Combine(root, "desktop.ini"))
+                && SaveFolder.IsDataFile("AS110-035_SN150_20261113.xlsx") && SaveFolder.IsDataFile("メモ.xlsx"), "Excel lock files and Windows files are not data files");
+            Check(SaveFolder.Scan(root).Unreadable == 1, "only real files of another format are counted as unreadable (not ~$ files, Thumbs.db or desktop.ini)");
 
             var found = SaveFolder.FindSerialFiles(root, "150");
             Check(found.Count == 5 && new[] { oldExcel, oldPdf, oldLogger, legacyPdf, todayExcel }.All(found.Contains),
@@ -57,5 +62,12 @@ internal static class SaveConflictTests
             && settings.CurrentChannel == 1 && settings.PressureChannel == 2 && settings.JudgmentSheet == "sheet1" && settings.PressureCell == "B4",
             "saving applies every edited grid item and keeps the others (the save folder is not a grid item)");
         Check(!settings.AllowLeakOverride && settings.LeakTestSeconds == 10, "items hidden from the grid (leak settings) are not taken from the draft");
+        // 何も変えずに「設定保存」: 表に出る項目が同じなら「同じ」。表に出ない項目(保存先・漏れ試験)の違いは見ない。
+        var untouched = settings.CreateDraft();
+        Check(settings.SameEditableValues(untouched), "an untouched draft has the same values");
+        untouched.SaveRoot = "C:" + (char)92 + "別"; untouched.LeakTestSeconds = 30;
+        Check(settings.SameEditableValues(untouched), "differences in items hidden from the grid do not count");
+        untouched.PressureCell = "D4";
+        Check(!settings.SameEditableValues(untouched), "one edited grid item makes the draft different");
     }
 }

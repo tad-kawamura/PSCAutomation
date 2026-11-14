@@ -101,6 +101,11 @@ internal sealed class TransferSettings
     public TransferSettings CreateDraft() => (TransferSettings)MemberwiseClone();
     // 写しで直した値を取り込む。取り込むのは表に出る項目だけ(表に出さない漏れ試験の設定は、メイン画面の欄や回避のチェックが別に持つ)。
     // 項目を足しても漏れないよう、名前を並べずに表に出る項目([Browsable(false)] でないもの)を全部写す。
+    // 表に出る項目が、写しと 1 つも違わないか(何も変えずに「設定保存」を押したときに、転送済みを取り消さないため。2026-11-14)。
+    public bool SameEditableValues(TransferSettings draft) => EditableProperties().All(p => Equals(p.GetValue(this), p.GetValue(draft)));
+    private static IEnumerable<System.Reflection.PropertyInfo> EditableProperties() =>
+        typeof(TransferSettings).GetProperties(System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public)
+            .Where(p => p.CanRead && p.CanWrite && !p.GetCustomAttributes(typeof(BrowsableAttribute), true).Cast<BrowsableAttribute>().Any(a => !a.Browsable));
     public void ApplyEdited(TransferSettings draft)
     {
         foreach(var property in typeof(TransferSettings).GetProperties(System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public))
