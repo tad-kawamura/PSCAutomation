@@ -85,9 +85,10 @@ internal sealed partial class MainForm : Form
                 editor = new XdtScalingEditor(originalPath);
                 // 初期値は雛形の値。入れ直しのときだけ、いま適用している値から直せるようにする。
                 // 「GC16 で読み取る」(校正の自動読み取り 段階 1)。読み取りの電圧は、LOGGER にファイルが無ければこの雛形を開いて読む。
+                var templateCalibration = As110Calibration.FromTemplate(editor);
                 using var dialog = new CalibrationDialog(hardware, templateName,
-                    _calibrationApplied && _appliedCalibration is not null ? _appliedCalibration : As110Calibration.FromTemplate(editor),
-                    (model, owner) => ReadCalibrationWithGauge(model, originalPath, owner));
+                    _calibrationApplied && _appliedCalibration is not null ? _appliedCalibration : templateCalibration,
+                    (model, owner) => ReadCalibrationWithGauge(model, originalPath, owner)) { Template = templateCalibration };
                 UseWaitCursor = false;
                 try
                 {

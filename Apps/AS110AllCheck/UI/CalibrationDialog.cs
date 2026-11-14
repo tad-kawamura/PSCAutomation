@@ -20,6 +20,11 @@ internal sealed class CalibrationDialog : Form
     public As110Calibration Calibration { get; private set; }
     // 読み取り方(校正記録に書く)。「適用」を押したときに決まる。
     public CalibrationReading Reading { get; private set; } = CalibrationReading.Manual(null);
+    // 雛形の値(ふつうの値から外れていないかを見るのに使う。無ければ雛形とは比べない)。
+    [System.ComponentModel.DesignerSerializationVisibility(System.ComponentModel.DesignerSerializationVisibility.Hidden)]
+    public As110Calibration? Template { get; init; }
+    // 既定が「いいえ」の確認(題・文 → 「はい」なら true)。画面の検査で差し替える。
+    private Func<string, string, bool> _confirm;
 
     // 「GC16 で読み取る」を出さない形(前からの呼び方。画面の検査が使う)。
     public CalibrationDialog(string hardware, string templateName, As110Calibration initial)
@@ -32,6 +37,7 @@ internal sealed class CalibrationDialog : Form
         Func<ProductModel, IWin32Window, AutoCalibrationResult?>? readWithGauge)
     {
         _readWithGauge = readWithGauge;
+        _confirm = AskDefaultNo;
         Calibration = initial;
         Text = "スケーリング（電流・圧力の2点校正）";
         Font = SystemFonts.MessageBoxFont;
@@ -179,6 +185,27 @@ internal sealed class CalibrationDialog : Form
         return box;
     }
 
+    private bool AskDefaultNo(string title, string message)
+    {
+        using var dialog = new LeakOverrideDialog(message, Font, title);
+        return dialog.ShowDialog(this) == DialogResult.Yes;
+    }
+
+    // GC16 で読み取った値を入れたまま、適用せずに閉じる(キャンセル・Esc・×)ときは聞く(2026-11-14、全体見直し・区切り 4)。
+    // それまでは、数分かけて読み取った値が Esc 1 回で確認なしに消えた。Windows の終了などでは聞かない。
+    protected override void OnFormClosing(FormClosingEventArgs e)
+    {
+        if (DialogResult != DialogResult.OK && _gaugeResult is not null &&
+            e.CloseReason is CloseReason.None or CloseReason.UserClosing &&
+            !_confirm("読み取った値を捨てますか？",
+                "GC16 で読み取った値を、適用せずに捨てます。\r\n\r\n「はい」：捨てて校正画面を閉じる\r\n「いいえ」：校正画面に戻る"))
+        {
+            e.Cancel = true;
+            DialogResult = DialogResult.None;
+        }
+        base.OnFormClosing(e);
+    }
+
     private void ApplyValues()
     {
         try
@@ -193,6 +220,13 @@ internal sealed class CalibrationDialog : Form
             var result = new As110Calibration(new(parsed[0], parsed[1], parsed[2], parsed[3]),
                 new(parsed[4], parsed[5], parsed[6], parsed[7]));
             result.Validate();
+            // ふつうの値から外れていたら、適用の前に聞く(既定は「いいえ」。2026-11-14、全体見直し・区切り 4)。
+            var unusual = result.FindUnusual(Template);
+            if (unusual.Count > 0 && !_confirm("校正値を確認してください",
+                "入力した校正値に、ふつうの値から外れているものがあります。小数点・桁・入れた欄を確かめてください。\r\n\r\n・" +
+                string.Join("\r\n・", unusual) +
+                "\r\n\r\nこのまま適用しますか？\r\n「はい」：この値で適用する\r\n「いいえ」：校正画面に戻って直す"))
+                return;
             Calibration = result;
             Reading = _gaugeResult is { } gauge
                 ? new CalibrationReading(true, gauge.Model, gauge.GaugePort, gauge.SinceGaugeConfirmed, gauge.Zero.Describe(),

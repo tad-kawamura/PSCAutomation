@@ -34,6 +34,8 @@ internal sealed partial class MainForm : Form
             // 「確認」の途中は閉じない(接続確認がポートを開け閉めしている最中で、つないだばかりのポートを閉じてしまうため。失敗したら接続確認が閉じる)。
             if (!_checkingConnections) CloseArduinoPort();
             _leakCancel?.Cancel();
+            // 校正の読み取り中なら中止する(下で出力を止めるので、続けると 30 mA が出ていないまま読み取る。2026-11-14、全体見直し・区切り 4)。
+            _autoCalibrationDialog?.Abort("M5Stack の通信が途切れた");
             try { StopLeakOutput(); } catch { }
             ResetTemplate();
             _nfCommunicationAlertShown = true;
