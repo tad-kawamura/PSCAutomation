@@ -158,7 +158,7 @@ internal sealed partial class MainForm : Form
     // 保存先の Excel/PDF/LOGGER にある、完了記録に無い S/N のデータを知らせる(保護は「完了番号の保護と解除」の画面で付ける)。
     private void ReportUnrecordedData()
     {
-        if(_rootBox.Text.Length==0) return;
+        if(_rootBox.Text.Length==0 || ShippingRootMissing) return;
         try
         {
             var store=Store;using var held=store.Lock();
@@ -324,6 +324,8 @@ internal sealed partial class MainForm : Form
         {
             RefreshJudgedPass(throwOnError);
             if(_flow.Mode!=TestMode.Production || _flow.SerialMissing || _rootBox.Text.Length==0)return;
+            // 出荷データの保存先がまだ無ければ、完了していない(フォルダーは作らない)。
+            if(ShippingRootMissing)return;
             try { var store=Store;using var held=store.Lock();_serialCompleted=store.IsComplete(_flow.Serial); }
             catch(Exception ex) when(!throwOnError) { AppendLog("完了記録の確認に失敗："+ex.Message); }
         }
@@ -808,7 +810,8 @@ internal sealed partial class MainForm : Form
                 }
                 _flow.SaveSucceeded();_reviewStage=true;
             }
-            finally {if(!keepStage)try{Directory.Delete(stage,true);}catch{}}
+            // 途中の置き場を消し、保存先の tmp も空なら消す(控えを残すときは消さない)。
+            finally {if(!keepStage)SaveReplace.RemoveStage(stage);}
             // 書き換えたまま保存したことを記録に残す。保存はもう済んでいるので、記録を書けなくても保存済みのまま、書けなかったことを知らせる。
             if(workbookEdits.Count>0)
             {
@@ -957,8 +960,9 @@ internal sealed partial class MainForm : Form
             return;
         }
         // 一覧の 1 行: 記録のある S/N(保護中・解除済み)と、記録は無いがデータのある S/N(記録なし)。
-        List<(string Serial,bool Protected,string Model,string BaseName,string Note)> entries;
-        try
+        List<(string Serial,bool Protected,string Model,string BaseName,string Note)> entries=[];
+        // 出荷データの保存先がまだ無ければ、記録もデータも無い(フォルダーは作らない)。
+        if(!ShippingRootMissing)try
         {
             var store=Store;using var held=store.Lock();
             entries=store.Entries().Select(e=>(e.Serial,e.Protected,"-","再保護",e.Protected?"":"（解除済み）")).ToList();

@@ -58,6 +58,10 @@ internal static class ShippingDataFormTests
 
             serialBox.Text = "75633"; Configure(); Call("UpdateProductionControls");
             if (!(bool)Field("_judgedPassed") || (bool)Field("_serialCompleted")) throw new Exception("A serial completed at 490 kPa must be allowed for shipping data");
+            // 350 kPa を選んだだけ・S/N を入れただけ・保存先の確かめでは、出荷データのフォルダーを作らない(作るのは保存のとき。2026-11-14)。
+            Call("ReportUnrecordedData");
+            if (Directory.Exists(saveRoot)) throw new Exception("Selecting 350 kPa must not create the shipping data folder: " + saveRoot);
+            Console.WriteLine("PASS 350 kPa: the shipping data folder is not created until the first save");
 
             // 出荷データは専用の参照波形を作らず、判定した型式(AS110-116B)の参照波形のまま測る。測定開始の確かめがそれを通すこと
             // (2026-11-13、全体見直し。以前は工程の型式 AS110-116B350 の名前で照合し、出荷データは必ず「選択した型式の参照波形を読み込んでください」で止まった)。

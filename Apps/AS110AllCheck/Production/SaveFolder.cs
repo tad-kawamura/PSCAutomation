@@ -137,6 +137,20 @@ internal sealed class SaveReplaceException(string path, bool restored, Exception
 // それまでは Excel は今回・PDF は前回、という組が保存先に残り得た)。
 internal static class SaveReplace
 {
+    // 保存が終わったあとの片づけ。保存の途中の置き場(保存先\tmp\<ランダムな名前>)を消し、親の tmp も空なら消す
+    // (2026-11-14、全体見直し・区切り 1 の残り、人の決定。それまでは保存のたびに空の tmp が保存先に残った)。
+    // tmp にほかのもの(元に戻せなかったときの前のファイルの控え)が残っていれば、tmp は消さない。消せなくても保存は済んでいるので止めない。
+    public static void RemoveStage(string stage)
+    {
+        try
+        {
+            if (Directory.Exists(stage)) Directory.Delete(stage, true);
+            string parent = Path.GetDirectoryName(stage)!;
+            if (Directory.Exists(parent) && !Directory.EnumerateFileSystemEntries(parent).Any()) Directory.Delete(parent, false);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+    }
+
     // files: (一時フォルダーのファイル, 保存先のファイル)。backupFolder: 前のファイルを一時的によけておく所(保存先と同じドライブ)。
     // 止まったときは SaveReplaceException。Restored が false のときは、前のファイルが backupFolder に残っていることがある(呼ぶ側で消さない)。
     public static void ReplaceAll(IReadOnlyList<(string From, string To)> files, string backupFolder)

@@ -113,6 +113,17 @@ internal static class FileAndSettingsTests
             bool stoppedAtMissing = false;
             try { SaveReplace.ReplaceAll(Files(), stage); } catch (SaveReplaceException ex) { stoppedAtMissing = ex.Restored; }
             Check(stoppedAtMissing && Read() == "third,third,-", "a stop at the last file restores the files already replaced and leaves no new file");
+
+            // ---- 保存のあとの片づけ: 途中の置き場を消し、保存先の tmp も空なら消す(控えが残っていれば消さない) ----
+            string tmp = Path.Combine(dest, "tmp"), mine = Path.Combine(tmp, "aaaa"), kept = Path.Combine(tmp, "bbbb");
+            Directory.CreateDirectory(mine); File.WriteAllText(Path.Combine(mine, "result.xlsx"), "x");
+            SaveReplace.RemoveStage(mine);
+            Check(!Directory.Exists(tmp), "after a save the stage folder and the empty tmp folder are removed");
+            Directory.CreateDirectory(mine); Directory.CreateDirectory(kept); File.WriteAllText(Path.Combine(kept, "前の控え.xlsx"), "x");
+            SaveReplace.RemoveStage(mine);
+            Check(!Directory.Exists(mine) && File.Exists(Path.Combine(kept, "前の控え.xlsx")), "a tmp folder that still holds a kept copy is not removed");
+            SaveReplace.RemoveStage(Path.Combine(dest, "無い", "cccc"));
+            Check(Directory.Exists(dest), "removing a stage that does not exist does nothing");
         }
         finally { try { Directory.Delete(root, true); } catch { } }
 
