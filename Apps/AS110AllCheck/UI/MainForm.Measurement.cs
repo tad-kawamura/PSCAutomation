@@ -8,7 +8,7 @@ namespace PSCAutomation.Apps.AS110AllCheck;
 
 // MainFormを役割別に分割。すべて同じFormの一部です。
 // MainFormのうち、測定開始の条件確認と開始・終了の処理を担当する。
-// Arduinoの測定要求を受け、通電・接続・雛形・LOGGERの状態を確認する。
+// 測定開始の操作(PC のボタン・M5Stack の A)を受け、通電・接続・雛形・LOGGERの状態を確認する。
 // LOGGERの測定開始に成功した直後、発振器へトリガーを送る。
 // 非通電や通信異常の通知と、測定終了時の処理も担当する。
 // 将来の測定終了後の自動保存は、このファイルへ追加する予定。
@@ -81,21 +81,6 @@ internal sealed partial class MainForm : Form
                 MessageBoxButtons.OK, MessageBoxIcon.Warning);
         }
         finally { _nfNotEnergizedAlertShown = false; }
-    }
-
-    private void ArduinoMeasurementRequested()
-    {
-        if (_flow.Mode != TestMode.Motion) return;
-        // C#がArduinoの測定要求を受け取った時刻。物理押下時刻ではない。
-        long receivedAt = Stopwatch.GetTimestamp();
-        long requestVersion = _arduino.MeasurementRequestVersion;
-        if (IsDisposed || !IsHandleCreated) return;
-        if (InvokeRequired)
-        {
-            BeginInvoke((Action)(() => ExecuteMeasurement(receivedAt, requestVersion)));
-            return;
-        }
-        ExecuteMeasurement(receivedAt, requestVersion);
     }
 
     private async void ExecuteMeasurement(long? receivedAt = null, long? requestVersion = null)

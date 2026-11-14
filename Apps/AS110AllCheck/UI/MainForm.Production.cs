@@ -492,6 +492,8 @@ internal sealed partial class MainForm : Form
         if(_checkingConnections)return "接続確認中です。終わるまで待ってください";
         if(!ConnectionsReady)
         {
+            // 状態監視が異常を見つけたときは、その原因を出す(発振器の応答なしを「LOGGER／NR本体 が未接続」と出さない)。
+            if(_monitorFailureNotice is not null)return _monitorFailureNotice;
             var missing=new List<string>();
             if(!_arduino.IsConnected)missing.Add("M5Stack");
             if(_generator is null)missing.Add("発振器");

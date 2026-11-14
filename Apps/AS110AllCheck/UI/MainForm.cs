@@ -24,9 +24,7 @@ internal sealed partial class MainForm : Form
         _nr500Connection = new Nr500Connection(_logger);
         _nrXConnection = new NrXConnection(_logger, _wifiManager);
         _arduino.Disconnected += ArduinoDisconnected;
-        _arduino.MeasurementRequested += ArduinoMeasurementRequested;
         _arduino.ButtonRequested += BoardButtonRequested;
-        _arduino.MeasurementBlocked += ShowNfNotEnergizedAlert;
         _arduino.NfStatusChanged += ArduinoNfStatusChanged;
         _statusHeartbeat.Tick += StatusHeartbeatTick;
         _statusHeartbeat.Start();

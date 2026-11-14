@@ -183,6 +183,26 @@ internal static class ConnectionFormTests
             if (notReady is not null || !rig.Log.Contains("測定要求を取り消しました")) throw new Exception("Without M5Stack the start must return without starting: " + notReady);
             Kept("M5Stack not ready", 1);
             Console.WriteLine("PASS measurement start: failures before the LOGGER start (folder range, reference, generator preparation, M5Stack not ready) keep the previous result and do not stop the LOGGER");
+
+            // 6. 状態監視の案内は原因に合わせる(2026-11-14、区切り 3 の残り)。以前は発振器の応答なしでも「LOGGER／NR本体 が未接続」と出た。
+            // 6-1. 応答があれば何も変えない(雛形を開いていないので NR 本体は確かめない)。
+            rig.Set("_templateLoaded", false);
+            rig.Call("ConfirmDevicesAlive");
+            if (!(bool)rig.Field("_hardwareDetected")! || rig.Field("_monitorFailureNotice") is not null) throw new Exception("A responding generator must not raise a monitor notice");
+            // 6-2. 発振器の応答なし: 校正を外し、発振器の案内を出す。
+            Loaded("前の測定データ");
+            rig.Generator.FailIdentity = true;
+            rig.Call("ConfirmDevicesAlive");
+            rig.Generator.FailIdentity = false;
+            if ((bool)rig.Field("_calibrationApplied")! || !rig.NextStep.Contains("発振器の応答がありません") || rig.NextStep.Contains("LOGGER") || !rig.NextStep.Contains("「確認」"))
+                throw new Exception("A silent generator must be reported as the generator: " + rig.NextStep);
+            // 6-3. NR 本体を確かめられない(模擬の LOGGER は本体の問い合わせに答えない): NR 本体の案内を出す。
+            rig.Set("_hardwareDetected", true); rig.Set("_monitorFailureNotice", null);
+            Loaded("前の測定データ");
+            rig.Call("ConfirmDevicesAlive");
+            if ((bool)rig.Field("_calibrationApplied")! || !rig.NextStep.Contains("NR 本体を確認できません") || rig.NextStep.Contains("発振器"))
+                throw new Exception("A silent NR unit must be reported as the NR unit: " + rig.NextStep);
+            Console.WriteLine("PASS status monitor: the next-step guide names the device that stopped responding (generator / NR unit)");
         }
         finally
         {
@@ -252,11 +272,11 @@ internal static class ConnectionFormTests
 public sealed class ConnectionFakeGenerator : IFunctionGeneratorSession
 {
     public int Stops;
-    public bool FailPrepare;
+    public bool FailPrepare, FailIdentity;
     public string Identity => "fake,WF1973,0,0";
     public string PreparationSummary => "fake";
     public bool IsConnected => true;
-    public string QueryIdentity() => Identity;
+    public string QueryIdentity() => FailIdentity ? throw new IOException("mock identity failure") : Identity;
     public void PrepareBurst(GeneratorBurstSettings settings) { if (FailPrepare) throw new IOException("mock prepare failure"); }
     public void TriggerBurst() => throw new Exception("Unexpected trigger");
     public void SetDcOutput(double volts) => throw new Exception("Unexpected output ON");

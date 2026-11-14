@@ -188,6 +188,7 @@ internal sealed partial class MainForm : Form
                 if (!_logger.IsInitialized) ConfigureLoggerSelection();
                 // COM参照が残っていても、LOGGER画面が開いているとは限らない。
                 // 「確認」では毎回解放し、InitializeとVisible=trueを実行し直す。
+                _monitorFailureNotice = null;
                 ResetTemplate();
                 _measurementState.State = null;
                 _measurementState.ReadAfter = 0;
@@ -541,6 +542,7 @@ internal sealed partial class MainForm : Form
                 {
                     // 終了失敗時は毎秒再試行せず、「確認」で明示的に再試行する。
                     _loggerWindowClosed = true;
+                    _monitorFailureNotice = "LOGGER の画面が閉じられました。「確認」を押してつなぎ直してください";
                     await RunOperationAsync("LOGGER終了検知", async () =>
                     {
                         _hardwareDetected = false;
@@ -605,31 +607,41 @@ internal sealed partial class MainForm : Form
         if (_nfCommunicationAlertShown)
             AppendLog("M5Stack の通電状態の受信が再開しました。");
         _nfCommunicationAlertShown = false;
+        if (++_heartbeatCount % 5 == 0 && _generator is not null && !_flow.Measuring) ConfirmDevicesAlive();
+    }
+
+    // 状態監視が見つけた異常の案内(「次にすること」に出す)。「確認」を押すと消える。
+    // これが無いと、発振器の応答なしでも「LOGGER／NR本体 が未接続」と出た(下で _hardwareDetected を下ろすため。2026-11-14、区切り 3 の残り)。
+    private string? _monitorFailureNotice;
+
+    // 発振器と NR 本体が応答するかを確かめる(状態監視から 5 秒ごと)。だめなら校正を外し、原因に合った案内を残す。
+    private void ConfirmDevicesAlive()
+    {
+        string notice = "NR 本体を確認できません。NR 本体の電源と接続を確かめて「確認」を押してください";
         try
         {
-            if (++_heartbeatCount % 5 == 0 && _generator is not null && !_flow.Measuring)
+            // 1回の応答失敗では接続を破棄しない。出力OFFを送れる状態を保ち、
+            // 漏れ試験出力中は下のResetTemplateで停止を試す。再確認は「確認」で行う。
+            try { _generator!.QueryIdentity(); }
+            catch (Exception ex)
             {
-                // 1回の応答失敗では接続を破棄しない。出力OFFを送れる状態を保ち、
-                // 漏れ試験出力中は下のResetTemplateで停止を試す。再確認は「確認」で行う。
-                try { _generator.QueryIdentity(); }
-                catch (Exception ex)
-                {
-                    throw new InvalidOperationException("発振器の応答がありません / " + ex.Message, ex);
-                }
-                // ファイルを閉じた直後のGetUnitInfo=-2を本体の切断と扱わない。
-                // 雛形が開いているときだけNR本体を確認する。
-                if (!_templateLoaded) return;
-                long unit = _logger.GetUnitInfo(0);
-                bool hardwareAlive = _logger.ActiveEdition == WaveLoggerEdition.Legacy
-                    ? unit >= 0
-                    : _detectedHardwareName == "NR-500" ? unit == 193 : unit is 198 or 199;
-                if (!hardwareAlive)
-                    throw new InvalidOperationException($"NR 本体を確認できません（GetUnitInfo={unit}）。");
+                notice = "発振器の応答がありません。発振器の電源と USB を確かめて「確認」を押してください";
+                throw new InvalidOperationException("発振器の応答がありません / " + ex.Message, ex);
             }
+            // ファイルを閉じた直後のGetUnitInfo=-2を本体の切断と扱わない。
+            // 雛形が開いているときだけNR本体を確認する。
+            if (!_templateLoaded) return;
+            long unit = _logger.GetUnitInfo(0);
+            bool hardwareAlive = _logger.ActiveEdition == WaveLoggerEdition.Legacy
+                ? unit >= 0
+                : _detectedHardwareName == "NR-500" ? unit == 193 : unit is 198 or 199;
+            if (!hardwareAlive)
+                throw new InvalidOperationException($"NR 本体を確認できません（GetUnitInfo={unit}）。");
         }
         catch (Exception ex)
         {
             _hardwareDetected = false;
+            _monitorFailureNotice = notice;
             ResetTemplate();
             AppendLog("接続確認に失敗しました。「確認」を押してください。：" + ex.Message);
         }
