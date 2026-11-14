@@ -182,7 +182,7 @@ internal static class FileAndSettingsTests
             "the same edits have the same signature; one more edit changes it");
         string described = WorkbookEdits.Describe(edits, 2);
         Check(described.Contains("・sheet1 の B4") && described.Contains("・ほか 2 件") && !described.Contains("A5") && !WorkbookEdits.Describe(edits).Contains("ほか"), "a long list shows the first ones and the rest as a count");
-        Check(!WorkbookEdits.PasswordMatches("") && !WorkbookEdits.PasswordMatches("x") && !WorkbookEdits.PasswordMatches(" "), "an empty or wrong password is rejected");
+        Check(!WorkbookEdits.PasswordMatches("") && !WorkbookEdits.PasswordMatches("x") && !WorkbookEdits.PasswordMatches(" ") && !WorkbookEdits.PasswordMatches("as110"), "an empty or wrong password (and the old provisional one) is rejected");
 
         string root = Path.Combine(Path.GetTempPath(), "AS110AllCheck.Verification", Guid.NewGuid().ToString("N"), "SN1-100");
         try

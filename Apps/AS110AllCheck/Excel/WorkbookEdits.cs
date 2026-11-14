@@ -38,8 +38,8 @@ internal sealed class SheetCells
 internal static class WorkbookEdits
 {
     // 書き換えを進めるときのパスワード(人の決定: アプリに固定。事故を防ぐためのもので、秘密を守るためのものではない)。
-    // 仮の値。発行(ver3.02)の前に人が決めた値に替える。
-    private const string Password = "as110";
+    // 値は 2026-11-14 に人が決めた。大文字・小文字も区別する。
+    private const string Password = "nakamura";
 
     public const string RecordFileName = "Excel書き換え記録.txt";
     public static readonly string RecordHeader = string.Join('\t', "日時", "S/N", "型式", "保存ファイル", "シート", "セル", "書き換え前", "書き換え後");
