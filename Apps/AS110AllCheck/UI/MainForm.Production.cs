@@ -368,8 +368,11 @@ internal sealed partial class MainForm : Form
         _modeSelected=true;
         // モードを変えたら供給圧力は型式の値(データ取り)に戻す(出荷データの 350 kPa をやめる)。
         _shippingDataSelected=false;
-        if (templatePurposeChanged) ResetTemplate();
-        RunOperation("モード選択",()=> { ReloadTemplateForMode(); ConfigureProduct(requireSaveRoot:false); StopLeakOutput();_generator?.PrepareBurst(CurrentBurstSettings);
+        // 動き検査と、データ調整・データ取りの間では LOGGER の雛形が替わる。校正値は同じなので、適用済みなら同じ値のまま雛形を読み直す
+        // (下の ReloadTemplateForMode。校正画面は出さない。2026-11-14、人の決定。それまでは校正を外し、8 項目の打ち直しになった)。
+        // 校正前・雛形を開いていないときは、今までどおり雛形待ちに戻す。
+        if (templatePurposeChanged && !(_templateLoaded && _calibrationApplied && _workingTemplateSource is not null)) ResetTemplate();
+        RunOperation("モード選択",()=> { ReloadTemplateForMode(templatePurposeChanged); ConfigureProduct(requireSaveRoot:false); StopLeakOutput();_generator?.PrepareBurst(CurrentBurstSettings);
             // データ調整で校正を済ませてからデータ取りへ移ったときは、前回の保存先が残っていればここで校正記録を書く。
             WriteCalibrationRecordIfReady();return _modeBox.Text; });
         UpdateControls();
@@ -385,13 +388,18 @@ internal sealed partial class MainForm : Form
     // データ調整とデータ取りで LOGGER の雛形が違う型式(AS110-006 はデータ取りだけ専用の 13000 点。MeasurementProfile)は、
     // モードを替えたときに、いま読み込んでいる雛形と違えば同じ校正値で読み直す(参照波形で型式を替えたときと同じ)。
     // 校正前(雛形をまだ読んでいない)なら何もしない(校正のときにそのモードの雛形を読む)。専用の雛形が無ければ雛形待ちに戻して知らせる。
-    private void ReloadTemplateForMode()
+    // purposeChanged は、動き検査と、データ調整・データ取りの間の切り替え(雛形が必ず替わる)。このときも同じ校正値で読み直す。
+    // 読み直せなかったら(LOGGER が停止していない等)、前のモードの雛形のまま測らないよう、雛形待ちに戻す(校正からやり直す)。
+    private void ReloadTemplateForMode(bool purposeChanged=false)
     {
-        if(_flow.Mode==TestMode.Motion || !_templateLoaded || !_calibrationApplied || _workingTemplateSource is null)return;
+        if((_flow.Mode==TestMode.Motion && !purposeChanged) || !_templateLoaded || !_calibrationApplied || _workingTemplateSource is null)return;
         string template;
         try { template=GetDetectedTemplatePath(); }
         catch { ResetTemplate(); throw; }
-        if(!string.Equals(template,_workingTemplateSource,StringComparison.OrdinalIgnoreCase))ReloadTemplateForModel(template);
+        if(string.Equals(template,_workingTemplateSource,StringComparison.OrdinalIgnoreCase))return;
+        if(!purposeChanged){ReloadTemplateForModel(template);return;}
+        try { ReloadTemplateForModel(template,"モードで雛形が替わるため"); }
+        catch { ResetTemplate(); throw; }
     }
     private void UpdateProductionControls()
     {

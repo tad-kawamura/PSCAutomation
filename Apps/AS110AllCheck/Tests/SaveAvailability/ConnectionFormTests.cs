@@ -240,6 +240,46 @@ internal static class ConnectionFormTests
             if (failures.Count != 1 || !failures[0].Contains("LOGGER が測定を始めませんでした") || !rig.NextStep.Contains("LOGGER が測定を始めませんでした") || !rig.Log.Contains("測定開始エラー：LOGGER が測定を始めませんでした"))
                 throw new Exception("A LOGGER that never started must be reported once: " + rig.NextStep);
             Console.WriteLine("PASS LOGGER start: a stopped LOGGER is not taken as the end of the measurement until it has been seen running; if it never starts nothing is captured");
+
+            // 8. 動き検査と、データ調整・データ取りの間でモードを替えても、校正は外さず、同じ校正値のまま雛形を読み直す(2026-11-14、人の決定)。
+            // 以前は校正が外れ、校正画面で 8 項目を打ち直した。
+            var calibrationType = assembly.GetType("PSCAutomation.Apps.AS110AllCheck.As110Calibration")!;
+            var fromTemplate = calibrationType.GetMethod("FromTemplate", BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic)!;
+            object calibration = fromTemplate.Invoke(null, [Activator.CreateInstance(fromTemplate.GetParameters()[0].ParameterType, template)])!;
+            rig.Logger.State = 1;
+            rig.Call("LoadWorkingTemplate", template, (string)rig.Call("CreateWorkingTemplate", template, calibration, null)!, calibration, "NR-500", (Action<string>)(_ => { }), null, null);
+            if (!(bool)rig.Field("_calibrationApplied")! || !(bool)rig.Field("_templateLoaded")! || (string?)rig.Field("_workingTemplateSource") != template)
+                throw new Exception("Setup: the calibration was not applied");
+            var testMode = assembly.GetType("PSCAutomation.Apps.AS110AllCheck.TestMode")!;
+            var modeBox = (ComboBox)rig.Field("_modeBox")!;
+            void Switch(string mode)
+            {
+                modeBox.SelectedIndex = (int)Enum.Parse(testMode, mode);
+                rig.Call("ChangeTestMode");
+                if (rig.Flow.GetType().GetProperty("Mode")!.GetValue(rig.Flow)!.ToString() != mode) throw new Exception("The mode did not change to " + mode);
+            }
+            void Kept8(string scenario, string templateName)
+            {
+                if (!(bool)rig.Field("_calibrationApplied")! || !(bool)rig.Field("_templateLoaded")! || !ReferenceEquals(rig.Field("_appliedCalibration"), calibration))
+                    throw new Exception(scenario + ": the calibration must stay applied with the same values");
+                if (Path.GetFileName((string?)rig.Field("_workingTemplateSource")) != templateName)
+                    throw new Exception($"{scenario}: the LOGGER template must be {templateName}, not {rig.Field("_workingTemplateSource")}");
+            }
+            Switch("Motion");
+            Kept8("to motion", "AS110動き検査用.xdt");
+            if (!rig.Log.Contains("モードで雛形が替わるため、同じ校正値で読み込み")) throw new Exception("The reload for the mode must be logged");
+            Switch("Adjustment");
+            Kept8("back to adjustment", "AS110データ調整・データ取り用.xdt");
+            Switch("Production");
+            Kept8("adjustment to data acquisition", "AS110データ調整・データ取り用.xdt");
+            // 読み直せないとき(LOGGER が止まっていない)は、前のモードの雛形のまま測らないよう、校正を外す。
+            rig.Flow.GetType().GetProperty("Mode")!.SetValue(rig.Flow, Enum.Parse(testMode, "Motion"));
+            rig.Logger.State = 4;
+            try { rig.Call("ReloadTemplateForMode", true); throw new Exception("The reload must fail while the LOGGER is running"); }
+            catch (TargetInvocationException ex) when (ex.InnerException is InvalidOperationException) { }
+            finally { rig.Logger.State = 1; }
+            if ((bool)rig.Field("_calibrationApplied")! || (bool)rig.Field("_templateLoaded")!) throw new Exception("A failed reload must release the calibration");
+            Console.WriteLine("PASS mode change between motion and adjustment/data acquisition keeps the calibration and reloads the template with the same values; a failed reload releases it");
         }
         finally
         {
