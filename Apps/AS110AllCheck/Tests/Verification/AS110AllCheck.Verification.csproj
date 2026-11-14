@@ -22,6 +22,7 @@
     <Compile Include="../../Calibration/AutoCalibration.cs" Link="App/AutoCalibration.cs" />
     <Compile Include="../../Calibration/CalibrationInProgressMarker.cs" Link="App/CalibrationInProgressMarker.cs" />
     <Compile Include="../../Excel/TransferSettings.cs" Link="App/TransferSettings.cs" />
+    <Compile Include="../../Excel/WorkbookEdits.cs" Link="App/WorkbookEdits.cs" />
     <!-- 発振器の設定値の型だけを使う(Instruments は NI-VISA を要るので参照しない) -->
     <Compile Include="../../../../Wrappers/Instruments/Generators/GeneratorBurstSettings.cs" Link="Wrappers/GeneratorBurstSettings.cs" />
   </ItemGroup>

@@ -154,6 +154,84 @@ internal static class FileAndSettingsTests
         finally { try { Directory.Delete(root, true); } catch { } }
     }
 
+    // 作業用 Excel の書き換えを見つける部分(Excel を使わない所)と、保護の解除で出荷データを消去する部分。
+    public static void RunEditsAndShippingData()
+    {
+        // ---- 書き換えを比べる ----
+        object?[,] before = { { "規格", 10d, null }, { "=A1+B1", "", 3.5 }, { 0d, 0d, "x" } };
+        Dictionary<string, SheetCells> Book(object?[,] sheet1, bool withSecond = true)
+        {
+            var book = new Dictionary<string, SheetCells> { ["sheet1"] = SheetCells.From(4, 1, sheet1, (row, column) => row == 6 && column <= 2) };
+            if (withSecond) book["圧縮5"] = SheetCells.From(1, 1, new object?[,] { { "見出し" } });
+            return book;
+        }
+        var baseline = Book(before);
+        Check(baseline["sheet1"].Cells.Count == 5 && !baseline["sheet1"].Cells.ContainsKey((6, 1)) && baseline["sheet1"].Cells[(5, 3)] == "3.5",
+            "cells are kept as entered text; empty cells and the measurement columns are not kept");
+        Check(WorkbookEdits.Compare(baseline, Book(before)).Count == 0, "an untouched workbook has no edits");
+        Check(WorkbookEdits.Compare(baseline, Book(new object?[,] { { "規格", 10d, null }, { "=A1+B1", "", 3.5 }, { 123d, 456d, "x" } })).Count == 0,
+            "new measurement values are not edits");
+        var edits = WorkbookEdits.Compare(baseline, Book(new object?[,] { { "規格", 12d, "追記" }, { "OK", "", null }, { 0d, 0d, "x" } }));
+        Check(edits.Select(e => e.ToString()).SequenceEqual(["sheet1 の B4：「10」 → 「12」", "sheet1 の C4：（空） → 「追記」", "sheet1 の A5：「=A1+B1」 → 「OK」", "sheet1 の C5：「3.5」 → （空）"]),
+            "changed values, added cells, overwritten formulas and cleared cells are listed in sheet order: " + string.Join(" / ", edits));
+        var missing = WorkbookEdits.Compare(baseline, Book(before, withSecond: false));
+        Check(missing.Count == 1 && missing[0].ToString() == "圧縮5 の シート：「ある」 → 「無い」", "a deleted sheet is an edit");
+        var added = Book(before); added["メモ"] = SheetCells.From(1, 1, new object?[,] { { "a" } });
+        Check(WorkbookEdits.Compare(baseline, added).Count == 0, "a sheet added by a person is not compared");
+        Check(WorkbookEdits.Signature(edits) == WorkbookEdits.Signature(edits.ToList()) && WorkbookEdits.Signature(edits) != WorkbookEdits.Signature(edits.Take(3)),
+            "the same edits have the same signature; one more edit changes it");
+        string described = WorkbookEdits.Describe(edits, 2);
+        Check(described.Contains("・sheet1 の B4") && described.Contains("・ほか 2 件") && !described.Contains("A5") && !WorkbookEdits.Describe(edits).Contains("ほか"), "a long list shows the first ones and the rest as a count");
+        Check(!WorkbookEdits.PasswordMatches("") && !WorkbookEdits.PasswordMatches("x") && !WorkbookEdits.PasswordMatches(" "), "an empty or wrong password is rejected");
+
+        string root = Path.Combine(Path.GetTempPath(), "AS110AllCheck.Verification", Guid.NewGuid().ToString("N"), "SN1-100");
+        try
+        {
+            Directory.CreateDirectory(root);
+            // ---- 書き換えの記録 ----
+            string record = WorkbookEdits.AppendRecord(root, new DateTime(2026, 11, 14, 9, 8, 7), "12", "AS110-035", "AS110-035_SN12_20261114", edits);
+            WorkbookEdits.AppendRecord(root, new DateTime(2026, 11, 14, 10, 0, 0), "13", "AS110-035", "AS110-035_SN13_20261114", [new("sheet1", "H5", "a\tb", "c\r\nd")]);
+            string[] lines = File.ReadAllLines(record);
+            Check(record == Path.Combine(root, "Excel書き換え記録.txt") && File.ReadAllBytes(record)[0] == 0xEF && lines.Length == 6 && lines[0].TrimStart('﻿') == WorkbookEdits.RecordHeader
+                && lines[1] == "2026-11-14 09:08:07\t12\tAS110-035\tAS110-035_SN12_20261114\tsheet1\tB4\t10\t12" && lines[5].EndsWith("\tsheet1\tH5\ta b\tc  d"),
+                "edits saved with a password are recorded one cell per line, with a header once, tabs and line breaks removed");
+            using (new FileStream(record, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+                Check(Message(() => WorkbookEdits.AppendRecord(root, DateTime.Now, "14", "AS110-035", "x", edits)).Contains("「Excel書き換え記録.txt」を Excel などで開いていたら閉じてください"),
+                    "a record that is open elsewhere explains what to close");
+
+            // ---- 保護の解除で出荷データを消去する ----
+            Check(ShippingDataModels.ExistingRoots(root).Length == 0 && ShippingDataModels.FindData(root, ["5"]).Count == 0 && !Directory.Exists(Path.Combine(root, "出荷データ(350kPa)")),
+                "without a shipping data folder nothing is found and no folder is created");
+            string shipping = Path.Combine(root, "出荷データ(350kPa)");
+            foreach (string folder in new[] { "Excel", "PDF", "LOGGER" }) Directory.CreateDirectory(Path.Combine(shipping, folder));
+            string Make(string folder, string name) { string path = Path.Combine(shipping, folder, name); File.WriteAllText(path, "x"); return path; }
+            string[] five = [Make("Excel", "AS110-116B350_SN5_20261113.xlsx"), Make("PDF", "AS110-116B350_SN5_20261113.pdf"), Make("LOGGER", "AS110-116B350_SN0005_20261113.xdt")];
+            string six = Make("Excel", "AS110-116B350_SN6_20261113.xlsx"), fifty = Make("Excel", "AS110-116B350_SN50_20261113.xlsx");
+            var shippingStore = new CompletionStore(shipping);
+            using (shippingStore.Lock()) { shippingStore.Append("COMPLETE", "5", "AS110-116B350", "a"); shippingStore.Append("COMPLETE", "7", "AS110-116B350", "b"); shippingStore.Append("COMPLETE", "50", "AS110-116B350", "c"); }
+            var found = ShippingDataModels.FindData(root, ["5", "6", "7", "8"]);
+            Check(found.Count == 3 && found[0] is { Serial: "5", Completed: true } && found[0].Files.Order().SequenceEqual(five.Order()) && found[0].Root == shipping
+                && found[1] is { Serial: "6", Completed: false } && found[1].Files.SequenceEqual([six]) && found[2] is { Serial: "7", Completed: true, Files.Length: 0 },
+                "shipping data is found by serial: saved files, completion, or both; a serial with neither is not listed");
+            Check(ShippingDataModels.FindData(root, []).Count == 0, "no released serial finds nothing");
+
+            // 1 つでもほかで開いていたら、何も消さずに止める。
+            var deleted = new List<string>();
+            using (new FileStream(five[1], FileMode.Open, FileAccess.Read, FileShare.Read))
+                Check(Message(() => ShippingDataModels.Remove(found, deleted.Add)).Contains("「AS110-116B350_SN5_20261113.pdf」を Excel などで開いていたら閉じてください") && deleted.Count == 0,
+                    "a shipping data file that is open elsewhere stops the removal before anything is deleted");
+            using (shippingStore.Lock()) Check(shippingStore.IsComplete("5") && shippingStore.IsComplete("7"), "the completion records are untouched after the stop");
+
+            ShippingDataModels.Remove(found, file => { deleted.Add(file); File.Delete(file); });
+            using (shippingStore.Lock())
+                Check(deleted.Order().SequenceEqual(five.Append(six).Order()) && !File.Exists(five[0]) && File.Exists(fifty)
+                    && !shippingStore.IsComplete("5") && shippingStore.WasReleased("5") && shippingStore.WasReleased("7") && !shippingStore.WasReleased("6") && shippingStore.IsComplete("50"),
+                    "removal deletes the files of the released serials, releases their completion, and leaves other serials alone");
+            Check(ShippingDataModels.FindData(root, ["5", "6", "7"]).Count == 0, "nothing is left to remove afterwards");
+        }
+        finally { try { Directory.Delete(Path.GetDirectoryName(root)!, true); } catch { } }
+    }
+
     private static string Message(Action action)
     {
         try { action(); return ""; }

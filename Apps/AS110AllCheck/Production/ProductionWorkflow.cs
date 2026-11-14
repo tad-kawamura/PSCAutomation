@@ -21,7 +21,58 @@ internal static class ShippingDataModels
         ByJudgedModel.TryGetValue(judged.Name, out string? name) ? ProductModel.All.FirstOrDefault(m => m.Name == name) : null;
     // 出荷データの保存先。データ取り(判定)の保存先の中に作る(例: 出荷データ(350kPa))。
     public static string FolderName(ProductModel shipping) => $"出荷データ({shipping.SupplyPressure}kPa)";
+
+    // データ取り(判定)の保存先の中にある、出荷データの保存先(いまあるものだけ。無いフォルダーは作らない)。
+    public static string[] ExistingRoots(string judgedRoot) => ProductModel.All
+        .Select(For).Where(m => m is not null).Select(m => Path.Combine(judgedRoot, FolderName(m!)))
+        .Distinct(StringComparer.OrdinalIgnoreCase).Where(Directory.Exists).ToArray();
+
+    // 判定した型式の保護を解除する S/N について、出荷データ(保存ファイル・完了の記録)を探す(2026-11-14、全体見直し・区切り 5、人の決定:
+    // 判定した型式を測り直すなら、前の調整のときの出荷データは消去する。それまでは「完了」のまま残り、測り直しを忘れると古い調整のデータが出荷用に残った)。
+    // 保存ファイルも完了の記録も無い S/N は返さない。
+    public static List<ShippingDataFound> FindData(string judgedRoot, IEnumerable<string> serials)
+    {
+        var found = new List<ShippingDataFound>();
+        string[] wanted = serials.ToArray();
+        if (wanted.Length == 0) return found;
+        foreach (string root in ExistingRoots(judgedRoot))
+        {
+            var store = new CompletionStore(root);
+            Dictionary<string, string> records;
+            using (store.Lock()) records = store.Read();
+            foreach (string serial in wanted)
+            {
+                string[] files = SaveFolder.FindSerialFiles(root, serial).ToArray();
+                bool completed = long.TryParse(serial, NumberStyles.None, CultureInfo.InvariantCulture, out long n)
+                    && records.GetValueOrDefault(n.ToString(CultureInfo.InvariantCulture)) == "COMPLETE";
+                if (files.Length > 0 || completed) found.Add(new(root, serial, files, completed));
+            }
+        }
+        return found;
+    }
+
+    // 見つけた出荷データを消去する。先に全部のファイルを開けるか確かめ(ほかで開いていたら 1 つも消さずに止める)、deleteFile で消し、
+    // 完了の記録があれば解除(RELEASE)を書く。deleteFile は画面側が渡す(ごみ箱へ入れる)。
+    public static void Remove(IReadOnlyList<ShippingDataFound> found, Action<string> deleteFile)
+    {
+        foreach (string file in found.SelectMany(f => f.Files))
+            FileAccessAdvice.Run("出荷データのファイル", file, () => { using var probe = new FileStream(file, FileMode.Open, FileAccess.ReadWrite, FileShare.None); },
+                "閉じたあと、もう一度「完了番号の保護と解除」からやり直してください（まだ何も変えていません）。");
+        foreach (var group in found.GroupBy(f => f.Root, StringComparer.OrdinalIgnoreCase))
+        {
+            var store = new CompletionStore(group.Key);
+            using var held = store.Lock();
+            foreach (var item in group)
+            {
+                foreach (string file in item.Files) FileAccessAdvice.Run("出荷データのファイル", file, () => deleteFile(file));
+                if (store.IsComplete(item.Serial)) store.Append("RELEASE", item.Serial, "-", "-");
+            }
+        }
+    }
 }
+
+// 保護を解除する S/N の出荷データ。Root は出荷データの保存先、Files は保存ファイル(Excel・PDF・LOGGER)、Completed は出荷データが完了(保護中)か。
+internal sealed record ShippingDataFound(string Root, string Serial, string[] Files, bool Completed);
 
 // UIやCOMから独立した工程状態。測定・転送・保存を同一revisionで結び付ける。
 internal sealed class ProductionWorkflow

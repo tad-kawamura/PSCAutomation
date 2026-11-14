@@ -640,6 +640,9 @@ internal sealed partial class MainForm : Form
             }
             _flow.TransferSucceeded();
             transferred=true;
+            // 同じ番号の測り直しでは、前に人が書き換えたブックをそのまま使う。書き換えが残っていることをログに出す(保存のときにパスワードを聞く)。
+            var carriedEdits=_excel.FindEdits();
+            if(carriedEdits.Count>0)AppendLog($"Excel転送：作業用 Excel に書き換えが {carriedEdits.Count} か所あります（保存のときにパスワードを聞きます）/ "+WorkbookEdits.Describe(carriedEdits,5).Replace("\r\n"," "));
             AppendLog($"Excel転送時間：計算・判定={calculationTimer.Elapsed.TotalMilliseconds:F0}ms / 合計={transferTimer.Elapsed.TotalMilliseconds:F0}ms");
             return _flow.ShippingData?ShippingJudgmentText:pass?"E21・L21：両方OK":"E21・L21：不合格（正式保存できません）";
         });
@@ -699,6 +702,16 @@ internal sealed partial class MainForm : Form
             // 保存先フォルダー名「SN開始-最後」と合わないときは書き込まずに止める。
             string rangeProblem=SaveFolder.CheckRange(_rootBox.Text,_flow.Serial);
             if(rangeProblem.Length>0)throw new InvalidOperationException(rangeProblem);
+            // 作業用 Excel を人が書き換えていたら(測定値の列のほか)、書き換えたところを見せてパスワードを聞く。合えばこのまま保存し、記録に残す
+            // (2026-11-14、全体見直し・区切り 5、人と決めた。それまでは気づかずに保存した)。まだ何も書いていないので、保存失敗にはしない。
+            var workbookEdits=_excel.FindEdits();
+            if(_excel.NeedsApproval(workbookEdits))
+            {
+                AppendLog($"正式保存：作業用 Excel が {workbookEdits.Count} か所書き換えられています / "+WorkbookEdits.Describe(workbookEdits).Replace("\r\n"," "));
+                if(!ConfirmWorkbookEdits(workbookEdits))return "作業用 Excel が書き換えられているため保存しませんでした（パスワードを入れると、このまま保存できます。心当たりが無ければ Excel を確かめてください）。";
+                _excel.Approve(workbookEdits);
+                AppendLog("正式保存：パスワードが入ったので、書き換えたまま保存します。");
+            }
             var store=Store;using var held=store.Lock();
             if(store.IsComplete(_flow.Serial))
             {
@@ -768,8 +781,36 @@ internal sealed partial class MainForm : Form
                 _flow.SaveSucceeded();_reviewStage=true;
             }
             finally {if(!keepStage)try{Directory.Delete(stage,true);}catch{}}
-            return (_flow.ShippingData?$"Excel・PDF・LOGGERをすべて保存しました（{root}）。「完了」を押してください（漏れ試験はしません）。":"Excel・PDF・LOGGERをすべて保存しました。漏れチェックを行ってください。")+keptNote;
+            // 書き換えたまま保存したことを記録に残す。保存はもう済んでいるので、記録を書けなくても保存済みのまま、書けなかったことを知らせる。
+            if(workbookEdits.Count>0)
+            {
+                try
+                {
+                    string record=WorkbookEdits.AppendRecord(root,DateTime.Now,_flow.Serial,_flow.Model.Name,baseName,workbookEdits);
+                    keptNote+=$"（作業用 Excel の書き換え {workbookEdits.Count} か所を記録しました：{record}）";
+                }
+                catch(IOException ex)
+                {
+                    AppendLog("Excel 書き換え記録を書けません："+ex.Message.Replace("\n"," "));
+                    keptNote+=$"\n※ 保存はできましたが、Excel の書き換えの記録を書けませんでした。書き換え：{WorkbookEdits.Describe(workbookEdits).Replace("\r\n"," ")}\n{ex.Message}";
+                }
+            }
+            return(_flow.ShippingData?$"Excel・PDF・LOGGERをすべて保存しました（{root}）。「完了」を押してください（漏れ試験はしません）。":"Excel・PDF・LOGGERをすべて保存しました。漏れチェックを行ってください。")+keptNote;
         });
+    }
+    // 作業用 Excel の書き換えを見せて、パスワードを聞く。合って「このまま保存する」なら true。検査では差し替える。
+    private Func<IReadOnlyList<WorkbookEdit>,bool>? _confirmWorkbookEditsOverride;
+    private bool ConfirmWorkbookEdits(IReadOnlyList<WorkbookEdit> edits)
+    {
+        if(_confirmWorkbookEditsOverride is { } replaced)return replaced(edits);
+        UseWaitCursor=false;
+        try
+        {
+            using var dialog=new WorkbookEditDialog(_flow.Serial,edits,Font);
+            dialog.Shown+=(_,_)=>ActivateJudgmentNotice(dialog,dialog.PasswordBox);
+            return dialog.ShowDialog(this)==DialogResult.OK;
+        }
+        finally { UseWaitCursor=true; }
     }
     private void StartLeakOutput()
     {
@@ -921,7 +962,24 @@ internal sealed partial class MainForm : Form
         if(dialog.ShowDialog(this)!=DialogResult.OK)return;
         var desired=entries.Select((e,i)=>(e.Serial,Protected:list.GetItemChecked(i),e.Model,e.BaseName)).ToArray();
         if(desired.Select(d=>d.Protected).SequenceEqual(entries.Select(e=>e.Protected))){AppendLog("保護と解除：チェックを変えた S/N が無いので何もしていません。");return;}
+        // 判定した型式(490 kPa)の保護を解除する S/N に出荷データ(350 kPa)があれば、消去することを確かめる(既定は「いいえ」。「いいえ」なら何も変えない)。
+        // 測り直すと前の調整のときの出荷データは使えないので、残さない(2026-11-14、全体見直し・区切り 5、人の決定)。
+        List<ShippingDataFound> shippingData=[];
+        if(!_flow.ShippingData)
+        {
+            try { shippingData=ShippingDataModels.FindData(_rootBox.Text,entries.Where((e,i)=>e.Protected && !list.GetItemChecked(i)).Select(e=>e.Serial)); }
+            catch(Exception ex) when(ex is IOException or UnauthorizedAccessException or InvalidDataException)
+            { AppendLog($"保護と解除：出荷データを確かめられません / {ex.Message}");ErrorNotification.Show(this,"出荷データを確かめられないため、何も変えていません。\n"+ex.Message,"完了番号の保護と解除",MessageBoxButtons.OK,MessageBoxIcon.Error);return; }
+            if(shippingData.Count>0 && !ConfirmDeleteShippingData(shippingData)){AppendLog("保護と解除：出荷データを消去しないので、何も変えていません。");return;}
+        }
         RunOperation("保護と解除",()=> {
+            // 出荷データの消去が先。消せなかったら(ほかで開いている)保護は解除しない。
+            string shippingNote="";
+            if(shippingData.Count>0)
+            {
+                ShippingDataModels.Remove(shippingData,DeleteToRecycleBin);
+                shippingNote=$"S/N {string.Join(", ",shippingData.Select(f=>f.Serial).Distinct())} の出荷データを消去しました（ファイル {shippingData.Sum(f=>f.Files.Length)} 個。{string.Join("、",shippingData.Select(f=>Path.GetFileName(f.Root)).Distinct())}）。";
+            }
             var store=Store;using var held=store.Lock();
             var (released,reprotected)=store.SetProtection(desired);
             // 今の測定開始S/N の保護が変わったかもしれないので、データ調整ボタンと「次にすること」に反映する。
@@ -929,9 +987,32 @@ internal sealed partial class MainForm : Form
             var parts=new List<string>();
             if(released.Length>0) parts.Add($"S/N {string.Join(", ",released)} の保護を解除しました（既存ファイルは残しています）");
             if(reprotected.Length>0) parts.Add($"S/N {string.Join(", ",reprotected)} を保護しました");
-            return parts.Count==0?"選んだS/Nはすでにその状態でした。":string.Join("。",parts)+"。";
+            return shippingNote+(parts.Count==0?"選んだS/Nはすでにその状態でした。":string.Join("。",parts)+"。");
         });
     }
+    // 出荷データの消去の確認(既定は「いいえ」)。検査では差し替える。
+    private Func<IReadOnlyList<ShippingDataFound>,bool>? _confirmDeleteShippingDataOverride;
+    private bool ConfirmDeleteShippingData(IReadOnlyList<ShippingDataFound> found)
+    {
+        if(_confirmDeleteShippingDataOverride is { } replaced)return replaced(found);
+        using var dialog=new LeakOverrideDialog(ShippingDataDeleteQuestion(found),Font,"保護の解除：出荷データの消去");
+        dialog.Shown+=(_,_)=>ActivateJudgmentNotice(dialog,dialog.NoButton);
+        return dialog.ShowDialog(this)==DialogResult.Yes;
+    }
+    internal static string ShippingDataDeleteQuestion(IReadOnlyList<ShippingDataFound> found)
+    {
+        string serials=string.Join(", ",found.Select(f=>f.Serial).Distinct());
+        string folders=string.Join("、",found.Select(f=>Path.GetFileName(f.Root)).Distinct());
+        var files=found.SelectMany(f=>f.Files).Select(Path.GetFileName).ToArray();
+        return $"S/N {serials} の保護を解除すると、測り直しになるので、前に測った出荷データ（{folders}）を消去します。\r\n\r\n"+
+            (files.Length>0?"消去するファイル（"+files.Length+" 個）\r\n"+string.Join("\r\n",files.Take(12).Select(f=>"・"+f))+(files.Length>12?$"\r\n・ほか {files.Length-12} 個":"")+"\r\n":"")+
+            (found.Any(f=>f.Completed)?"出荷データの「完了」（保護）も解除します。\r\n":"")+
+            "\r\n消去したファイルは Windows のごみ箱に入ります（USB メモリーなど、ごみ箱の無い所では完全に消えます）。\r\n\r\n"+
+            "保護を解除して、出荷データを消去しますか？\r\n「はい」：解除して消去する（測り直したあと、出荷データも測り直してください）\r\n「いいえ」：何も変えない";
+    }
+    // Windows のごみ箱へ入れる(ごみ箱の無いドライブでは完全に消える)。確認の画面は出さない。
+    private static void DeleteToRecycleBin(string file) =>
+        Microsoft.VisualBasic.FileIO.FileSystem.DeleteFile(file,Microsoft.VisualBasic.FileIO.UIOption.OnlyErrorDialogs,Microsoft.VisualBasic.FileIO.RecycleOption.SendToRecycleBin);
     private void EditTransferSettings()
     {
         if(_operationInProgress || _flow.Measuring || _leakRunning || _flow.HasSaved || _flow.SaveFailed)return;
