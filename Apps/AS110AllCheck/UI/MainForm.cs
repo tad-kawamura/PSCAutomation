@@ -49,6 +49,12 @@ internal sealed partial class MainForm : Form
     protected override async void OnShown(EventArgs e)
     {
         base.OnShown(e);
+        // 設定ファイルを読めずに初期値で起動したときは、最初に知らせる(TransferSettings.LoadFrom)。
+        if (_transferSettings.LoadWarning is { } warning)
+        {
+            AppendLog("設定ファイル：" + warning.Replace("\n", " "));
+            ErrorNotification.Show(this, warning, "設定ファイルを読めませんでした", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
         await CheckConnectionsAsync();
     }
 

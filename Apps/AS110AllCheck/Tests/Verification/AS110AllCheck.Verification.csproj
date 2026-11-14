@@ -16,6 +16,7 @@
     <Compile Include="../../Production/LeakJudge.cs" Link="App/LeakJudge.cs" />
     <Compile Include="../../Production/LeakTestRecordFile.cs" Link="App/LeakTestRecordFile.cs" />
     <Compile Include="../../Production/SaveFolder.cs" Link="App/SaveFolder.cs" />
+    <Compile Include="../../Production/FileAccessAdvice.cs" Link="App/FileAccessAdvice.cs" />
     <Compile Include="../../Production/MeasurementProfile.cs" Link="App/MeasurementProfile.cs" />
     <Compile Include="../../Production/SupplyPressure.cs" Link="App/SupplyPressure.cs" />
     <Compile Include="../../Calibration/AutoCalibration.cs" Link="App/AutoCalibration.cs" />

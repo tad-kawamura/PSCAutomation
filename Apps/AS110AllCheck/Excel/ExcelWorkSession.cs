@@ -61,6 +61,7 @@ internal sealed class ExcelWorkSession : IDisposable
             {
                 if(session._book is not null && !session.Closed)session.CloseVerified();
                 if(File.Exists(output))File.Delete(output);
+                EnsureTemplateReadable(template);
                 TemplateWriter.Save(template,output,[
                     new(settings.DataSheet,settings.CurrentCell,current),
                     new(settings.DataSheet,settings.PressureCell,pressure)]);
@@ -108,6 +109,7 @@ internal sealed class ExcelWorkSession : IDisposable
             if(session._book is not null && !session.Closed)session.CloseVerified();
             await Task.Run(()=>{
                 if(File.Exists(output))File.Delete(output);
+                EnsureTemplateReadable(template);
                 TemplateWriter.Save(template,output,[
                     new(settings.DataSheet,settings.CurrentCell,zeros),
                     new(settings.DataSheet,settings.PressureCell,zeros)]);
@@ -124,6 +126,11 @@ internal sealed class ExcelWorkSession : IDisposable
         }
         catch { if(reusable is null)session.Dispose(); throw; }
     }
+    // Excel 雛形を人が Excel で開いていて読めないときは、閉じるファイルの名前を日本語で出す(2026-11-14、全体見直し・区切り 5)。
+    // 雛形への書き込み(TemplateWriter)と同じ開き方で確かめる。ファイルが無いときは、部品の文(FileNotFoundException)のまま。
+    private static void EnsureTemplateReadable(string template) =>
+        FileAccessAdvice.Run("Excel 雛形",template,()=>{ using var probe=new FileStream(template,FileMode.Open,FileAccess.Read,FileShare.Read); },
+            "閉じたあと、もう一度「Excel転送」を押してください。",$"「{Path.GetFileName(template)}」を Excel で開いていたら閉じてください");
     // 起動直後の Excel は画面に出さない(事前準備で LOGGER の前面を奪わないため)。確認ダイアログは Excel の既定どおり出す。
     private bool EnsureApp()
     {

@@ -116,15 +116,27 @@ internal sealed class ProductionWorkflow
 internal sealed class CompletionStore
 {
     private readonly string _root;
-    public CompletionStore(string root) { _root = Path.GetFullPath(root); Directory.CreateDirectory(_root); }
-    public IDisposable Lock() => new FileStream(Path.Combine(_root,"完了記録.lock"),FileMode.OpenOrCreate,FileAccess.ReadWrite,FileShare.None);
+    // 開けない・書けないときは、何を確かめるかを日本語で出す(FileAccessAdvice。2026-11-14、全体見直し・区切り 5。それまでは .NET の英語の文がそのまま出た)。
+    public CompletionStore(string root)
+    {
+        _root = Path.GetFullPath(root);
+        FileAccessAdvice.Run("保存先", _root, () => Directory.CreateDirectory(_root),
+            openHint: "保存先のフォルダーが消えていないか・名前が変わっていないか確かめてください");
+    }
+    public IDisposable Lock()
+    {
+        string path = Path.Combine(_root,"完了記録.lock");
+        return FileAccessAdvice.Run("完了記録", path, () => new FileStream(path,FileMode.OpenOrCreate,FileAccess.ReadWrite,FileShare.None),
+            openHint: "AS110AllCheck をもう 1 つ起動して同じ保存先を使っていたら、片方を閉じてください");
+    }
     private string Journal => Path.Combine(_root,"完了記録.txt");
+    private const string JournalOpenHint = "「完了記録.txt」を Excel やメモ帳で開いていたら閉じてください";
     private static string Key(string serial) => long.Parse(serial,CultureInfo.InvariantCulture).ToString(CultureInfo.InvariantCulture);
     public Dictionary<string,string> Read()
     {
         var result = new Dictionary<string,string>();
         if (!File.Exists(Journal)) return result;
-        foreach (string line in File.ReadAllLines(Journal, Encoding.UTF8))
+        foreach (string line in FileAccessAdvice.Run("完了記録", Journal, () => File.ReadAllLines(Journal, Encoding.UTF8), openHint: JournalOpenHint))
         {
             if (string.IsNullOrWhiteSpace(line)) continue;
             string[] p = line.Split('\t');
@@ -162,8 +174,11 @@ internal sealed class CompletionStore
     public void Append(string action,string serial,string model,string baseName)
     {
         if (action is not ("COMPLETE" or "RELEASE")) throw new ArgumentException(nameof(action));
-        using var file = new FileStream(Journal,FileMode.Append,FileAccess.Write,FileShare.Read);
         byte[] bytes = new UTF8Encoding(false).GetBytes($"{action}\t{DateTime.Now:O}\t{Key(serial)}\t{model}\t{baseName}\n");
-        file.Write(bytes); file.Flush(true);
+        FileAccessAdvice.Run("完了記録", Journal, () =>
+        {
+            using var file = new FileStream(Journal,FileMode.Append,FileAccess.Write,FileShare.Read);
+            file.Write(bytes); file.Flush(true);
+        }, openHint: JournalOpenHint);
     }
 }

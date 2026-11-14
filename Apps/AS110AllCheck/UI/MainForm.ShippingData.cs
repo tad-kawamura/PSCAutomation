@@ -60,7 +60,8 @@ internal sealed partial class MainForm : Form
         catch (Exception ex)
         {
             _judgedPassed = false;
-            _judgedPassReadError = ex.Message;
+            // 完了記録の「開けません」の案内(FileAccessAdvice)は、下の JudgedReadFailedText が同じことを順に書くので、ここでは元の理由だけを持つ。
+            _judgedPassReadError = ex is FileAccessAdviceException ? ex.InnerException!.Message : ex.Message;
             AppendLog("データ取りの完了記録の確認に失敗：" + ex.Message);
             if (throwOnError) throw new IOException(JudgedReadFailedText(afterMeasurement: false), ex);
         }

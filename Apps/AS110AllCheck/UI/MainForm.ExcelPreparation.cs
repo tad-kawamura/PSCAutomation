@@ -19,6 +19,10 @@ internal sealed partial class MainForm : Form
         return path;
     }
 
+    // いま雛形フォルダーにある Excel 雛形(転送設定のシート名を確かめるのに使う)。出荷データの型式は専用の雛形を持たないので、あるものだけ。
+    private static string[] ExistingExcelTemplates() =>
+        ProductModel.All.Select(m => Path.Combine(TemplateFolderPath, ExcelTemplateFileName(m))).Where(File.Exists).ToArray();
+
     // 出荷データ(AS110-116B350)は判定した型式(AS110-116B)の雛形に転送する(TemplateModel)。
     private string ExcelTemplatePath => ExcelTemplatePathFor(_flow.TemplateModel);
 

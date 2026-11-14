@@ -52,6 +52,32 @@ internal sealed partial class MainForm : Form
     private readonly Label _serialLabel = new() { Text="測定開始S/N", AutoSize=true };
     // 測定開始S/N が空のときの赤字。欄の右に出す。
     private readonly Label _serialMissingLabel = new() { Text="入力してください", AutoSize=true, ForeColor=Color.Red, Visible=false };
+    // 測定開始S/N に、保存ファイルがすでにある番号(合格にはなっていない)を入れたときの知らせ。S/N の行の下に出す。止めはしない(測り直しのことがある)。
+    // 2026-11-14、全体見直し・区切り 5(人の指摘: 保存の確認まで進んでから気づくのでは遅い。番号を入れた時点で分かるようにする)。
+    private readonly Label _serialSavedLabel = new() { AutoSize=true,ForeColor=Color.DarkOrange,MaximumSize=new Size(680,0),Visible=false,Margin=new Padding(0,0,0,6) };
+    // 知らせを作ったときの保存先・S/N と文(作ったあとで保存先・S/N が変わったら出さない)。
+    private (string Root,string Serial,string Text)? _savedSerialNotice;
+    // この起動で自分が保存した S/N か(測り直しで自分のファイルを知らせない)。
+    private bool OwnsSavedSerial(string root) => _ownedSaveBase is { } owned && owned.StartsWith($"{root}|{_flow.Model.Name}_SN{_flow.Serial}_",StringComparison.OrdinalIgnoreCase);
+    // 保存先に、いまの測定開始S/N の保存ファイルがあるかを見直す(完了記録を読み直すとき・合格で次の番号へ進んだときに呼ぶ)。
+    // 完了済み(保護中)の番号は専用の案内が出るので対象外。出荷データの保存先がまだ無いときに、フォルダーを作らない。
+    private void RefreshSavedSerialNotice()
+    {
+        var previous=_savedSerialNotice;
+        _savedSerialNotice=null;
+        if(_flow.Mode!=TestMode.Production || _flow.SerialMissing || _rootBox.Text.Length==0 || _serialCompleted)return;
+        try
+        {
+            string root=Path.GetFullPath(SaveRootPath);
+            if(!Directory.Exists(root) || OwnsSavedSerial(root))return;
+            var files=SaveFolder.FindSerialFiles(root,_flow.Serial);
+            if(files.Count==0)return;
+            string names=string.Join("、",files.Select(Path.GetFileNameWithoutExtension).Distinct(StringComparer.OrdinalIgnoreCase));
+            _savedSerialNotice=(root,_flow.Serial,$"S/N {_flow.Serial} は保存ファイルがすでにあります（{names}。合格にはなっていません）。測り直しなら、このまま進めてください。番号の入れ間違いなら、測定開始S/N を直してください。");
+            if(previous!=_savedSerialNotice)AppendLog("測定開始S/N："+_savedSerialNotice.Value.Text);
+        }
+        catch(Exception ex) when(ex is IOException or UnauthorizedAccessException) { AppendLog("保存ファイルの確認に失敗："+ex.Message); }
+    }
     private readonly TextBox _rootBox = new() { Width=280,ReadOnly=true };
     private readonly Label _flowLabel = new() { AutoSize=true,MaximumSize=new Size(680,0) };
     private readonly Button _transferButton=new(),_saveButton=new(),_leakOutputButton=new(),_leakButton=new(),_completeButton=new(),_remeasureButton=new(),_retryCaptureButton=new();
@@ -210,7 +236,7 @@ internal sealed partial class MainForm : Form
         // 漏れ試験の試験秒数・しきい値(データ取りだけ表示。MainForm.LeakJudgment.cs)。
         _actionPanel.Controls.Add(mainActions,0,0);_actionPanel.Controls.Add(BuildLeakSettingsRow(),0,1);_actionPanel.Controls.Add(subActions,0,2);
         // 供給圧力(出荷データの工程がある型式だけ。MainForm.ShippingData.cs)は一番上。
-        Control[] rows=[BuildSupplyPressureRow(),_shippingNoticeLabel,_savePathPanel,_saveRootWarningLabel,_rangePanel,_serialPanel,_protectionPanel,_actionPanel,_flowLabel];
+        Control[] rows=[BuildSupplyPressureRow(),_shippingNoticeLabel,_savePathPanel,_saveRootWarningLabel,_rangePanel,_serialPanel,_serialSavedLabel,_protectionPanel,_actionPanel,_flowLabel];
         _productionPanel.RowCount=rows.Length;
         for(int i=0;i<rows.Length;i++){ _productionPanel.RowStyles.Add(new RowStyle(SizeType.AutoSize)); _productionPanel.Controls.Add(rows[i],0,i); }
 
@@ -291,10 +317,15 @@ internal sealed partial class MainForm : Form
     private void RefreshSerialCompletion(bool throwOnError=false)
     {
         _serialCompleted=false;
-        RefreshJudgedPass(throwOnError);
-        if(_flow.Mode!=TestMode.Production || _flow.SerialMissing || _rootBox.Text.Length==0)return;
-        try { var store=Store;using var held=store.Lock();_serialCompleted=store.IsComplete(_flow.Serial); }
-        catch(Exception ex) when(!throwOnError) { AppendLog("完了記録の確認に失敗："+ex.Message); }
+        try
+        {
+            RefreshJudgedPass(throwOnError);
+            if(_flow.Mode!=TestMode.Production || _flow.SerialMissing || _rootBox.Text.Length==0)return;
+            try { var store=Store;using var held=store.Lock();_serialCompleted=store.IsComplete(_flow.Serial); }
+            catch(Exception ex) when(!throwOnError) { AppendLog("完了記録の確認に失敗："+ex.Message); }
+        }
+        // 完了済みかどうかが決まってから、保存ファイルがすでにある番号かを見直す。
+        finally { RefreshSavedSerialNotice(); }
     }
     private void ChangeTestMode()
     {
@@ -356,6 +387,11 @@ internal sealed partial class MainForm : Form
         _saveRootWarningLabel.Text=production?SaveFolder.CheckRange(_rootBox.Text,_serialBox.Text.Trim()):"";
         _saveRootWarningLabel.Visible=_saveRootWarningLabel.Text.Length>0;
         _serialMissingLabel.Visible=production && _serialBox.Text.Trim().Length==0;
+        // 保存ファイルがすでにある番号の知らせ。保存したあと・完了済み・自分が保存した番号の測り直し・作ったあとで保存先や番号が変わったときは出さない。
+        bool savedNotice=production && _savedSerialNotice is { } notice && !_flow.SerialMissing && !_flow.HasSaved && !_serialCompleted && _rootBox.Text.Length>0
+            && notice.Serial==_flow.Serial && string.Equals(notice.Root,Path.GetFullPath(SaveRootPath),StringComparison.OrdinalIgnoreCase) && !OwnsSavedSerial(notice.Root);
+        _serialSavedLabel.Text=savedNotice?_savedSerialNotice!.Value.Text:"";
+        _serialSavedLabel.Visible=savedNotice;
         _serialBox.Enabled=CanEnterSerial;
         _startButton.Text=_flow.Mode==TestMode.Motion?"測定開始":"データ調整";
         // 型式(参照波形)未選択・データ取りの保存先未選択は、押してからエラーにせず押せない状態にして「次にすること」で案内する(2026-11-06)。
@@ -700,19 +736,38 @@ internal sealed partial class MainForm : Form
             _ownedSaveBase=ownership;
             // ここから書き込む。途中で止まったら保存失敗(同じ番号で再保存)。成功したら SaveSucceeded が戻す。
             _flow.SaveFailed=true;
-            foreach(string file in new[]{excel,pdf,logger})Directory.CreateDirectory(Path.GetDirectoryName(file)!);
+            // 前に保存した Excel・PDF を開いたまま保存し直すと、置き換えのところで止まる。どのファイルを閉じるかを日本語で出す
+            // (2026-11-14、全体見直し・区切り 5。それまでは「Access to the path is denied.」だけが出た)。
+            const string retry="閉じたあと、もう一度「保存」を押してください（同じ番号で保存し直します）。";
+            foreach(string file in new[]{excel,pdf,logger})FileAccessAdvice.Run("保存先",Path.GetDirectoryName(file)!,()=>Directory.CreateDirectory(Path.GetDirectoryName(file)!),retry,"保存先のフォルダーが消えていないか確かめてください");
             // 生成は一時ファイルへ。個別の置換が失敗してもSavedRevisionは更新しない。
-            string stage=Path.Combine(root,"tmp",Guid.NewGuid().ToString("N"));Directory.CreateDirectory(stage);
+            string stage=Path.Combine(root,"tmp",Guid.NewGuid().ToString("N"));FileAccessAdvice.Run("保存先",stage,()=>Directory.CreateDirectory(stage),retry,"保存先のフォルダーが消えていないか確かめてください");
+            bool keepStage=false;
             try
             {
                 string x=Path.Combine(stage,"result.xlsx"),p=Path.Combine(stage,"result.pdf"),l=Path.Combine(stage,"result"+Path.GetExtension(logger));
                 if(_flow.ShippingData)_excel.SaveCopiesWithoutJudgment(x,p);else _excel.SaveCopies(x,p);
                 File.Copy(_capturePath,l);
                 foreach(string f in new[]{x,p,l})if(!File.Exists(f)||new FileInfo(f).Length==0)throw new IOException("保存ファイルが生成されませんでした。");
-                File.Move(x,excel,true);File.Move(p,pdf,true);File.Move(l,logger,true);
+                // 置き換えが途中で止まったら、置き換えた分を元に戻す(SaveReplace)。戻せたら保存先は保存の前のままなので、保存失敗にしない。
+                try { SaveReplace.ReplaceAll([(x,excel),(p,pdf),(l,logger)],stage); }
+                catch(SaveReplaceException ex)
+                {
+                    string openHint=$"「{Path.GetFileName(ex.Path)}」を Excel や PDF の画面で開いていたら閉じてください";
+                    if(ex.Restored)
+                    {
+                        _flow.SaveFailed=false;
+                        throw new FileAccessAdviceException(FileAccessAdvice.Text("保存先のファイル",ex.Path,ex.InnerException!,
+                            "今回の分は保存していません（保存先のファイルは保存の前のままです）。閉じたあと、もう一度「保存」を押してください。",openHint),ex);
+                    }
+                    // 戻せなかったときは、よけておいた前のファイルを消さない(一時フォルダーを残す)。保存失敗のままにして、同じ番号で保存し直してもらう。
+                    keepStage=true;
+                    throw new FileAccessAdviceException(FileAccessAdvice.Text("保存先のファイル",ex.Path,ex.InnerException!,
+                        "置き換えの途中で止まり、元に戻せませんでした。保存先に今回と前回のファイルが混ざっています。"+retry+$"\n前のファイルの控え：{stage}",openHint),ex);
+                }
                 _flow.SaveSucceeded();_reviewStage=true;
             }
-            finally {try{Directory.Delete(stage,true);}catch{}}
+            finally {if(!keepStage)try{Directory.Delete(stage,true);}catch{}}
             return (_flow.ShippingData?$"Excel・PDF・LOGGERをすべて保存しました（{root}）。「完了」を押してください（漏れ試験はしません）。":"Excel・PDF・LOGGERをすべて保存しました。漏れチェックを行ってください。")+keptNote;
         });
     }
@@ -813,6 +868,8 @@ internal sealed partial class MainForm : Form
             _serialCompleted=store.IsComplete(_flow.Serial);
             // 出荷データは次の番号もデータ取りで合格しているかを確かめておく(データ取りの完了記録はロックのファイルが別)。
             RefreshJudgedPass();
+            // 次の番号に保存ファイルがすでにあれば(前に測って合格にしていない)、押す前に分かるようにしておく。
+            RefreshSavedSerialNotice();
             _excel.Dispose();_excel=null;_capturePath=null;
             return _flow.SerialRangeFinished ? $"S/N{previous}完了。最後のS/N {_flow.LastSerial} まで終わりました。次の範囲は保存先を選び直し、測定開始S/Nを入力してください。" : $"S/N{previous}完了。次はS/N{_flow.Serial}です。";
         });
@@ -887,6 +944,16 @@ internal sealed partial class MainForm : Form
         // 漏れ試験の初期運用の回避(SPEC「漏れ試験の自動判定」5)。軌道に乗ったら外す(人の方針)。
         var allowLeakOverride=new CheckBox{Text="漏れ判定が不合格でも、人の判断で合格にできる（初期運用）",Dock=DockStyle.Bottom,Height=32,Padding=new Padding(8,0,0,0),Checked=_transferSettings.AllowLeakOverride};
         dialog.Controls.AddRange([grid,allowLeakOverride,ok]);
+        // 「設定保存」のときに値を確かめ、だめなら理由を出して画面を閉じない(直せる)。× で閉じるときは確かめない(何も変えないため)。
+        // 2026-11-14、全体見直し・区切り 5。それまでは何でも保存でき、測定したあとの転送で初めて止まった。
+        dialog.FormClosing+=(_,e)=>{
+            if(dialog.DialogResult!=DialogResult.OK)return;
+            var problems=draft.FindProblems(ExistingExcelTemplates());
+            if(problems.Count==0)return;
+            e.Cancel=true;
+            AppendLog("転送設定：保存しません / "+string.Join(" ",problems));
+            ErrorNotification.Show(dialog,"この設定は保存できません。直してから「設定保存」を押してください（やめるなら × で閉じる）。\n\n・"+string.Join("\n・",problems),"転送設定の確認",MessageBoxButtons.OK,MessageBoxIcon.Warning);
+        };
         string previousSaveRoot=_transferSettings.SaveRoot;
         if(dialog.ShowDialog(this)!=DialogResult.OK){AppendLog("転送設定：保存せずに閉じました（設定は変えていません）。");return;}
         RunOperation("転送設定保存",()=>{
