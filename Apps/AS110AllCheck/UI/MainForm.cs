@@ -9,9 +9,6 @@ namespace PSCAutomation.Apps.AS110AllCheck;
 // MainFormを役割別に分割。すべて同じFormの一部です。
 internal sealed partial class MainForm : Form
 {
-    // 別アプリで雛形操作をデバッグするときは true にしてGUIを再表示します。
-
-
     private readonly WaveLoggerSession _logger = new() { ObserveOperation = name => PcDelayObservation.Begin(name) };
 
     private readonly As110ArduinoProtocol _arduino = new();
@@ -20,6 +17,7 @@ internal sealed partial class MainForm : Form
 
     public MainForm()
     {
+        _confirmClose = AskClose;
         // LOGGER 本体ソフトの起動(約 7 秒)だけ先に始め、画面準備・発振器確認と重ねる。
         BeginLoggerStartup();
         _nr500Connection = new Nr500Connection(_logger);
@@ -43,6 +41,13 @@ internal sealed partial class MainForm : Form
         ConfigureLoggerSelection();
         ConfigureConnectionSelection();
         UpdateControls();
+        // Windows の表示倍率に合わせる(ここまでの大きさは 100% のときの値)。倍率が大きくて画面に収まらないときは、画面の作業領域までにする
+        // (操作欄がスクロールする)。
+        DisplayScale.Apply(this);
+        var area = (Screen.PrimaryScreen ?? Screen.AllScreens[0]).WorkingArea;
+        Size = new Size(Math.Min(Width, area.Width), Math.Min(Height, area.Height));
+        FitNextStepLabel();
+        UnexpectedErrors.Register(this);
         StartPcDelayObservation();
     }
 

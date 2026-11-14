@@ -36,6 +36,7 @@ internal sealed partial class MainForm : Form
             AutoSize = true, Location = new Point(15, 12)
         });
         notice.Controls.Add(new Label { Text = guide, AutoSize = true, Location = new Point(15, 70) });
+        DisplayScale.Apply(notice);
         // 自動で閉じるのでOKボタンは置かない。表示中のEnterはExcelへ渡さず、ここで閉じる。
         notice.KeyDown += (_, e) =>
         {
@@ -108,6 +109,7 @@ internal sealed partial class MainForm : Form
             dialog.Controls.AddRange([yes, no]);
             dialog.AcceptButton = no;
             dialog.CancelButton = no;
+            DisplayScale.Apply(dialog);
             dialog.Shown += (_, _) => ActivateJudgmentNotice(dialog, no);
             return dialog.ShowDialog(this) == DialogResult.Yes &&
                 _flow.Mode == TestMode.Production && _flow.Revision == revision && _flow.HasTransfer;

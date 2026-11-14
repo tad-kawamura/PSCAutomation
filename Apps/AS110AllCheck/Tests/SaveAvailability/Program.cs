@@ -400,6 +400,8 @@ internal static class Program
         // 終了処理を通して閉じる(M5Stack 通信・遅延観測の後始末もここで行う)。Close を通さずに Dispose だけで終わると、
         // new MainForm() が始めた LOGGER 本体ソフトの事前起動が破棄されず、検査のたびに窓なしの WAVE LOGGER(NRWL.exe)が 1 つ残った(2026-11-13、全体見直し・区切り 3)。
         type.GetField("_reviewStage",Private)!.SetValue(form,false);
+        // 測定結果が残っていても、終了の確認は出さずに閉じる(確認そのものは Tests/AppShutdown で確かめる)。
+        type.GetField("_confirmClose",Private)!.SetValue(form,(Func<string,bool>)(_=>true));
         form.Close();
         var closing=System.Diagnostics.Stopwatch.StartNew();
         while(!form.IsDisposed && closing.Elapsed<TimeSpan.FromSeconds(10)){ Application.DoEvents(); Thread.Sleep(5); }

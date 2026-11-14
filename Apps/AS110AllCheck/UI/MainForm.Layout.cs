@@ -14,13 +14,13 @@ namespace PSCAutomation.Apps.AS110AllCheck;
 // GUIの位置・色・表示文字を変更するときは、このファイルを修正する。
 internal sealed partial class MainForm : Form
 {
-    private static readonly bool ShowTemplateDebugControls = false;
-    private readonly Button _deleteTemplateButton = new();
     private readonly Label _arduinoValueLabel = new();
     private readonly Label _wfValueLabel = new();
-    private readonly Label _templateValueLabel = new();
-    private readonly Panel _dropPanel = new();
-    private readonly Label _dropTextLabel = new();
+    // 操作欄(ログ欄の上。高さが足りないときはここだけスクロールする)。
+    private readonly Panel _operationViewport = new() { Dock = DockStyle.Fill, AutoScroll = true, Margin = Padding.Empty };
+    // 画面のログ欄に残す行数。これを超えたら、古い行を画面から外す(全部の行は Logs の「画面ログ_日付.txt」に残る。ScreenLogFile)。
+    private const int MaxScreenLogLines = 2000, KeptScreenLogLines = 1000;
+    private int _screenLogLines;
     private readonly Button _initializeButton = new();
     private readonly Button _startButton = new();
     private readonly Label _nextStepLabel = new();
@@ -49,20 +49,14 @@ internal sealed partial class MainForm : Form
             AutoSizeMode = AutoSizeMode.GrowAndShrink,
             Margin = Padding.Empty,
             ColumnCount = 1,
-            RowCount = 7
+            RowCount = 6
         };
         root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        // ドラッグ欄を非表示にするときは行の高さも0にして余白を残しません。
-        root.RowStyles.Add(ShowTemplateDebugControls
-            ? new RowStyle(SizeType.AutoSize)
-            : new RowStyle(SizeType.Absolute, 0));
-        root.RowStyles.Add(ShowTemplateDebugControls
-            ? new RowStyle(SizeType.AutoSize)
-            : new RowStyle(SizeType.Absolute, 0));
+        root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
 
         var title = new Label
         {
@@ -157,8 +151,6 @@ internal sealed partial class MainForm : Form
         var topButtonSize = new Size(110, 30);
         ConfigureButton(_initializeButton, "確認", InitializeClicked, topButtonSize);
         ConfigureButton(_startButton, "測定開始（確認用）", StartClicked, topButtonSize);
-        ConfigureButton(_deleteTemplateButton, "雛形を削除", DeleteTemplateClicked, topButtonSize);
-        _deleteTemplateButton.Visible = ShowTemplateDebugControls;
         ConfigureButton(_getStateButton, "状態確認", GetStateClicked, topButtonSize);
         ConfigureButton(_restoreWifiButton, "元のWi-Fiへ戻す", RestoreWifiClicked, topButtonSize);
         ConfigureButton(_exitButton, "アプリ終了", (_, _) => Close(), topButtonSize);
@@ -167,7 +159,6 @@ internal sealed partial class MainForm : Form
         [
             _initializeButton,
             _startButton,
-            _deleteTemplateButton,
             _getStateButton,
             _restoreWifiButton,
             _exitButton
@@ -175,6 +166,7 @@ internal sealed partial class MainForm : Form
         // 「次にすること」: データ調整(測定開始)ボタンが押せない理由と次の操作を、ボタンのすぐ下に 1 行で出す(2026-11-06、人の要望。
         // 立ち上げて設定中に何をすればいいか分からない、ボタンが押せない理由が分からないため)。押せるときは緑、押せないときは赤。
         buttons.SetFlowBreak(_exitButton, true);
+        // 幅は窓の幅に合わせて折り返す(FitNextStepLabel。2026-11-14 までは 720 に固定で、窓を狭くすると右端が切れた)。
         _nextStepLabel.AutoSize = true;
         _nextStepLabel.MaximumSize = new Size(720, 0);
         _nextStepLabel.Font = new Font(Font.FontFamily, 11, FontStyle.Bold);
@@ -239,30 +231,6 @@ internal sealed partial class MainForm : Form
         connectionOrReferencePanel.Controls.Add(_calibrationPanel, 0, 2);
         connectionOrReferencePanel.Controls.Add(_referenceSelectionPanel, 0, 3);
 
-        _dropPanel.Visible = ShowTemplateDebugControls;
-        _dropPanel.AllowDrop = true;
-        _dropPanel.Dock = DockStyle.Fill;
-        _dropPanel.Height = 75;
-        _dropPanel.BorderStyle = BorderStyle.FixedSingle;
-        _dropPanel.BackColor = Color.AliceBlue;
-        _dropPanel.DragEnter += TemplateDragEnter;
-        _dropPanel.DragDrop += TemplateDragDrop;
-        _dropTextLabel.Dock = DockStyle.Fill;
-        _dropTextLabel.TextAlign = ContentAlignment.MiddleCenter;
-        _dropTextLabel.AllowDrop = true;
-        _dropTextLabel.DragEnter += TemplateDragEnter;
-        _dropTextLabel.DragDrop += TemplateDragDrop;
-        _dropPanel.Controls.Add(_dropTextLabel);
-        _templateValueLabel.Visible = ShowTemplateDebugControls;
-        _templateValueLabel.AutoSize = true;
-        var templateStatus = new FlowLayoutPanel
-        {
-            AutoSize = true,
-            Dock = DockStyle.Fill,
-            Visible = ShowTemplateDebugControls
-        };
-        templateStatus.Controls.Add(_templateValueLabel);
-
         _logTextBox.Dock = DockStyle.Fill;
         _logTextBox.Multiline = true;
         _logTextBox.ReadOnly = true;
@@ -275,15 +243,12 @@ internal sealed partial class MainForm : Form
         root.Controls.Add(connectionPanel, 0, 2);
         root.Controls.Add(buttons, 0, 3);
         root.Controls.Add(connectionOrReferencePanel, 0, 4);
-        root.Controls.Add(_dropPanel, 0, 5);
-        root.Controls.Add(templateStatus, 0, 6);
-        root.Controls.Add(BuildProductionPanel(), 0, 7);
-        root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        root.RowCount = 8;
+        root.Controls.Add(BuildProductionPanel(), 0, 5);
 
         // 操作欄だけをスクロールさせ、ログ欄の高さを常に確保する。
-        var operationViewport = new Panel { Dock=DockStyle.Fill, AutoScroll=true, Margin=Padding.Empty };
+        var operationViewport = _operationViewport;
         operationViewport.Controls.Add(root);
+        operationViewport.ClientSizeChanged += (_, _) => FitNextStepLabel();
         var frame = new TableLayoutPanel
         {
             Dock=DockStyle.Fill, Padding=new Padding(18), ColumnCount=1, RowCount=2
@@ -323,10 +288,35 @@ internal sealed partial class MainForm : Form
         button.Click += handler;
     }
 
+    // 「次にすること」を、操作欄の幅で折り返す(窓の幅を変えたとき・縦のスクロールバーが出たり消えたりしたとき)。
+    private void FitNextStepLabel()
+    {
+        int width = Math.Max(DisplayScale.Pixels(this, 200), _operationViewport.ClientSize.Width - _nextStepLabel.Margin.Horizontal - DisplayScale.Pixels(this, 4));
+        if (_nextStepLabel.MaximumSize.Width != width) _nextStepLabel.MaximumSize = new Size(width, 0);
+    }
+
     private void AppendLog(string message)
     {
+        DateTime now = DateTime.Now;
         ArduinoDiagnosticLog.Write("APP", message);
-        _logTextBox.AppendText($"{DateTime.Now:HH:mm:ss.fff}  {message}{Environment.NewLine}");
+        // 画面に出した行は、日ごとのファイルにも全部残す(別スレッドで書くので、ここでは待たない)。
+        ScreenLogFile.Default.Write(now, message);
+        _logTextBox.AppendText($"{now:HH:mm:ss.fff}  {message}{Environment.NewLine}");
+        if (++_screenLogLines > MaxScreenLogLines) TrimScreenLog();
+    }
+
+    // ログ欄が際限なく増えないよう、古い行を画面から外す(1 日つけたままでも重くならないように)。外した行もファイルには残っている。
+    private void TrimScreenLog()
+    {
+        string[] lines = _logTextBox.Lines;
+        // 最後の要素は、最後の改行の後ろの空行。
+        int content = lines.Length > 0 && lines[^1].Length == 0 ? lines.Length - 1 : lines.Length;
+        int skip = Math.Max(0, content - KeptScreenLogLines);
+        _logTextBox.Text = $"（これより前のログは、Logs フォルダーの「{ScreenLogFile.FilePrefix}日付.txt」にあります）{Environment.NewLine}" +
+            string.Join(Environment.NewLine, lines.Skip(skip).Take(content - skip)) + Environment.NewLine;
+        _screenLogLines = content - skip + 1;
+        _logTextBox.SelectionStart = _logTextBox.TextLength;
+        _logTextBox.ScrollToCaret();
     }
 
     private void UpdateControls()
@@ -346,11 +336,6 @@ internal sealed partial class MainForm : Form
         _wfValueLabel.Text = (_generator is not null ? $"{GetGeneratorModelName()}　接続済み" : "未接続") +
             (_generatorOutputUnknown ? "・出力状態不明" : "");
         _wfValueLabel.ForeColor = _generator is not null && !_generatorOutputUnknown ? Color.DarkGreen : Color.DarkRed;
-        _templateValueLabel.Text = _templateLoaded
-            ? "雛形：読み込み済み（LOGGER側）" : "雛形：未登録";
-        _dropTextLabel.Text = _templateLoaded
-            ? "雛形読み込み済み（LOGGERで開いているファイルを使用）"
-            : "「雛形」にモードと本体に対応する.xdt/.ydtを置いてください\r\n参照波形.xybは一覧から選択します";
         bool nfOk = _arduino.MeasurementInputReady && _arduino.NfEnergized;
         bool showReferenceSelection = ConnectionsReady && !_checkingConnections && !_measurementState.ErrorLogged;
         _connectionStatusPanel.Visible = !showReferenceSelection;
@@ -361,7 +346,6 @@ internal sealed partial class MainForm : Form
         _referenceStatusLabel.Text = _selectedReferencePath is not null
             ? "読み込み操作済み（LOGGER画面で確認）"
             : _referenceComboBox.Items.Count <= 1 ? "候補なし（雛形フォルダへ.xybを追加）" : "未選択";
-        _dropPanel.BackColor = ConnectionsReady && !_templateLoaded ? Color.AliceBlue : SystemColors.Control;
 
         bool wifiSelected = GetSelectedConnectionMode() == NrConnectionMode.Wifi;
         bool wifiAvailable = !wifiSelected || IsWaveLoggerXInstalled();
@@ -377,7 +361,6 @@ internal sealed partial class MainForm : Form
             !_operationInProgress &&
             wifiAvailable;
         _startButton.Enabled = !_operationInProgress && nfOk && ConnectionsReady && _templateLoaded && _calibrationApplied && LoggerReadyToStart;
-        _deleteTemplateButton.Enabled = !_operationInProgress && _templateLoaded;
         _getStateButton.Enabled = !_operationInProgress && initialized;
         _restoreWifiButton.Enabled =
             !_operationInProgress && _nrXConnection.WifiRestoreRequired;

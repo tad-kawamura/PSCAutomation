@@ -50,6 +50,8 @@ internal static class ConnectionFormTests
     private static void Close(Form form)
     {
         // 終了処理を通して閉じる(先に起動を始めた LOGGER の参照もここで手放す)。
+        // 測定結果が残っていても、終了の確認は出さずに閉じる(確認そのものは Tests/AppShutdown で確かめる)。
+        form.GetType().GetField("_confirmClose", Private)!.SetValue(form, (Func<string, bool>)(_ => true));
         form.Close();
         var closing = Stopwatch.StartNew();
         while (!form.IsDisposed && closing.Elapsed < TimeSpan.FromSeconds(10)) { Application.DoEvents(); Thread.Sleep(5); }
@@ -136,7 +138,7 @@ internal static class ConnectionFormTests
             finally { rig.Set("_checkingConnections", false); }
             if ((bool)rig.Field("_calibrationApplied")! || (bool)rig.Field("_templateLoaded")! || rig.FlowIs("CaptureFailed") || (bool)rig.Field("_leakOutputReady")! || rig.Generator.Stops == stopsBefore)
                 throw new Exception("A disconnect must stop the output, release the calibration and discard a failed capture");
-            if ((bool)rig.Field("_arduinoDisconnectHandling")! || !rig.Log.Contains("Arduino の通信が途切れました"))
+            if ((bool)rig.Field("_arduinoDisconnectHandling")! || !rig.Log.Contains("M5Stack の通信が途切れました"))
                 throw new Exception("The disconnect handling must finish and be logged");
             Console.WriteLine("PASS M5Stack disconnect: a nested notification is ignored; during a connection check it is handled without a second popup");
 

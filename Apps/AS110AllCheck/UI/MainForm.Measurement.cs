@@ -39,10 +39,10 @@ internal sealed partial class MainForm : Form
             try { StopLeakOutput(); } catch { }
             ResetTemplate();
             _nfCommunicationAlertShown = true;
-            AppendLog("Arduino の通信が途切れました。「確認」を押してください。");
+            AppendLog("M5Stack の通信が途切れました。「確認」を押してください。");
             // 「確認」の途中で切れた(生存確認の失敗を含む)ときは、接続確認の結果にまとめて出すので、ここでは重ねて出さない。
             if (_checkingConnections) return;
-            ErrorNotification.Show(this, "Arduino の通信が途切れました。接続を確認してください。",
+            ErrorNotification.Show(this, "M5Stack の通信が途切れました。接続を確認してください。",
                 "通信エラー", MessageBoxButtons.OK, MessageBoxIcon.Error);
         }
         finally { _arduinoDisconnectHandling = false; }

@@ -163,6 +163,8 @@ internal static class LeakCheckFormTests
         finally
         {
             // 模擬の発振器と LOGGER のまま終了処理を通して閉じる(先に起動を始めた LOGGER の参照もここで手放す)。
+                // 測定結果が残っていても、終了の確認は出さずに閉じる(確認そのものは Tests/AppShutdown で確かめる)。
+            form.GetType().GetField("_confirmClose", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(form, (Func<string, bool>)(_ => true));
             form.Close();
             var closing = Stopwatch.StartNew();
             while (!form.IsDisposed && closing.Elapsed < TimeSpan.FromSeconds(10)) { Application.DoEvents(); Thread.Sleep(5); }

@@ -181,7 +181,7 @@ internal sealed partial class MainForm : Form
             await RunOperationAsync("接続確認", async () =>
             {
                 var totalTimer = Stopwatch.StartNew();
-                AppendLog("接続確認開始：Arduino確認と発振器／LOGGER起動を並行して進めます。");
+                AppendLog("接続確認開始：M5Stack確認と発振器／LOGGER起動を並行して進めます。");
                 LogProcessStartupTime("接続確認開始まで");
                 var preparationTimer = Stopwatch.StartNew();
                 _measurementState.MeasurementStarted = false;
@@ -345,10 +345,10 @@ internal sealed partial class MainForm : Form
                 // Arduino確認の完了まで待ってから、全機器の結果をまとめる。
                 var arduinoResult = await arduinoTask;
                 foreach (string detail in arduinoResult.Details) AppendLog(detail);
-                AppendLog($"処理時間：Arduino接続確認 = {arduinoResult.Elapsed.TotalSeconds:F3} 秒" +
+                AppendLog($"処理時間：M5Stack接続確認 = {arduinoResult.Elapsed.TotalSeconds:F3} 秒" +
                     (arduinoResult.Error is null ? "（成功）" : "（失敗）"));
                 if (arduinoResult.Error is not null)
-                    failures.Insert(0, "Arduino: " + arduinoResult.Error.Message);
+                    failures.Insert(0, "M5Stack: " + arduinoResult.Error.Message);
                 totalTimer.Stop();
                 AppendLog($"処理時間：接続確認全体（並行実行） = {totalTimer.Elapsed.TotalSeconds:F3} 秒");
                 LogProcessStartupTime("接続確認終了まで", complete: true);
@@ -596,14 +596,14 @@ internal sealed partial class MainForm : Form
             if (_arduino.NfCommunicationAlertDue && !_nfCommunicationAlertShown)
             {
                 _nfCommunicationAlertShown = true;
-                AppendLog("Arduino の NF弁状態を3秒以上受信できません。測定開始を禁止しています。");
-                ErrorNotification.Show(this, "NF弁の通電状態を3秒以上受信できません。Arduino の接続を確認してください。\n受信が復旧したら状態を自動更新します。",
+                AppendLog("M5Stack の NF弁状態を3秒以上受信できません。測定開始を禁止しています。");
+                ErrorNotification.Show(this, "NF弁の通電状態を3秒以上受信できません。M5Stack の接続を確認してください。\n受信が復旧したら状態を自動更新します。",
                     "通信エラー", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
             return;
         }
         if (_nfCommunicationAlertShown)
-            AppendLog("Arduino の通電状態の受信が再開しました。");
+            AppendLog("M5Stack の通電状態の受信が再開しました。");
         _nfCommunicationAlertShown = false;
         try
         {

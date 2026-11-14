@@ -958,6 +958,7 @@ internal sealed partial class MainForm : Form
         var ok=new Button{Text="確定",Left=208,Top=332,Width=96,Height=36,DialogResult=DialogResult.OK};
         var cancel=new Button{Text="キャンセル",Left=312,Top=332,Width=96,Height=36,DialogResult=DialogResult.Cancel};
         dialog.Controls.AddRange([guide,list,ok,cancel]);dialog.AcceptButton=ok;dialog.CancelButton=cancel;
+        DisplayScale.Apply(dialog);
         if(dialog.ShowDialog(this)!=DialogResult.OK)return;
         var desired=entries.Select((e,i)=>(e.Serial,Protected:list.GetItemChecked(i),e.Model,e.BaseName)).ToArray();
         if(desired.Select(d=>d.Protected).SequenceEqual(entries.Select(e=>e.Protected))){AppendLog("保護と解除：チェックを変えた S/N が無いので何もしていません。");return;}
@@ -1022,6 +1023,7 @@ internal sealed partial class MainForm : Form
         // 漏れ試験の初期運用の回避(SPEC「漏れ試験の自動判定」5)。軌道に乗ったら外す(人の方針)。
         var allowLeakOverride=new CheckBox{Text="漏れ判定が不合格でも、人の判断で合格にできる（初期運用）",Dock=DockStyle.Bottom,Height=32,Padding=new Padding(8,0,0,0),Checked=_transferSettings.AllowLeakOverride};
         dialog.Controls.AddRange([grid,allowLeakOverride,ok]);
+        DisplayScale.Apply(dialog);
         // 「設定保存」のときに値を確かめ、だめなら理由を出して画面を閉じない(直せる)。× で閉じるときは確かめない(何も変えないため)。
         // 2026-11-14、全体見直し・区切り 5。それまでは何でも保存でき、測定したあとの転送で初めて止まった。
         dialog.FormClosing+=(_,e)=>{

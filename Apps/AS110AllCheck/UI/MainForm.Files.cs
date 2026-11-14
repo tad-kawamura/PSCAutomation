@@ -21,16 +21,6 @@ internal sealed partial class MainForm : Form
     // 一時保存できなかった測定を破棄したことの知らせ(「次にすること」の後ろに出す)。次の測定を始めたら消す。
     private string? _captureDiscardedNotice;
 
-    private void TemplateDragEnter(object? sender, DragEventArgs e)
-    {
-        e.Effect = DragDropEffects.None;
-    }
-
-    private void TemplateDragDrop(object? sender, DragEventArgs e)
-    {
-        AppendLog("雛形は校正値の適用時に読み込みます。校正値を入力してください。");
-    }
-
     // データ取りは型式でも選ぶ。測る時間が違う型式(AS110-006)は型式専用の雛形(「…_AS110-006」。MeasurementProfile)。データ調整は共用の雛形。
     private string GetAutomaticTemplatePath(string extension, ProductModel model)
     {
@@ -216,25 +206,6 @@ internal sealed partial class MainForm : Form
             throw new InvalidOperationException("LOGGER のアクティブな雛形を確認できません。");
         UpdateControls();
         return $"成功 / {Path.GetFileName(path)}";
-    }
-
-    private void DeleteTemplateClicked(object? sender, EventArgs e)
-    {
-        RunOperation("雛形削除", () =>
-        {
-            if (_measurementState.MeasurementStarted)
-            {
-                _logger.Stop();
-                _measurementState.MeasurementStarted = false;
-            }
-            long result = _logger.CloseActiveFile();
-            if (result != 0)
-                throw new InvalidOperationException($"LOGGER の雛形を閉じられませんでした（戻り値 {result}）。");
-            ResetTemplate();
-            // 別のファイルが残っている場合は、LOGGERがアクティブにしたファイルを反映する。
-            RefreshTemplateState();
-            return _templateLoaded ? "閉じました。LOGGERの別のファイルが選択されています。" : "登録を解除しました。";
-        });
     }
 
     private void ResetTemplate()

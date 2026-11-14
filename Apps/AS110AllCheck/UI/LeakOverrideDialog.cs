@@ -34,5 +34,6 @@ internal sealed class LeakOverrideDialog : Form
         AcceptButton = NoButton;
         CancelButton = NoButton;
         ActiveControl = NoButton;
+        DisplayScale.Apply(this);
     }
 }

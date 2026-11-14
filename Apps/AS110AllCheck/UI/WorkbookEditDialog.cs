@@ -46,6 +46,7 @@ internal sealed class WorkbookEditDialog : Form
         AcceptButton = SaveButton;
         CancelButton = CancelSaveButton;
         ActiveControl = PasswordBox;
+        DisplayScale.Apply(this);
     }
 
     // パスワードが合えば OK で閉じる。合わなければ閉じずに知らせる。
