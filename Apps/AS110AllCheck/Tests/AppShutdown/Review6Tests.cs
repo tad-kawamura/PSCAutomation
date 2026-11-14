@@ -107,7 +107,7 @@ internal static class Review6Tests
             using var presser = new System.Windows.Forms.Timer { Interval = 50 };
             presser.Tick += (_, _) =>
             {
-                var dialog = Application.OpenForms.OfType<LeakOverrideDialog>().FirstOrDefault(d => d.Visible);
+                var dialog = Application.OpenForms.OfType<DefaultNoDialog>().FirstOrDefault(d => d.Visible);
                 if (dialog is null) return;
                 presser.Stop();
                 seen = dialog.Text + "|" + (ReferenceEquals(dialog.AcceptButton, dialog.NoButton) && ReferenceEquals(dialog.CancelButton, dialog.NoButton));
@@ -256,7 +256,7 @@ internal static class Review6Tests
             $"Main form size {form.Size} (client {form.ClientSize}) at scale {scale} on {area.Size}");
         // 窓の枠は拡大しないので、最小の大きさは 680 × 倍率より枠のぶんだけ小さい。
         Check(form.MinimumSize.Width <= 680 * scale + 2 && form.MinimumSize.Width >= 680 * scale - 20 * scale, "Minimum size was not scaled: " + form.MinimumSize);
-        using var dialog = new LeakOverrideDialog("確認の文", form.Font);
+        using var dialog = new DefaultNoDialog("確認の文", form.Font, "確認");
         Check(Math.Abs(dialog.NoButton.Width - 110 * scale) <= 2 && Math.Abs(dialog.NoButton.Height - 36 * scale) <= 2 && dialog.NoButton.Bottom < dialog.ClientSize.Height && dialog.NoButton.Right < dialog.ClientSize.Width,
             $"Dialog buttons were not scaled: {dialog.NoButton.Bounds} in {dialog.ClientSize}");
         using var judge = new LeakJudgeWindow(10, 1.0, 530, 2, form.Font);

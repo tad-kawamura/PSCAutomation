@@ -1,20 +1,15 @@
 namespace PSCAutomation.Apps.AS110AllCheck;
 
-// 漏れ判定が不合格・判定できなかった後に、人の判断で合格にするかを聞く確認画面(SPEC「漏れ試験の自動判定」5)。
-// 既定のボタンは「いいえ」。Enter・スペース・Esc・× のどれでも合格にならず、「はい」を選んだときだけ合格にする
-// (2026-11-13、全体見直し。以前は共通のメッセージボックスで既定が「はい」になり、Enter 1 回で不合格のものが合格になった)。
-// LOGGER・Excel の後ろに隠れないよう最前面で出す(M5Stack の C ボタンから出ることもある)。
-internal sealed class LeakOverrideDialog : Form
+// 既定のボタンが「いいえ」の確認画面。Enter・スペース・Esc・× のどれでも進まず、「はい」を選んだときだけ進める。
+// 使う所: アプリ終了の確認、モード変更の確認、保護の解除での出荷データの消去、校正画面。
+// LOGGER・Excel の後ろに隠れないよう最前面で出す。
+// もとは漏れ判定の「人の判断で合格」の確認(LeakOverrideDialog、2026-11-13)。その機能は 2026-11-14 に人の決定でなくし、名前を変えた。
+internal sealed class DefaultNoDialog : Form
 {
     public Button YesButton { get; } = new() { Text = "はい", DialogResult = DialogResult.Yes, Size = new Size(110, 36), TabIndex = 1 };
     public Button NoButton { get; } = new() { Text = "いいえ", DialogResult = DialogResult.No, Size = new Size(110, 36), TabIndex = 0 };
 
-    public LeakOverrideDialog(string message, Font baseFont) : this(message, baseFont, "漏れ判定：人の判断で合格")
-    {
-    }
-
-    // 題を変えて、ほかの「既定がいいえ」の確認にも使う(校正画面。2026-11-14)。
-    public LeakOverrideDialog(string message, Font baseFont, string title)
+    public DefaultNoDialog(string message, Font baseFont, string title)
     {
         Text = title;
         Font = baseFont;

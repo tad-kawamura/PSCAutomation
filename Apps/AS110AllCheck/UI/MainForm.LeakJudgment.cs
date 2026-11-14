@@ -247,34 +247,4 @@ internal sealed partial class MainForm : Form
         if(_lastLeakResult is { } r && r.Outcome==outcome)return r.Summary;
         return LeakOutcomeText.Of(outcome);
     }
-
-    // 不合格・判定できなかった後に、人の判断で合格にするか聞く(設定で回避を許したときだけ呼ぶ)。合格にするなら記録して true。
-    private bool ConfirmLeakOverride()
-    {
-        string result=LastLeakText();
-        UseWaitCursor=false;
-        DialogResult answer;
-        try
-        {
-            // 既定のボタンは「いいえ」(Enter・スペースで合格にならない。2026-11-13、全体見直し。以前は共通のメッセージボックスで既定が「はい」だった)。
-            using var dialog=new LeakOverrideDialog(
-                $"{LeakOutcomeText.OverrideQuestion(_flow.LastLeakOutcome ?? LeakOutcome.Fail)}\r\n{result}\r\n\r\nそれでも合格にしますか？\r\n「はい」：人の判断で合格にする（漏れ試験記録に残します）\r\n「いいえ」：合格にしない（「+30mA」から漏れ試験をやり直せます）",
-                Font);
-            dialog.Shown+=(_,_)=>ActivateJudgmentNotice(dialog,dialog.NoButton);
-            answer=dialog.ShowDialog(this);
-        }
-        finally { UseWaitCursor=true; }
-        if(answer!=DialogResult.Yes)return false;
-        var last=_lastLeakResult ?? new LeakTestResult(DateTime.Now,_flow.LastLeakOutcome ?? LeakOutcome.Fail,0,double.NaN,double.NaN,double.NaN,double.NaN,0,"");
-        try
-        {
-            string path=LeakTestRecordFile.AppendOverride(_rootBox.Text,_flow.Serial,_flow.Model.Name,last,DateTime.Now);
-            AppendLog("漏れ試験記録（人の判断で合格）："+path);
-        }
-        catch(Exception ex) when(ex is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
-        {
-            throw new IOException($"漏れ試験記録を書けないため合格にしませんでした。保存先を確認してください。\n{LeakTestRecordFile.PathOf(_rootBox.Text)}\n{ex.Message}",ex);
-        }
-        return true;
-    }
 }

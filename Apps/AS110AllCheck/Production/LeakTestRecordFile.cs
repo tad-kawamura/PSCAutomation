@@ -25,7 +25,7 @@ internal sealed record LeakTestResult(
 internal static class LeakTestRecordFile
 {
     public const string FileName = "漏れ試験記録.txt";
-    public const string OverrideResult = "人の判断で合格";
+    // 2026-11-14 までの版は、不合格を人の判断で合格にしたときに結果「人の判断で合格」の行も書いた(その機能はなくした。前の記録の行はそのまま残る)。
     // 判定が決まる前に途中で終わった試験(通信が切れた・停止に失敗した・アプリを閉じた など)。2026-11-13、全体見直しで足した。
     public const string AbortedResult = "中断";
     public static readonly string Header = string.Join('\t',
@@ -36,10 +36,6 @@ internal static class LeakTestRecordFile
     // 試験の結果を 1 行追記する。書けなければ例外(呼び出し側で「合格」を押せなくする)。
     public static string Append(string root, string serial, string model, LeakTestResult result)
         => AppendLine(root, Line(result.At, serial, model, LeakOutcomeText.Of(result.Outcome), result));
-
-    // 不合格・判定できなかった後に、人の判断で合格にしたことを 1 行追記する(値は直前の試験のもの)。
-    public static string AppendOverride(string root, string serial, string model, LeakTestResult last, DateTime at)
-        => AppendLine(root, Line(at, serial, model, OverrideResult, last with { Note = $"直前の判定：{LeakOutcomeText.Of(last.Outcome)}" + (last.Note.Length > 0 ? " / " + last.Note : "") }));
 
     // 判定が決まる前に途中で終わった試験を 1 行追記する(結果の列は「中断」、備考に理由。値は読めたところまで)。
     // partial.Outcome は結果の列には使わない(自動判定なしの NotJudged のときに、読んだ点数を「-」にするだけ)。

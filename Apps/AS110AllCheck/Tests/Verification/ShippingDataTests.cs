@@ -20,7 +20,7 @@ internal static class ShippingDataTests
         Check(flow.BaseName == "AS110-116B350_SN075633_20261112", "shipping data file name uses AS110-116B350");
         Check(!flow.CanComplete, "shipping data cannot complete before save");
         flow.SaveSucceeded();
-        Check(flow.CanComplete && !flow.LeakNeedsOverride && flow.LeakChecks == 0, "shipping data completes after save without leak test");
+        Check(flow.CanComplete && !flow.LeakNotPassed && flow.LeakChecks == 0, "shipping data completes after save without leak test");
         bool thrown = false;
         try { flow.LeakStarted(); } catch (InvalidOperationException) { thrown = true; }
         Check(thrown, "shipping data does not run the leak test");

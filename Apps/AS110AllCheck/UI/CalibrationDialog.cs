@@ -187,7 +187,7 @@ internal sealed class CalibrationDialog : Form
 
     private bool AskDefaultNo(string title, string message)
     {
-        using var dialog = new LeakOverrideDialog(message, Font, title);
+        using var dialog = new DefaultNoDialog(message, Font, title);
         return dialog.ShowDialog(this) == DialogResult.Yes;
     }
 

@@ -51,17 +51,17 @@ internal static class SaveConflictTests
         finally { try { Directory.Delete(Path.GetDirectoryName(root)!, true); } catch { } }
 
         // 転送設定の画面: 表で直すのは写し。写しを直しても元は変わらず、取り込むのは表に出る項目だけ。
-        var settings = new TransferSettings { SaveRoot = @"C:\前の保存先", ExpectedSamples = 6500, AllowLeakOverride = false, LeakTestSeconds = 10 };
+        var settings = new TransferSettings { SaveRoot = @"C:\前の保存先", ExpectedSamples = 6500, LeakTestSeconds = 10 };
         var draft = settings.CreateDraft();
         draft.ExpectedSamples = 1234; draft.Compression = 2; draft.DataSheet = "別シート"; draft.SaveRoot = @"C:\新しい保存先"; draft.CurrentCell = "C7";
-        draft.AllowLeakOverride = true; draft.LeakTestSeconds = 55;
+        draft.LeakTestSeconds = 55;
         Check(settings.ExpectedSamples == 6500 && settings.Compression == 5 && settings.DataSheet == "sheet1" && settings.SaveRoot == @"C:\前の保存先" && settings.CurrentCell == "A4",
             "editing the draft does not change the settings (closing the dialog discards the edits)");
         settings.ApplyEdited(draft);
         Check(settings.ExpectedSamples == 1234 && settings.Compression == 2 && settings.DataSheet == "別シート" && settings.SaveRoot == @"C:\前の保存先" && settings.CurrentCell == "C7"
             && settings.CurrentChannel == 1 && settings.PressureChannel == 2 && settings.JudgmentSheet == "sheet1" && settings.PressureCell == "B4",
             "saving applies every edited grid item and keeps the others (the save folder is not a grid item)");
-        Check(!settings.AllowLeakOverride && settings.LeakTestSeconds == 10, "items hidden from the grid (leak settings) are not taken from the draft");
+        Check(settings.LeakTestSeconds == 10, "items hidden from the grid (leak settings) are not taken from the draft");
         // 何も変えずに「設定保存」: 表に出る項目が同じなら「同じ」。表に出ない項目(保存先・漏れ試験)の違いは見ない。
         var untouched = settings.CreateDraft();
         Check(settings.SameEditableValues(untouched), "an untouched draft has the same values");

@@ -31,7 +31,7 @@ internal sealed partial class MainForm
 
     private bool AskClose(string warning)
     {
-        using var dialog = new LeakOverrideDialog(
+        using var dialog = new DefaultNoDialog(
             warning + "\r\n\r\nアプリを終了しますか？\r\n「はい」：終了する\r\n「いいえ」：終了しない（このまま続ける）", Font, "アプリ終了の確認");
         dialog.Shown += (_, _) => ActivateJudgmentNotice(dialog, dialog.NoButton);
         return dialog.ShowDialog(this) == DialogResult.Yes;

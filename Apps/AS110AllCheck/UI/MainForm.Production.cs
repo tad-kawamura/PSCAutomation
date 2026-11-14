@@ -345,7 +345,7 @@ internal sealed partial class MainForm : Form
     private Func<string,bool> _confirmModeChange;
     private bool AskModeChange(string warning)
     {
-        using var dialog=new LeakOverrideDialog(
+        using var dialog=new DefaultNoDialog(
             warning+"\r\n\r\nモードを替えますか？\r\n「はい」：替える（測定結果を破棄する）\r\n「いいえ」：替えない（このまま続ける）",Font,"モード変更の確認");
         dialog.Shown+=(_,_)=>ActivateJudgmentNotice(dialog,dialog.NoButton);
         return dialog.ShowDialog(this)==DialogResult.Yes;
@@ -438,8 +438,8 @@ internal sealed partial class MainForm : Form
         }
         _leakOutputButton.Enabled=ready && _reviewStage && _flow.Mode==TestMode.Production && !_flow.ShippingData && _flow.HasSaved && !_leakOutputReady;
         _leakButton.Enabled=ready && _reviewStage && _flow.Mode==TestMode.Production && !_flow.ShippingData && _flow.HasSaved && _leakOutputReady;
-        // 漏れ判定が不合格・判定できなかったときは、転送設定で回避を許したときだけ押せる(押すと確認する)。
-        _completeButton.Enabled=idle && !_leakOutputReady && (_flow.CanComplete || (_flow.LeakNeedsOverride && _transferSettings.AllowLeakOverride)) && _arduino.MeasurementInputReady && ConnectionsReady;
+        // 漏れ判定が不合格・判定できなかったときは押せない(やり直しだけ。人の判断で合格にする回避は 2026-11-14 になくした。人の決定)。
+        _completeButton.Enabled=idle && !_leakOutputReady && _flow.CanComplete && _arduino.MeasurementInputReady && ConnectionsReady;
         _remeasureButton.Text=_flow.HasSaved?"再測定へ戻る":"設定変更（測定を破棄）";
         _remeasureButton.Enabled=idle && (_reviewStage || _flow.HasCapture) && !_flow.SaveFailed;
         _retryCaptureButton.Visible=_flow.CaptureFailed;_retryCaptureButton.Enabled=idle && _flow.CaptureFailed && ConnectionsReady;
@@ -530,9 +530,7 @@ internal sealed partial class MainForm : Form
             if(_flow.ShippingData)return "保存しました（出荷データのため漏れ試験はしません）。「完了」を押してください（やり直すなら「再測定へ戻る」）";
             if(_leakOutputReady)return "+30mA 出力中です。「漏れ試験実施」を押してください";
             if(_flow.CanComplete)return $"漏れ試験が済みました（{LastLeakText()}）。「合格」を押してください（もう一度なら「+30mA」）";
-            if(_flow.LeakNeedsOverride)return _transferSettings.AllowLeakOverride
-                ? $"漏れ判定：{LastLeakText()}。やり直すなら「+30mA」→「漏れ試験実施」。人の判断で合格にするなら「合格」（確認が出ます）"
-                : $"漏れ判定：{LastLeakText()}。「+30mA」→「漏れ試験実施」でやり直してください（「合格」は押せません）";
+            if(_flow.LeakNotPassed)return $"漏れ判定：{LastLeakText()}。「+30mA」→「漏れ試験実施」でやり直してください（「合格」は押せません）";
             return "一式保存済みです。「+30mA」→「漏れ試験実施」→「合格」の順に進めてください（やり直すなら「再測定へ戻る」）";
         }
         if(!_arduino.MeasurementInputReady)return "M5Stack からの状態通知が途切れています。M5Stack の表示とケーブルを確認してください";
@@ -921,13 +919,11 @@ internal sealed partial class MainForm : Form
     {
         if(!_completeButton.Enabled)return;
         RunOperation("合格確定",()=> {
-            bool overriding=!_flow.CanComplete && _flow.LeakNeedsOverride && _transferSettings.AllowLeakOverride;
-            if((!_flow.CanComplete && !overriding) || _excel is null)throw new InvalidOperationException(_flow.LeakNeedsOverride
+            // 漏れ判定が不合格・判定できなかったときは合格にしない(ボタンも押せない。M5Stack の C から来ても同じ)。
+            if(!_flow.CanComplete || _excel is null)throw new InvalidOperationException(_flow.LeakNotPassed
                 ? $"漏れ判定が合格していません（{LastLeakText()}）。「+30mA」から漏れ試験をやり直してください。"
                 : "最新結果の保存と漏れチェックが必要です。");
             var store=Store;using var held=store.Lock();if(store.IsComplete(_flow.Serial))throw new IOException("このS/Nは完了済みです。");
-            // 初期運用の回避(SPEC「漏れ試験の自動判定」5): 人に確かめ、漏れ試験記録に残してから合格にする。
-            if(overriding && !ConfirmLeakOverride())return "漏れ判定が合格していないため、合格にしませんでした。";
             // 閉じる処理が失敗したら記録・加算しない。人が Excel(またはブック)を先に閉じていたときは閉じた扱いで進める(2026-11-06。以前は COM の切断エラーで合格が止まっていた)。
             bool excelAlreadyClosed=_excel.CloseVerifiedOrAlreadyClosed();
             if(excelAlreadyClosed)AppendLog("合格確定：Excel は先に閉じられていました（閉じた扱いで記録します）。");
@@ -1024,7 +1020,7 @@ internal sealed partial class MainForm : Form
     // 出荷データの消去の確認(既定は「いいえ」)。
     private bool ConfirmDeleteShippingData(IReadOnlyList<ShippingDataFound> found)
     {
-        using var dialog=new LeakOverrideDialog(ShippingDataDeleteQuestion(found),Font,"保護の解除：出荷データの消去");
+        using var dialog=new DefaultNoDialog(ShippingDataDeleteQuestion(found),Font,"保護の解除：出荷データの消去");
         dialog.Shown+=(_,_)=>ActivateJudgmentNotice(dialog,dialog.NoButton);
         return dialog.ShowDialog(this)==DialogResult.Yes;
     }
@@ -1051,9 +1047,7 @@ internal sealed partial class MainForm : Form
         var draft=_transferSettings.CreateDraft();
         var grid=new PropertyGrid {Dock=DockStyle.Fill,SelectedObject=draft,ToolbarVisible=false,PropertySort=PropertySort.NoSort};
         var ok=new Button{Text="設定保存",Dock=DockStyle.Bottom,Height=40,DialogResult=DialogResult.OK};
-        // 漏れ試験の初期運用の回避(SPEC「漏れ試験の自動判定」5)。軌道に乗ったら外す(人の方針)。
-        var allowLeakOverride=new CheckBox{Text="漏れ判定が不合格でも、人の判断で合格にできる（初期運用）",Dock=DockStyle.Bottom,Height=32,Padding=new Padding(8,0,0,0),Checked=_transferSettings.AllowLeakOverride};
-        dialog.Controls.AddRange([grid,allowLeakOverride,ok]);
+        dialog.Controls.AddRange([grid,ok]);
         DisplayScale.Apply(dialog);
         // 「設定保存」のときに値を確かめ、だめなら理由を出して画面を閉じない(直せる)。× で閉じるときは確かめない(何も変えないため)。
         // 2026-11-14、全体見直し・区切り 5。それまでは何でも保存でき、測定したあとの転送で初めて止まった。
@@ -1068,15 +1062,14 @@ internal sealed partial class MainForm : Form
         if(dialog.ShowDialog(this)!=DialogResult.OK){AppendLog("転送設定：保存せずに閉じました（設定は変えていません）。");return;}
         // 何も変えずに「設定保存」を押したときは、何もしない(転送済みを取り消さない。2026-11-14、全体見直し・区切り 5。
         // それまでは値が同じでも「設定が変わった」として転送済みを取り消し、転送のやり直しが要った)。
-        if(_transferSettings.SameEditableValues(draft) && _transferSettings.AllowLeakOverride==allowLeakOverride.Checked)
+        if(_transferSettings.SameEditableValues(draft))
         {AppendLog("転送設定：変えた項目が無いので、何もしていません（転送済みの結果もそのままです）。");return;}
         RunOperation("転送設定保存",()=>{
             // 設定が変わるので、前の設定で転送した結果では保存させない(転送し直す)。
             _flow.TransferFailed();
             _transferSettings.ApplyEdited(draft);
-            bool overrideChanged=_transferSettings.AllowLeakOverride!=allowLeakOverride.Checked;
-            _transferSettings.AllowLeakOverride=allowLeakOverride.Checked;_transferSettings.Save();
-            return "設定しました。"+(overrideChanged?(allowLeakOverride.Checked?"漏れ判定の不合格を人の判断で合格にできます。":"漏れ判定の不合格では合格にできません。"):"");});
+            _transferSettings.Save();
+            return "設定しました。";});
         UpdateControls();
     }
 }

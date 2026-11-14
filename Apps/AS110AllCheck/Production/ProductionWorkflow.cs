@@ -106,8 +106,8 @@ internal sealed class ProductionWorkflow
     public bool HasSaved => HasTransfer && SavedRevision == Revision && !SaveFailed;
     // 最後の漏れ試験が合格、または自動判定なし(NR-X。人が判断)なら合格にできる。出荷データは漏れ試験をしないので、保存できれば完了にできる。
     public bool CanComplete => Mode == TestMode.Production && HasSaved && (ShippingData || (LeakChecks > 0 && LastLeakOutcome is LeakOutcome.Pass or LeakOutcome.NotJudged));
-    // 最後の漏れ試験が不合格・判定できなかった。設定で回避を許したときだけ、人の判断で合格にできる。
-    public bool LeakNeedsOverride => Mode == TestMode.Production && !ShippingData && HasSaved && LeakChecks > 0 && LastLeakOutcome is LeakOutcome.Fail or LeakOutcome.Unmeasurable;
+    // 最後の漏れ試験が不合格・判定できなかった。合格にはできず、漏れ試験のやり直しだけ(人の判断で合格にする回避は 2026-11-14 になくした。人の決定)。
+    public bool LeakNotPassed => Mode == TestMode.Production && !ShippingData && HasSaved && LeakChecks > 0 && LastLeakOutcome is LeakOutcome.Fail or LeakOutcome.Unmeasurable;
     // 保存するファイル名(拡張子なし)。末尾の点数「_6500」は 2026-11-12 にやめた(人の指示。AS110-006 は 13000 点で名前と合わなくなるため)。
     public string BaseName => $"{Model.Name}_SN{Serial}_{MeasuredAt:yyyyMMdd}";
     public void Configure(string serial, ProductModel model) => ConfigureFor(serial, model, null);
