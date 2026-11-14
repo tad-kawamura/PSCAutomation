@@ -18,6 +18,7 @@ internal sealed partial class MainForm : Form
     public MainForm()
     {
         _confirmClose = AskClose;
+        _showLoggerStartFailure = text => ErrorNotification.Show(this, text + "。", "測定開始エラー", MessageBoxButtons.OK, MessageBoxIcon.Error);
         _confirmModeChange = AskModeChange;
         // LOGGER 本体ソフトの起動(約 7 秒)だけ先に始め、画面準備・発振器確認と重ねる。
         BeginLoggerStartup();

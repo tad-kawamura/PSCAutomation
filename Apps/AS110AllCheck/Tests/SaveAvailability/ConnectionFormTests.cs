@@ -203,6 +203,43 @@ internal static class ConnectionFormTests
             if ((bool)rig.Field("_calibrationApplied")! || !rig.NextStep.Contains("NR 本体を確認できません") || rig.NextStep.Contains("発振器"))
                 throw new Exception("A silent NR unit must be reported as the NR unit: " + rig.NextStep);
             Console.WriteLine("PASS status monitor: the next-step guide names the device that stopped responding (generator / NR unit)");
+
+            // 7. 測定開始の後、LOGGER が「停止」以外になるのを見るまでは、「停止」を測定の終わりとみなさない(2026-11-14、区切り 3 の残り)。
+            // 以前は開始から 0.5 秒後に「停止」と読めると一時保存し、前回のデータが今回の結果になった。
+            object state = rig.Field("_measurementState")!;
+            var failures = new List<string>();
+            rig.Set("_showLoggerStartFailure", (Action<string>)failures.Add);
+            void Started(long deadline)
+            {
+                Loaded("前回の測定データ");
+                rig.Set("_hardwareDetected", true);
+                rig.FlowCall("BeginMeasurement", DateTime.Now);
+                state.GetType().GetProperty("MeasurementStarted")!.SetValue(state, true);
+                state.GetType().GetProperty("ReadAfter")!.SetValue(state, 0L);
+                rig.Set("_awaitingLoggerStart", true); rig.Set("_loggerStartDeadline", deadline);
+            }
+            // 7-1. 期限の前に「停止」: まだ待つ(保存しない)。
+            int saves = rig.Logger.Saves;
+            Started(Environment.TickCount64 + 60000);
+            rig.Logger.State = 1;
+            rig.Call("RefreshLoggerState");
+            if (!rig.FlowIs("Measuring") || rig.Logger.Saves != saves || failures.Count != 0) throw new Exception("A stopped LOGGER before the deadline must be waited for, not captured");
+            // 7-2. 「測定中」を見た後の「停止」: 今までどおり一時保存する。
+            rig.Logger.State = 4;
+            rig.Call("RefreshLoggerState");
+            if (!rig.FlowIs("Measuring") || (bool)rig.Field("_awaitingLoggerStart")!) throw new Exception("A running LOGGER must end the wait for the start");
+            rig.Logger.State = 1;
+            rig.Call("RefreshLoggerState");
+            if (!rig.FlowIs("HasCapture") || rig.Logger.Saves != saves + 1 || failures.Count != 0) throw new Exception("After the LOGGER ran, the stop must capture the measurement");
+            // 7-3. 期限を過ぎても「停止」: 保存せず、出力 OFF・LOGGER の Stop・測定の破棄を行い、知らせる。
+            saves = rig.Logger.Saves; int loggerStops = rig.Logger.Stops, outputStops = rig.Generator.Stops;
+            Started(0);
+            rig.Call("RefreshLoggerState");
+            if (rig.FlowIs("Measuring") || rig.FlowIs("HasCapture") || rig.Logger.Saves != saves) throw new Exception("A LOGGER that never started must not be captured");
+            if (rig.Logger.Stops != loggerStops + 1 || rig.Generator.Stops != outputStops + 1) throw new Exception("A LOGGER that never started must be stopped with the output off");
+            if (failures.Count != 1 || !failures[0].Contains("LOGGER が測定を始めませんでした") || !rig.NextStep.Contains("LOGGER が測定を始めませんでした") || !rig.Log.Contains("測定開始エラー：LOGGER が測定を始めませんでした"))
+                throw new Exception("A LOGGER that never started must be reported once: " + rig.NextStep);
+            Console.WriteLine("PASS LOGGER start: a stopped LOGGER is not taken as the end of the measurement until it has been seen running; if it never starts nothing is captured");
         }
         finally
         {
@@ -293,7 +330,8 @@ public sealed class ConnectionFakeLogger(string dataSource)
     public bool Visible { get; private set; } = true;
     public long GetIdentifier() => 0;
     public long GetFileCount() => !Visible || OpenDocument is null ? 0 : 1;
-    public long GetState() => 1;
+    public long State = 1;
+    public long GetState() => State;
     public long Start() { Starts++; return 0; }
     public void Stop() => Stops++;
     public void Quit() { Visible = false; OpenDocument = null; }
