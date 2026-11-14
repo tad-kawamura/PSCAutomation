@@ -111,6 +111,72 @@ internal static class CalibrationDialogTests
         }
         if (calls != 2) throw new Exception("GC16 reading delegate was not called once per click");
         Console.WriteLine("PASS calibration GUI GC16 reading fills the eight values and marks edits before apply");
+        RunConfirmations(dialogType, initial, readWithGauge);
+    }
+
+    // 2026-11-14(全体見直し・区切り 4): ふつうの値から外れた校正値は適用の前に聞く。GC16 で読み取った値を適用せずに閉じるときも聞く。
+    // どちらも「いいえ」なら校正画面に残る。確認の画面は差し替えて、聞いた回数と答えだけを見る。
+    private static void RunConfirmations(Type dialogType, object initial, Delegate readWithGauge)
+    {
+        var asked = new List<string>();
+        bool answer = false;
+        Form Open(Delegate? read)
+        {
+            var dialog = read is null
+                ? (Form)Activator.CreateInstance(dialogType, "NR-500", "AS110データ調整・データ取り用.xdt", initial)!
+                : (Form)Activator.CreateInstance(dialogType, "NR-500", "AS110データ調整・データ取り用.xdt", initial, read)!;
+            dialogType.GetProperty("Template")!.SetValue(dialog, initial);
+            dialogType.GetField("_confirm", BindingFlags.Instance | BindingFlags.NonPublic)!
+                .SetValue(dialog, new Func<string, string, bool>((title, message) => { asked.Add(title + "\n" + message); return answer; }));
+            dialog.StartPosition = FormStartPosition.Manual;
+            dialog.Location = new Point(-10000, -10000);
+            dialog.Show();
+            Application.DoEvents();
+            return dialog;
+        }
+        using (var dialog = Open(null))
+        {
+            var boxes = (TextBox[])dialogType.GetField("_values", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(dialog)!;
+            var apply = Descendants(dialog).OfType<Button>().Single(b => b.Text == "適用");
+            boxes[6].Text = "5503"; // 小数点の打ち忘れ
+            apply.PerformClick();
+            if (asked.Count != 1 || !asked[0].Contains("圧力の 1 V あたり") || dialog.DialogResult == DialogResult.OK || !dialog.Visible ||
+                !ReferenceEquals(dialogType.GetProperty("Calibration")!.GetValue(dialog), initial))
+                throw new Exception("Unusual calibration values were applied without asking, or いいえ did not keep the dialog");
+            answer = true;
+            apply.PerformClick();
+            if (asked.Count != 2 || dialog.DialogResult != DialogResult.OK)
+                throw new Exception("はい did not apply the unusual calibration values");
+        }
+        Console.WriteLine("PASS calibration GUI asks before applying unusual values; いいえ stays, はい applies");
+
+        asked.Clear();
+        answer = false;
+        using (var dialog = Open(null))
+        {
+            dialog.Close();
+            if (asked.Count != 0 || dialog.Visible) throw new Exception("Closing without a GC16 reading asked a question");
+        }
+        using (var dialog = Open(readWithGauge))
+        {
+            Descendants(dialog).OfType<ComboBox>().Single().SelectedIndex = 1;
+            Descendants(dialog).OfType<Button>().Single(b => b.Text == "GC16 で読み取る").PerformClick();
+            dialog.Close();
+            if (asked.Count != 1 || !asked[0].Contains("読み取った値を捨てますか") || !dialog.Visible)
+                throw new Exception("Closing discarded the GC16 reading without asking, or いいえ closed the dialog");
+            answer = true;
+            dialog.Close();
+            if (asked.Count != 2 || dialog.Visible) throw new Exception("はい did not close the dialog");
+        }
+        using (var dialog = Open(readWithGauge))
+        {
+            Descendants(dialog).OfType<ComboBox>().Single().SelectedIndex = 1;
+            Descendants(dialog).OfType<Button>().Single(b => b.Text == "GC16 で読み取る").PerformClick();
+            Descendants(dialog).OfType<Button>().Single(b => b.Text == "適用").PerformClick();
+            if (asked.Count != 2 || dialog.DialogResult != DialogResult.OK || dialog.Visible)
+                throw new Exception("Applying the GC16 reading asked whether to discard it");
+        }
+        Console.WriteLine("PASS calibration GUI asks before discarding a GC16 reading; applying or closing without one does not ask");
     }
 
     private static IEnumerable<Control> Descendants(Control parent)

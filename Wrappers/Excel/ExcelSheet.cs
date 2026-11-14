@@ -88,6 +88,22 @@ public sealed class ExcelSheet : IDisposable
     public void ClearContents(int row, int firstColumn, int lastColumn) =>
         ClearContents(Address(row, firstColumn) + ":" + Address(row, lastColumn));
 
+    /// <summary>
+    /// シートで使っている範囲(UsedRange)のセルを 1 回でまとめて読む。数式のセルは数式の文字(「=A1+B1」)、値のセルはその値、空のセルは null か ""。
+    /// 計算結果ではなく「セルに入れてあるもの」が返るので、人が数式や値を書き換えたかを前後で比べるのに使える(2026-11-14 追加。AS110AllCheck)。
+    /// 戻り値の Row・Column は範囲の左上(1 始まり)、Values は 0 始まり([行, 列])。何も使っていないシートは A1 の 1 セルが返る。
+    /// </summary>
+    public ExcelRangeValues ReadUsedFormulas()
+    {
+        object? used = null;
+        try
+        {
+            used = Sheet.UsedRange;
+            return new ExcelRangeValues(Name, (int)((dynamic)used).Row, (int)((dynamic)used).Column, ToZeroBased((object?)((dynamic)used).Formula));
+        }
+        finally { Release(used); }
+    }
+
     /// <summary>範囲に数式のセルが 1 つでもあれば true。</summary>
     public bool HasFormula(string rangeAddress) => WithRange(rangeAddress, r => !Equals((object?)r.HasFormula, false));
 

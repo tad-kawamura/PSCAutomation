@@ -9,9 +9,14 @@ internal sealed class LeakOverrideDialog : Form
     public Button YesButton { get; } = new() { Text = "はい", DialogResult = DialogResult.Yes, Size = new Size(110, 36), TabIndex = 1 };
     public Button NoButton { get; } = new() { Text = "いいえ", DialogResult = DialogResult.No, Size = new Size(110, 36), TabIndex = 0 };
 
-    public LeakOverrideDialog(string message, Font baseFont)
+    public LeakOverrideDialog(string message, Font baseFont) : this(message, baseFont, "漏れ判定：人の判断で合格")
     {
-        Text = "漏れ判定：人の判断で合格";
+    }
+
+    // 題を変えて、ほかの「既定がいいえ」の確認にも使う(校正画面。2026-11-14)。
+    public LeakOverrideDialog(string message, Font baseFont, string title)
+    {
+        Text = title;
         Font = baseFont;
         FormBorderStyle = FormBorderStyle.FixedDialog;
         MaximizeBox = MinimizeBox = false;

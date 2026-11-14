@@ -24,7 +24,9 @@ internal sealed class TransferSettings
     public string CurrentCell { get; set; } = "A4";
     [DisplayName("圧力の開始セル")]
     public string PressureCell { get; set; } = "B4";
-    [DisplayName("保存先フォルダ")]
+    // 前回の保存先(「保存先選択」の画面の初期フォルダーに使う)。転送設定の表には出さない(2026-11-14、全体見直し・区切り 5、人の指示。
+    // それまでは表で手打ちでき、無いパスを打つとそのままフォルダーが作られた)。保存先は「保存先選択」のボタンで選ぶ。
+    [Browsable(false)]
     public string SaveRoot { get; set; } = "";
     // 漏れ試験の自動判定(2026-11-12)。PC ごとに覚える。古い版はこの項目を読み飛ばす。
     // 回避のチェックは転送設定の画面の下に置く(表の中には出さない)。秒数・しきい値はメイン画面の記入欄。
@@ -45,7 +47,37 @@ internal sealed class TransferSettings
     public Dictionary<string,double> LeakMaximumLowerLimitKpa { get; set; } = new(DefaultLeakMaximumLowerLimitKpa);
     // 移動平均はLOGGERのチャンネル設定をXdtReaderが適用する。
     public static string SettingsPath => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"AS110BoltCheck","ver3.json");
-    public static TransferSettings Load() => File.Exists(SettingsPath) ? FromJson(File.ReadAllText(SettingsPath)) : new();
+    public static TransferSettings Load() => LoadFrom(SettingsPath);
+    // 設定ファイルを読めなかったときの知らせ(読めたときは null)。起動したら画面に出す。ファイルには書かない。
+    [Browsable(false)]
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string? LoadWarning { get; private set; }
+    // 設定ファイルが壊れていても(書いている一瞬に電源が落ちると、空・途中までになる)、初期値で起動して知らせる
+    // (2026-11-14、全体見直し・区切り 5。それまでは起動時の読み込みで落ち、人がファイルを探して消すまで起動できなかった)。
+    // 壊れたファイルは名前を変えて残す(次の保存で上書きしない)。ほかで開いていて読めないだけのときは、ファイルに触らない。
+    internal static TransferSettings LoadFrom(string path)
+    {
+        if(!File.Exists(path)) return new();
+        try { return FromJson(File.ReadAllText(path)); }
+        catch(JsonException ex)
+        {
+            string kept=Path.Combine(Path.GetDirectoryName(path)!,$"{Path.GetFileNameWithoutExtension(path)}_読めなかった設定_{DateTime.Now:yyyyMMdd_HHmmss}{Path.GetExtension(path)}");
+            string keptNote;
+            try { File.Move(path,kept); keptNote=$"読めなかったファイルは、名前を変えて残しました：{kept}"; }
+            catch(Exception moveEx) when(moveEx is IOException or UnauthorizedAccessException) { keptNote=$"読めなかったファイルは、次に設定を保存したときに上書きされます：{path}"; }
+            return new TransferSettings { LoadWarning=
+                "設定ファイルの中身が壊れていて読めなかったので、設定を初期値に戻して起動しました。\n" +
+                "「転送設定」・漏れ試験の欄（試験秒数・しきい値・最大値の下限）を変えていた場合は、入れ直してください。保存先は選び直せば元どおりです。\n" +
+                keptNote+$"\n（詳細：{ex.Message}）" };
+        }
+        catch(Exception ex) when(ex is IOException or UnauthorizedAccessException)
+        {
+            return new TransferSettings { LoadWarning=
+                "設定ファイルを開けなかったので、設定を初期値にして起動しました。\n" +
+                "設定を変えていた場合は、アプリを閉じて、このファイルをほかで開いていないか確かめてから起動し直してください（このまま設定を保存すると、前の設定は上書きされます）。\n" +
+                $"{path}\n（詳細：{ex.Message}）" };
+        }
+    }
     // 保存済みの設定ファイルは下限の表ごと読み込まれ、後から初期値を足した型式が抜ける。無い型式にだけ初期値を足す(人が入れた値は変えない)。
     internal static TransferSettings FromJson(string json)
     {
@@ -69,6 +101,11 @@ internal sealed class TransferSettings
     public TransferSettings CreateDraft() => (TransferSettings)MemberwiseClone();
     // 写しで直した値を取り込む。取り込むのは表に出る項目だけ(表に出さない漏れ試験の設定は、メイン画面の欄や回避のチェックが別に持つ)。
     // 項目を足しても漏れないよう、名前を並べずに表に出る項目([Browsable(false)] でないもの)を全部写す。
+    // 表に出る項目が、写しと 1 つも違わないか(何も変えずに「設定保存」を押したときに、転送済みを取り消さないため。2026-11-14)。
+    public bool SameEditableValues(TransferSettings draft) => EditableProperties().All(p => Equals(p.GetValue(this), p.GetValue(draft)));
+    private static IEnumerable<System.Reflection.PropertyInfo> EditableProperties() =>
+        typeof(TransferSettings).GetProperties(System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public)
+            .Where(p => p.CanRead && p.CanWrite && !p.GetCustomAttributes(typeof(BrowsableAttribute), true).Cast<BrowsableAttribute>().Any(a => !a.Browsable));
     public void ApplyEdited(TransferSettings draft)
     {
         foreach(var property in typeof(TransferSettings).GetProperties(System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public))
@@ -78,7 +115,53 @@ internal sealed class TransferSettings
             property.SetValue(this,property.GetValue(draft));
         }
     }
-    public void Save() { Directory.CreateDirectory(Path.GetDirectoryName(SettingsPath)!); File.WriteAllText(SettingsPath,JsonSerializer.Serialize(this,new JsonSerializerOptions { WriteIndented=true })); }
+    // 「設定保存」の前の確かめ(2026-11-14、全体見直し・区切り 5)。問題が無ければ空。あれば人に見せる文を 1 件ずつ返す(保存しない)。
+    // それまでは何でも保存でき、0 や書き間違いは測定したあとの転送で初めて止まった。電流と圧力に同じチャンネルを入れると、
+    // NR-500 では両方の列に同じ値がエラーなしで転送された。
+    // excelTemplates: いま雛形フォルダーにある Excel 雛形(フルパス)。シート名がその雛形にあるかを確かめる。読めない雛形は飛ばす(転送のときに分かる)。
+    public IReadOnlyList<string> FindProblems(IEnumerable<string>? excelTemplates=null)
+    {
+        var problems=new List<string>();
+        if(CurrentChannel<1 || PressureChannel<1) problems.Add("電流チャンネル・圧力チャンネルは 1 以上にしてください。");
+        else if(CurrentChannel==PressureChannel) problems.Add($"電流チャンネルと圧力チャンネルが同じ（CH{CurrentChannel}）です。別のチャンネルにしてください。");
+        if(Compression<1) problems.Add("平均する点数（圧縮）は 1 以上にしてください。");
+        if(ExpectedSamples<1) problems.Add("測定点数は 1 以上にしてください。");
+        if(Compression>=1 && ExpectedSamples>=1 && ExpectedSamples%Compression!=0) problems.Add($"測定点数 {ExpectedSamples} を、平均する点数 {Compression} で割り切れません。");
+        if(NrxCurrentCsvColumn<0 || NrxPressureCsvColumn<0) problems.Add("NR-X の CSV 列は 0（自動）か 1 以上にしてください。");
+        else if(NrxCurrentCsvColumn>0 && NrxCurrentCsvColumn==NrxPressureCsvColumn) problems.Add($"NR-X の電流 CSV 列と圧力 CSV 列が同じ（{NrxCurrentCsvColumn}）です。");
+        if(string.IsNullOrWhiteSpace(DataSheet)) problems.Add("データ転送先シートが空です。");
+        if(string.IsNullOrWhiteSpace(JudgmentSheet)) problems.Add("判定セルのシートが空です。");
+        (int Column,int Row)? Cell(string name,string address)
+        {
+            try { return PSCAutomation.Wrappers.Excel.TemplateWriter.ParseCell(address ?? ""); }
+            catch(ArgumentException) { problems.Add($"{name}「{address}」をセル番地として読めません（例 A4）。"); return null; }
+        }
+        var current=Cell("電流の開始セル",CurrentCell);
+        var pressure=Cell("圧力の開始セル",PressureCell);
+        if(current is not null && pressure is not null && current.Value.Column==pressure.Value.Column) problems.Add("電流の開始セルと圧力の開始セルが同じ列です。別の列にしてください。");
+        if(Compression>=1 && ExpectedSamples>=1)
+            foreach(var cell in new[]{current,pressure})
+                if(cell is not null && (long)cell.Value.Row+ExpectedSamples/Compression-1>1048576) { problems.Add("開始セルの行が下すぎて、測定値が Excel の最後の行を超えます。"); break; }
+        foreach(string template in excelTemplates ?? [])
+        {
+            string[] sheets;
+            try { sheets=PSCAutomation.Wrappers.Excel.TemplateWriter.GetSheets(template); }
+            catch(Exception ex) when(ex is IOException or UnauthorizedAccessException or InvalidDataException) { continue; }
+            foreach(var (name,sheet) in new[]{("データ転送先シート",DataSheet),("判定セルのシート",JudgmentSheet)}.DistinctBy(s=>s.Item2))
+                if(!string.IsNullOrWhiteSpace(sheet) && !sheets.Contains(sheet,StringComparer.Ordinal))
+                    problems.Add($"{name}「{sheet}」が {Path.GetFileName(template)} にありません（あるシート：{string.Join("・",sheets)}）。");
+        }
+        return problems;
+    }
+    public void Save() => SaveTo(SettingsPath);
+    // 別の名前で書き終えてから置き換える。書いている途中で電源が落ちても、前の設定ファイルがそのまま残る(2026-11-14)。
+    internal void SaveTo(string path)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        string temporary=path+".tmp";
+        File.WriteAllText(temporary,JsonSerializer.Serialize(this,new JsonSerializerOptions { WriteIndented=true }));
+        File.Move(temporary,path,true);
+    }
     // NR-X は LOGGER の標準 CSV を読む。列番号は上の NR-X CSV 列(0 は見出しの「電流」「圧力」・CH 番号から自動検出)。
     // 読み取りは Wrappers/LoggerFiles の LoggerCsvReader(移植前は Conversion/LoggerCsvReader.cs。判定の中身は同じ)。
     public (double[] Current,double[] Pressure) ReadNrxCsv(string path)

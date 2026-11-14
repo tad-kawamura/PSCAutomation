@@ -16,11 +16,14 @@
     <Compile Include="../../Production/LeakJudge.cs" Link="App/LeakJudge.cs" />
     <Compile Include="../../Production/LeakTestRecordFile.cs" Link="App/LeakTestRecordFile.cs" />
     <Compile Include="../../Production/SaveFolder.cs" Link="App/SaveFolder.cs" />
+    <Compile Include="../../Production/FileAccessAdvice.cs" Link="App/FileAccessAdvice.cs" />
+    <Compile Include="../../Production/SessionFolders.cs" Link="App/SessionFolders.cs" />
     <Compile Include="../../Production/MeasurementProfile.cs" Link="App/MeasurementProfile.cs" />
     <Compile Include="../../Production/SupplyPressure.cs" Link="App/SupplyPressure.cs" />
     <Compile Include="../../Calibration/AutoCalibration.cs" Link="App/AutoCalibration.cs" />
     <Compile Include="../../Calibration/CalibrationInProgressMarker.cs" Link="App/CalibrationInProgressMarker.cs" />
     <Compile Include="../../Excel/TransferSettings.cs" Link="App/TransferSettings.cs" />
+    <Compile Include="../../Excel/WorkbookEdits.cs" Link="App/WorkbookEdits.cs" />
     <!-- 発振器の設定値の型だけを使う(Instruments は NI-VISA を要るので参照しない) -->
     <Compile Include="../../../../Wrappers/Instruments/Generators/GeneratorBurstSettings.cs" Link="Wrappers/GeneratorBurstSettings.cs" />
   </ItemGroup>

@@ -14,6 +14,13 @@ internal sealed class ExcelWorkSession : IDisposable
     private string _judgmentSheet="sheet1";
     private (string Path, long Length, DateTime Modified, string Sheet, string Current, string Pressure, int Count)? _source;
     private (string Model, string Serial, string Pressure, string Date)? _header;
+    // 人の書き換えを見つけるための覚え(WorkbookEdits.cs)。_baseline はブックを雛形から作って開いた直後の中身、_dataArea は比べない測定値の列、
+    // _approvedEdits はパスワードで進めた書き換え(同じ書き換えではもう一度聞かない)。
+    private Dictionary<string,SheetCells>? _baseline;
+    private (string Sheet,int Column1,int Column2,int FirstRow1,int FirstRow2,int Count)? _dataArea;
+    private string? _approvedEdits;
+    // このアプリが起動した Excel のプロセス ID(起動していない・切れているときは null)。異常終了のあとの後片付けのために覚える(SessionFolders)。
+    public int? ExcelProcessId { get { try { return _app?.ProcessId; } catch { return null; } } }
     public bool Closed { get; private set; }
     public string JudgmentDescription { get; private set; } = "未確認";
     internal ExcelWorkSession() { }
@@ -48,6 +55,18 @@ internal sealed class ExcelWorkSession : IDisposable
         session.PrepareForTransfer();
         Timing("圧縮・設定・前回ブック確認");
         bool reuseBook=session._book is not null && !session.Closed && session._source==source;
+        // 人が書き換えたブックは、その番号の間だけ使う。番号が変わったら雛形から作り直す(書き換えを次の台に持ち越さない。2026-11-14、人と決めた)。
+        // 比べるのは番号が変わったときだけ(同じ番号の測り直しでは、書き換えたブックをそのまま使う)。
+        if(reuseBook && session._header is { } previousHeader && previousHeader.Serial!=serial)
+        {
+            int edited=session.FindEdits().Count;
+            Timing("書き換え確認（番号が変わったため）");
+            if(edited>0)
+            {
+                reuseBook=false;
+                log?.Invoke($"Excel転送：前の番号（S/N {previousHeader.Serial}）で作業用 Excel が {edited} か所書き換えられていたので、雛形から作り直します。");
+            }
+        }
         session._dataSheet=settings.DataSheet;
         session._judgmentSheet=settings.JudgmentSheet;
         try
@@ -61,6 +80,7 @@ internal sealed class ExcelWorkSession : IDisposable
             {
                 if(session._book is not null && !session.Closed)session.CloseVerified();
                 if(File.Exists(output))File.Delete(output);
+                EnsureTemplateReadable(template);
                 TemplateWriter.Save(template,output,[
                     new(settings.DataSheet,settings.CurrentCell,current),
                     new(settings.DataSheet,settings.PressureCell,pressure)]);
@@ -73,6 +93,8 @@ internal sealed class ExcelWorkSession : IDisposable
             {
                 session.OpenBook(output);
                 Timing("ブック表示");
+                session.TakeBaseline(settings,current.Length);
+                Timing("書き換え確認の基準");
             }
             bool headerChanged=session.UpdateHeader(model,serial,measuredAt);
             session._app.SetAutomaticCalculation();
@@ -108,12 +130,14 @@ internal sealed class ExcelWorkSession : IDisposable
             if(session._book is not null && !session.Closed)session.CloseVerified();
             await Task.Run(()=>{
                 if(File.Exists(output))File.Delete(output);
+                EnsureTemplateReadable(template);
                 TemplateWriter.Save(template,output,[
                     new(settings.DataSheet,settings.CurrentCell,zeros),
                     new(settings.DataSheet,settings.PressureCell,zeros)]);
             });
             bool reuseApp=session.EnsureApp();
             session.OpenBook(output);
+            session.TakeBaseline(settings,zeros.Length);
             session.UpdateMeasurements(settings,zeros,zeros);
             session.UpdateHeader(model,serial,DateTime.Now);
             session._app!.SetAutomaticCalculation();
@@ -124,6 +148,11 @@ internal sealed class ExcelWorkSession : IDisposable
         }
         catch { if(reusable is null)session.Dispose(); throw; }
     }
+    // Excel 雛形を人が Excel で開いていて読めないときは、閉じるファイルの名前を日本語で出す(2026-11-14、全体見直し・区切り 5)。
+    // 雛形への書き込み(TemplateWriter)と同じ開き方で確かめる。ファイルが無いときは、部品の文(FileNotFoundException)のまま。
+    private static void EnsureTemplateReadable(string template) =>
+        FileAccessAdvice.Run("Excel 雛形",template,()=>{ using var probe=new FileStream(template,FileMode.Open,FileAccess.Read,FileShare.Read); },
+            "閉じたあと、もう一度「Excel転送」を押してください。",$"「{Path.GetFileName(template)}」を Excel で開いていたら閉じてください");
     // 起動直後の Excel は画面に出さない(事前準備で LOGGER の前面を奪わないため)。確認ダイアログは Excel の既定どおり出す。
     private bool EnsureApp()
     {
@@ -136,7 +165,40 @@ internal sealed class ExcelWorkSession : IDisposable
         _book=_app!.Open(output);
         Closed=false;
         _header=null;
+        _baseline=null;_approvedEdits=null;
     }
+    // ブックを雛形から作って開いた直後に、全シートの中身を覚える(人の書き換えと比べる相手)。測定値の 2 列(開始セルから点数ぶん)は比べない。
+    private void TakeBaseline(TransferSettings settings,int count)
+    {
+        var current=TemplateWriter.ParseCell(settings.CurrentCell);
+        var pressure=TemplateWriter.ParseCell(settings.PressureCell);
+        _dataArea=(settings.DataSheet,current.Column,pressure.Column,current.Row,pressure.Row,count);
+        _approvedEdits=null;
+        _baseline=ReadAllCells();
+    }
+    private bool IsMeasurementCell(string sheet,int row,int column) =>
+        _dataArea is { } area && string.Equals(sheet,area.Sheet,StringComparison.OrdinalIgnoreCase)
+        && ((column==area.Column1 && row>=area.FirstRow1 && row<area.FirstRow1+area.Count) || (column==area.Column2 && row>=area.FirstRow2 && row<area.FirstRow2+area.Count));
+    private Dictionary<string,SheetCells> ReadAllCells()
+    {
+        var result=new Dictionary<string,SheetCells>(StringComparer.Ordinal);
+        foreach(string name in _book!.SheetNames)
+        {
+            using var sheet=_book.Sheet(name);
+            var used=sheet.ReadUsedFormulas();
+            result[name]=SheetCells.From(used.Row,used.Column,used.Values,(row,column)=>IsMeasurementCell(name,row,column));
+        }
+        return result;
+    }
+    // 人が書き換えたセル(ブックを作った直後と違うところ)。無ければ空。Excel が編集中・応答待ちのときは例外がそのまま出る。
+    public IReadOnlyList<WorkbookEdit> FindEdits()
+    {
+        if(Closed || _book is null) throw new InvalidOperationException("作業用Excelが閉じられています。再転送してください。");
+        return _baseline is null ? [] : WorkbookEdits.Compare(_baseline,ReadAllCells());
+    }
+    // パスワードで進めた書き換えと同じなら、もう一度聞かない(保存をやり直したとき)。そのあとでさらに書き換えたら、また聞く。
+    public bool NeedsApproval(IReadOnlyList<WorkbookEdit> edits) => edits.Count>0 && WorkbookEdits.Signature(edits)!=_approvedEdits;
+    public void Approve(IReadOnlyList<WorkbookEdit> edits) => _approvedEdits=WorkbookEdits.Signature(edits);
     private void UpdateMeasurements(TransferSettings settings,double[] current,double[] pressure)
     {
         if(_book!.IsReadOnly)throw new IOException("作業用Excelが読み取り専用です。");

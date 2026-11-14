@@ -166,6 +166,27 @@ internal static class Program
             serialBox.Text="3";configure.Invoke(form,[false]);Call("UpdateControls");
             if((bool)Field("_serialCompleted"))throw new Exception("Non-completed serial must clear the completed state");
             Console.WriteLine("PASS completed serial is detected when typed and blocks start; another serial clears it");
+            // 保存ファイルがすでにある番号(合格にはなっていない)を入れたら、S/N の行の下に知らせる。止めはしない(2026-11-14、全体見直し・区切り 5)。
+            // 完了済みの番号・保存ファイルの無い番号では出さない。
+            var savedLabel=(Label)Field("_serialSavedLabel");
+            Directory.CreateDirectory(Path.Combine(completedRoot,"Excel"));Directory.CreateDirectory(Path.Combine(completedRoot,"PDF"));
+            File.WriteAllText(Path.Combine(completedRoot,"Excel","AS110-035_SN5_20261113.xlsx"),"");File.WriteAllText(Path.Combine(completedRoot,"PDF","AS110-035_SN0005_20261112_6500.pdf"),"");
+            File.WriteAllText(Path.Combine(completedRoot,"Excel","AS110-035_SN2_20261113.xlsx"),"");
+            serialBox.Text="5";configure.Invoke(form,[false]);Call("UpdateControls");
+            if(!LocalVisible(savedLabel) || !savedLabel.Text.Contains("S/N 5 は保存ファイルがすでにあります") || !savedLabel.Text.Contains("AS110-035_SN5_20261113") || !savedLabel.Text.Contains("AS110-035_SN0005_20261112_6500")
+                || !savedLabel.Text.Contains("測り直しなら") || savedLabel.ForeColor!=Color.DarkOrange)throw new Exception("A serial with saved files must be announced under the serial row: "+savedLabel.Text);
+            if(savedLabel.Top<=((Control)Field("_serialPanel")).Top || savedLabel.Top>=((Control)Field("_protectionPanel")).Top)throw new Exception("The saved-files notice is not between the serial row and the protection row");
+            if(((string)type.GetProperty("SaveRootRangeProblem",Private)!.GetValue(form)!).Length!=0)throw new Exception("The saved-files notice must not block the start by itself");
+            configure.Invoke(form,[true]);
+            serialBox.Text="3";configure.Invoke(form,[false]);Call("UpdateControls");
+            if(LocalVisible(savedLabel))throw new Exception("The saved-files notice remained for a serial without files: "+savedLabel.Text);
+            serialBox.Text="2";configure.Invoke(form,[false]);Call("UpdateControls");
+            if(LocalVisible(savedLabel))throw new Exception("A completed serial has its own guide; the saved-files notice must not show: "+savedLabel.Text);
+            serialBox.Text="5";configure.Invoke(form,[false]);Call("UpdateControls");
+            if(!LocalVisible(savedLabel))throw new Exception("The saved-files notice must come back for the serial with files");
+            serialBox.Text="";configure.Invoke(form,[false]);Call("UpdateControls");
+            if(LocalVisible(savedLabel))throw new Exception("The saved-files notice remained after clearing the serial");
+            Console.WriteLine("PASS a serial that already has saved files is announced under the serial row without blocking; completed, other and empty serials show nothing");
             // 保存先フォルダー名「SN開始-最後」(ここでは SN1-100)と合わない S/N は、測定開始(ConfigureProduct の requireSaveRoot)で止める
             // (2026-11-13、全体見直し。以前は赤字を出すだけで測定は始められ、保存で初めて止まった)。範囲内なら止めない。S/N が空でも測定開始は止める。
             var rangeProblemOf=type.GetProperty("SaveRootRangeProblem",Private)!;

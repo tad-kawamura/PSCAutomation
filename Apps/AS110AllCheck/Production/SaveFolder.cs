@@ -12,6 +12,15 @@ internal static class SaveFolder
     private static readonly Regex FilePattern = new(@"^(?<model>.+?)_SN(?<serial>\d+)_\d{8}(?:_\d+)?$", RegexOptions.CultureInvariant);
     private static readonly string[] DataFolders = ["Excel", "PDF", "LOGGER"];
 
+    // 保存データではないファイル(2026-11-14、全体見直し・区切り 5)。Excel がブックを開いている間に作る「~$…」と、Windows が作る Thumbs.db・desktop.ini。
+    // それまでは「形式でないファイル n 件」や、同じ S/N の「別の名前のファイル」に数えられ、知らせが紛らわしかった。
+    public static bool IsDataFile(string path)
+    {
+        string name = Path.GetFileName(path);
+        return !name.StartsWith("~$", StringComparison.Ordinal)
+            && !name.Equals("Thumbs.db", StringComparison.OrdinalIgnoreCase) && !name.Equals("desktop.ini", StringComparison.OrdinalIgnoreCase);
+    }
+
     public static string FolderName(string root) => Path.GetFileName(Path.TrimEndingDirectorySeparator(Path.GetFullPath(root)));
 
     // フォルダー名から S/N の範囲を読む。無い、または開始が最後より大きいときは null。
@@ -51,7 +60,7 @@ internal static class SaveFolder
         {
             string path = Path.Combine(root, folder);
             if (!Directory.Exists(path)) continue;
-            foreach (string file in Directory.EnumerateFiles(path).OrderBy(f => f, StringComparer.OrdinalIgnoreCase))
+            foreach (string file in Directory.EnumerateFiles(path).Where(IsDataFile).OrderBy(f => f, StringComparer.OrdinalIgnoreCase))
             {
                 string baseName = Path.GetFileNameWithoutExtension(file);
                 var match = FilePattern.Match(baseName);
@@ -74,7 +83,7 @@ internal static class SaveFolder
         {
             string path = Path.Combine(root, folder);
             if (!Directory.Exists(path)) continue;
-            foreach (string file in Directory.EnumerateFiles(path).OrderBy(f => f, StringComparer.OrdinalIgnoreCase))
+            foreach (string file in Directory.EnumerateFiles(path).Where(IsDataFile).OrderBy(f => f, StringComparer.OrdinalIgnoreCase))
             {
                 var match = FilePattern.Match(Path.GetFileNameWithoutExtension(file));
                 if (match.Success && long.TryParse(match.Groups["serial"].Value, NumberStyles.None, CultureInfo.InvariantCulture, out long n) && n == number)
@@ -113,4 +122,59 @@ internal static class SaveFolder
     }
 
     private static long Number(string digits) => long.Parse(digits, NumberStyles.None, CultureInfo.InvariantCulture);
+}
+
+// 正式保存の置き換えが途中で止まったときの例外。Path は止まったファイル、Restored は保存先を保存の前の状態に戻せたか。
+internal sealed class SaveReplaceException(string path, bool restored, Exception inner) : IOException(inner.Message, inner)
+{
+    public string Path { get; } = path;
+    public bool Restored { get; } = restored;
+}
+
+// 正式保存の最後の置き換え(一時フォルダーに作った Excel・PDF・LOGGER を、保存先の名前へ移す)。
+// 途中で止まったら(前に保存したファイルを Excel などで開いたまま保存し直した、など)、置き換えた分を元に戻す。
+// 保存先はいつも「全部前のまま」か「全部今回」のどちらかになる(2026-11-14、全体見直し・区切り 5、人が承認。
+// それまでは Excel は今回・PDF は前回、という組が保存先に残り得た)。
+internal static class SaveReplace
+{
+    // files: (一時フォルダーのファイル, 保存先のファイル)。backupFolder: 前のファイルを一時的によけておく所(保存先と同じドライブ)。
+    // 止まったときは SaveReplaceException。Restored が false のときは、前のファイルが backupFolder に残っていることがある(呼ぶ側で消さない)。
+    public static void ReplaceAll(IReadOnlyList<(string From, string To)> files, string backupFolder)
+    {
+        var done = new List<(string From, string To, string? Backup)>();
+        for (int i = 0; i < files.Count; i++)
+        {
+            var (from, to) = files[i];
+            string? backup = null;
+            try
+            {
+                if (File.Exists(to))
+                {
+                    string aside = System.IO.Path.Combine(backupFolder, $"前のファイル{i + 1}{System.IO.Path.GetExtension(to)}");
+                    File.Move(to, aside);
+                    backup = aside;
+                }
+                File.Move(from, to);
+                done.Add((from, to, backup));
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                bool restored = true;
+                // 止まったファイル: 前のファイルをよけただけで今回の分を置けなかったなら、前のファイルを戻す。
+                try { if (backup is not null && !File.Exists(to)) File.Move(backup, to); }
+                catch (Exception restoreEx) when (restoreEx is IOException or UnauthorizedAccessException) { restored = false; }
+                // すでに置き換えたファイル: 今回の分を一時フォルダーへ戻し、前のファイルを戻す。
+                foreach (var d in Enumerable.Reverse(done))
+                {
+                    try
+                    {
+                        File.Move(d.To, d.From);
+                        if (d.Backup is not null) File.Move(d.Backup, d.To);
+                    }
+                    catch (Exception restoreEx) when (restoreEx is IOException or UnauthorizedAccessException) { restored = false; }
+                }
+                throw new SaveReplaceException(to, restored, ex);
+            }
+        }
+    }
 }

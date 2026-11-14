@@ -19,10 +19,54 @@ internal sealed partial class MainForm : Form
         return path;
     }
 
+    // いま雛形フォルダーにある Excel 雛形(転送設定のシート名を確かめるのに使う)。出荷データの型式は専用の雛形を持たないので、あるものだけ。
+    private static string[] ExistingExcelTemplates() =>
+        ProductModel.All.Select(m => Path.Combine(TemplateFolderPath, ExcelTemplateFileName(m))).Where(File.Exists).ToArray();
+
     // 出荷データ(AS110-116B350)は判定した型式(AS110-116B)の雛形に転送する(TemplateModel)。
     private string ExcelTemplatePath => ExcelTemplatePathFor(_flow.TemplateModel);
 
     private string ExcelWorkPath => Path.Combine(_sessionFolder, "work.xlsx");
+
+    // このアプリが起動した Excel を一時フォルダーに覚える(異常終了で Excel が残ったら、次の起動で終了する。SessionFolders)。覚えられなくても動きは変えない。
+    private int _recordedExcelProcessId;
+    private void RecordExcelProcess()
+    {
+        try
+        {
+            if (_excel?.ExcelProcessId is not { } id || id == _recordedExcelProcessId) return;
+            SessionFolders.WriteExcelProcess(_sessionFolder, id);
+            _recordedExcelProcessId = id;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or InvalidOperationException or System.ComponentModel.Win32Exception) { }
+    }
+
+    // 使っている一時フォルダーの印(「使用中.lock」を開いたまま持つ)。終了のときに手放してからフォルダーを消す。
+    private IDisposable? _sessionFolderLock, _workingTemplateFolderLock;
+    private void HoldTemporaryFolders()
+    {
+        _sessionFolderLock = SessionFolders.Hold(_sessionFolder);
+        _workingTemplateFolderLock = SessionFolders.Hold(_workingTemplateFolder);
+    }
+    private void ReleaseTemporaryFolderLocks()
+    {
+        _sessionFolderLock?.Dispose(); _workingTemplateFolderLock?.Dispose();
+        _sessionFolderLock = _workingTemplateFolderLock = null;
+    }
+
+    // 前の起動が異常終了で残した一時フォルダーと、画面に出ていない Excel を片づける(起動を待たせないよう裏で行い、したことをログに出す)。
+    private async Task CleanupLeftoversAsync()
+    {
+        try
+        {
+            var now = DateTime.Now;
+            var notes = await Task.Run(() => new[] { _sessionFolder, _workingTemplateFolder }
+                .SelectMany(own => SessionFolders.Cleanup(Path.GetDirectoryName(own)!, [own], now)).ToList());
+            if (IsDisposed || _closeRequested) return;
+            foreach (string note in notes) AppendLog("起動時の後片付け：" + note);
+        }
+        catch (Exception ex) { try { if (!IsDisposed && !_closeRequested) AppendLog("起動時の後片付けに失敗：" + ex.Message); } catch { } }
+    }
 
     private void RequestExcelPreparation()
     {
@@ -63,6 +107,7 @@ internal sealed partial class MainForm : Form
         catch (Exception ex) { RecordShutdownError("Excel事前準備", ex); }
         finally
         {
+            RecordExcelProcess();
             _excelPreparing = _operationInProgress = false;
             ContinueRequestedClose();
         }
