@@ -2,7 +2,7 @@
 app: "AS110AllCheck"
 state: "ver3.01 発行済み。型式追加(116B・135B・006)・全体見直し 1〜6・校正の自動読み取り 段階 1 は未発行・実機未確認"
 next: "実機で確認することの一覧を作る。GC16 の実機確認(変換ケーブル待ち、11/17 以降)。そのあと ver3.02 発行"
-updated: "2026-11-14"
+updated: "2026-11-16"
 ---
 
 # AS110AllCheck の状況
@@ -33,7 +33,7 @@ updated: "2026-11-14"
 
 ## 詰まっている点・待っているもの
 
-- 区切り 4〜6 の修正は、プルリクエスト `tad-kawamura/PSCAutomation#1`(フォーク `tds-cell` のブランチ `feature/as110allcheck-review-4`)で取り込み待ち。家の PC の `main` は GitHub より進んでいる。2026-11-16 に会社の PC で「Create a merge commit」で取り込み、`tds-cell` を共同作業者に招待する(`AGENTS.md`「家の PC からの push」)。それまで家の作業は同じブランチへ push する
+- 区切り 4〜6 の修正(プルリクエスト `tad-kawamura/PSCAutomation#1`)は 2026-11-16 に「Create a merge commit」で main に取り込み済み。残りは `tds-cell` を共同作業者に招待すること(人が行う。`AGENTS.md`「家の PC からの push」)。それまで家の作業はフォークへのプルリクエストで出す
 - GC16 につなぐ変換ケーブルを注文中(届くのは 2026-11-17 以降)。それまで段階 1 の実機確認は待ち
 - AS110-006 は、人が WAVE LOGGER で専用の LOGGER 雛形(13000 点)と `参照ﾃﾞｰﾀ_AS110-006.xyb` を作るまでデータ取りできない
 - 電磁弁の選定がまだ(段階 2 の前に要る)
