@@ -221,6 +221,8 @@ GC16・変換ケーブル（CableCreation FTDI を購入予定）が届いたら
 
 ## 確認（2026-11-05、移植後）
 
+ver3.01 のあとに入れて実機で確かめていないものは、現場で順に進める一覧 [実機で確認することの一覧](docs/real-device-checks.md) にまとめました（2026-11-16）。実機で確かめた結果は、その一覧と下の行に書きます。
+
 - この PC（SDK 10.0.401、NI-VISA・Excel あり、機器なし）で: `AS110AllCheck.slnf` の Release ビルド（エラー 0。警告は `Wrappers/Instruments` の VISA 参照の MSB3270 だけで、移植前から同じ）、Verification（照合を含む）、AppShutdown 11 件、SaveAvailability（`--no-dialogs --with-excel`）21 件、ExcelHeader（ヘッダ 7・`--optimization` 54・`--session` 9・`--transfer` 6・`--reuse` 16・`--prepare` 7）。件数は移植前と同じ（`--session` は切断とみなすエラーを 1 つ足した分だけ多い。2026-11-06 に合格確定の閉じ方の項目を足して 10）
 - 未確認: **実機での動作すべて**（M5Stack、NR-500 / NR-X の USB・Wi-Fi、WF1973 / SDG1032X、LOGGER の測定・保存、漏れチェック、正式保存）、SaveAvailability のダイアログありの実行、発行した exe を別の PC で動かすこと
 - 2026-11-05 LOGGER の事前起動（起動を画面準備と重ねる）: この PC に M5Stack・WF1973・NR-500（旧 WAVE LOGGER、USB）をつないだ状態で Debug ビルドの exe を起動し、接続確認が正常終了（本体=NR-500）して、閉じると LOGGER も終了することを確認。接続確認のログで「COMオブジェクト生成（事前起動を使用）」と「LOGGER事前起動の完了待ち = 0.000 秒」が出て、プロセス起動から接続確認終了までが 3.0 秒（変更前の同日のログでは 11.2〜13.4 秒。ただしこの回は LOGGER 本体の起動自体が 0.6 秒と速く、7〜8 秒かかる回での短縮幅は未確認）。未確認: NR-X・WAVE LOGGER X・Wi-Fi での事前起動、両方の LOGGER が入った PC で種類を切り替えたときの破棄
