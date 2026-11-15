@@ -141,9 +141,10 @@ internal static class LeakCheckTests
         Check(channel.ApiChannel==1 && channel.Scale(5.4f)==(double)(float)(100*5.4f-1),"pressure channel scales like XdtChannel.ReadScaledValues");
         Check(channel.Scale(3.4e38f) is null && channel.Scale(float.NaN) is null && channel.Scale(float.PositiveInfinity) is null,"invalid raw values are not scaled");
 
-        // 「人の判断で合格」の確認の始めの文(2026-11-13。以前は「漏れ判定は判定できませんです。」になった)。
-        Check(LeakOutcomeText.OverrideQuestion(LeakOutcome.Fail)=="漏れ判定は不合格です。"
-            && LeakOutcomeText.OverrideQuestion(LeakOutcome.Unmeasurable)=="漏れ判定は判定できませんでした。","override question reads naturally for failed and unmeasurable results");
+        // 「人の判断で合格」の回避はなくした(2026-11-14、人の決定)。前の設定ファイルにチェックが残っていても読めて、次の保存で消える。
+        var oldSettings=TransferSettings.FromJson("{\"AllowLeakOverride\":true,\"LeakTestSeconds\":12}");
+        Check(oldSettings.LeakTestSeconds==12 && !System.Text.Json.JsonSerializer.Serialize(oldSettings).Contains("AllowLeakOverride"),
+            "an old settings file with the leak override switched on is read, and the switch is dropped");
 
         // 雛形の圧力 CH2 の係数と移動平均を読める(作業用 xdt と同じ形式)。
         string template=Path.Combine(AppContext.BaseDirectory,"Fixtures","AS110データ調整・データ取り用.xdt");
@@ -340,19 +341,19 @@ internal static class LeakCheckTests
         var f=new ProductionWorkflow{Mode=TestMode.Production};
         f.Configure("100",ProductModel.All[0]);f.BeginMeasurement(DateTime.Now);f.CaptureSucceeded();f.TransferSucceeded();f.SaveSucceeded();
         f.LeakStarted();f.LeakFinished(LeakOutcome.Fail);
-        Check(!f.CanComplete && f.LeakNeedsOverride && f.LeakChecks==1,"failed leak test blocks completion and needs override");
+        Check(!f.CanComplete && f.LeakNotPassed && f.LeakChecks==1,"failed leak test blocks completion (retest only)");
         f.LeakStarted();
-        Check(!f.CanComplete && !f.LeakNeedsOverride && f.LastLeakOutcome is null,"starting a retest clears the previous result");
+        Check(!f.CanComplete && !f.LeakNotPassed && f.LastLeakOutcome is null,"starting a retest clears the previous result");
         f.LeakFinished(LeakOutcome.Pass);
-        Check(f.CanComplete && !f.LeakNeedsOverride && f.LeakChecks==2,"passing retest allows completion");
+        Check(f.CanComplete && !f.LeakNotPassed && f.LeakChecks==2,"passing retest allows completion");
         f.LeakStarted();
         Check(!f.CanComplete,"a pass is not kept while the next test is running or after it failed with an error");
         f.LeakFinished(LeakOutcome.Unmeasurable);
-        Check(!f.CanComplete && f.LeakNeedsOverride,"unmeasurable result needs override");
+        Check(!f.CanComplete && f.LeakNotPassed,"unmeasurable result blocks completion (retest only)");
         f.LeakStarted();f.LeakFinished(LeakOutcome.NotJudged);
         Check(f.CanComplete,"NR-X without judgment allows completion as before");
         f.BeginMeasurement(DateTime.Now);
-        Check(f.LastLeakOutcome is null && !f.LeakNeedsOverride,"remeasure clears the leak result");
+        Check(f.LastLeakOutcome is null && !f.LeakNotPassed,"remeasure clears the leak result");
     }
 
     private static void RecordFile()
@@ -365,17 +366,14 @@ internal static class LeakCheckTests
             var fail=new LeakTestResult(at,LeakOutcome.Fail,10,1.0,540.314,539.2,1.114,321,"差 1.114 kPa がしきい値 1.0 kPa を超えました",530.0);
             string path=LeakTestRecordFile.Append(root,"00100","AS110-035",fail);
             LeakTestRecordFile.Append(root,"00100","AS110-035",new LeakTestResult(at.AddMinutes(1),LeakOutcome.NotJudged,10,1.0,double.NaN,double.NaN,double.NaN,0,"NR-X は自動判定なし"));
-            LeakTestRecordFile.AppendOverride(root,"00100","AS110-035",fail,at.AddMinutes(2));
             byte[] bytes=File.ReadAllBytes(path);
             string[] lines=File.ReadAllLines(path,System.Text.Encoding.UTF8);
             Check(path==Path.Combine(root,"漏れ試験記録.txt") && bytes[0]==0xEF && bytes[1]==0xBB && bytes[2]==0xBF,"record file is UTF-8 with BOM in the save folder");
-            Check(lines.Length==4 && lines[0]==LeakTestRecordFile.Header && lines.All(l=>l.Split('\t').Length==12),"header and one tab-separated line per test (12 columns)");
+            Check(lines.Length==3 && lines[0]==LeakTestRecordFile.Header && lines.All(l=>l.Split('\t').Length==12),"header and one tab-separated line per test (12 columns)");
             Check(lines[0].Split('\t')[10]=="備考" && lines[0].Split('\t')[11]=="最大値の下限(kPa)","lower limit column is added at the end (earlier columns keep their position)");
             Check(lines[1]=="2026-11-12 10:00:00\t00100\tAS110-035\t不合格\t10\t1.0\t540.314\t539.200\t1.114\t321\t差 1.114 kPa がしきい値 1.0 kPa を超えました\t530.0","failed test line has values");
             Check(lines[2].Split('\t')[3]=="判定なし（人が判断）" && lines[2].Split('\t')[6]=="-" && lines[2].Split('\t')[9]=="-" && lines[2].Split('\t')[11]=="-","NR-X line has no values");
-            Check(lines[3].Split('\t')[11]=="530.0","override line keeps the lower limit of the previous test");
             Check(new LeakTestResult(at,LeakOutcome.Pass,10,1.0,540.314,539.7,0.642,1000,"",530.0).Summary.Contains("最大値 540.314 kPa ≧ 下限 530.0 kPa"),"pass summary shows the lower limit");
-            Check(lines[3].Split('\t')[3]=="人の判断で合格" && lines[3].Split('\t')[10].StartsWith("直前の判定：不合格"),"override line records the previous judgment");
             Check(!File.Exists(Path.Combine(root,"完了記録.txt")),"completion journal is not touched");
         }
         finally { Directory.Delete(root,true); }

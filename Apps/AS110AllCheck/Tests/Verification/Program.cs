@@ -10,6 +10,9 @@ await SupplyPressureTests.RunAsync();
 ShippingDataTests.Run();
 MeasurementProfileTests.Run();
 SaveConflictTests.Run();
+FileAndSettingsTests.Run();
+FileAndSettingsTests.RunEditsAndShippingData();
+FileAndSettingsTests.RunSessionFolders();
 foreach (var isMotion in new[] { true, false })
 {
     double oldFrequency = isMotion ? 0.2 : 0.04;

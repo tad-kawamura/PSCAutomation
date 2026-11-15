@@ -62,7 +62,7 @@ internal static class MeasurementProfileTests
         var flow = new ProductionWorkflow { Mode = TestMode.Production };
         flow.ConfigureFor("068431", m006, null);
         flow.BeginMeasurement(new DateTime(2026, 11, 13));
-        Check(flow.BaseName == "AS110-006_SN068431_20261113" && flow.LegacyBaseName == "AS110-006_SN068431_20261113_6500", "file name has no point count; legacy name keeps _6500");
+        Check(flow.BaseName == "AS110-006_SN068431_20261113", "file name has no point count");
         string root = Path.Combine(Path.GetTempPath(), "AS110AllCheck.Verification", Guid.NewGuid().ToString("N"));
         try
         {

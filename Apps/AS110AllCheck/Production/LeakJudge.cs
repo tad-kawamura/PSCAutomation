@@ -21,10 +21,6 @@ internal static class LeakOutcomeText
         LeakOutcome.Unmeasurable => "判定できません",
         _ => "判定なし（人が判断）",
     };
-
-    // 「人の判断で合格」の確認の始めの文(2026-11-13、全体見直し。以前は「漏れ判定は判定できませんです。」になった)。
-    public static string OverrideQuestion(LeakOutcome outcome) =>
-        outcome == LeakOutcome.Unmeasurable ? "漏れ判定は判定できませんでした。" : "漏れ判定は不合格です。";
 }
 
 // 圧力のチャンネル。換算は校正を適用した作業用 xdt の係数(XdtChannel.ReadScaledValues と同じ式、float に丸める)。

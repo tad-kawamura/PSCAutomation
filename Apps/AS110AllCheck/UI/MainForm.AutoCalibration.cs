@@ -9,6 +9,8 @@ internal sealed partial class MainForm : Form
     private Gc16GaugeLocator? _gaugeLocator;
     // 校正の読み取りのために LOGGER で雛形を開いた(校正画面をキャンセルしたら閉じる)。
     private bool _templateOpenedForReading;
+    // 開いている読み取りの画面(M5Stack の通信が切れたら中止するため。MainForm.Measurement.cs の ArduinoDisconnected)。
+    private AutoCalibrationDialog? _autoCalibrationDialog;
 
     // この起動で GC16 を最初に見つけた時刻を持ち続けるため、1 つを使い回す。
     private Gc16GaugeLocator GaugeLocator => _gaugeLocator ??= new Gc16GaugeLocator(() => _arduino.PortName);
@@ -28,12 +30,14 @@ internal sealed partial class MainForm : Form
             calibrationOperator => new AutoCalibrationProcedure(GaugeLocator, new GeneratorCurrentOutput(generator), meter,
                 new ManualBallValveSwitcher(calibrationOperator), calibrationOperator, new SystemCalibrationClock()),
             CalibrationInProgressMarker.Default, line => AppendLog("校正の読み取り：" + line));
+        _autoCalibrationDialog = dialog;
         try
         {
             dialog.ShowDialog(owner);
         }
         finally
         {
+            _autoCalibrationDialog = null;
             if (meter.OpenedTemplate) _templateOpenedForReading = true;
             if (dialog.Started) RestoreGeneratorAfterReading(generator, dialog.OutputStopFailed);
         }

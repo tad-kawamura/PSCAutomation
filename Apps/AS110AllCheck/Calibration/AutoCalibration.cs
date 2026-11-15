@@ -122,8 +122,11 @@ internal sealed class AutoCalibrationProcedure
         if (!double.IsFinite(milliamps.Value) || milliamps.Value <= 0)
             throw new InvalidDataException("マルチメータの電流は 0 より大きい数で入れてください。");
         float volts = ReadVolts(_settings.CurrentChannel, "電流");
-        if (_currentLow is { } low && volts <= low.Volts)
-            throw new InvalidDataException($"電流の高点の電圧 {F(volts)} V が低点 {F(low.Volts)} V 以下です。WF1973 の出力と配線を確かめてください。");
+        // 30 mA が出ていれば、低点からはっきり上がる(アンプの設定で約 1〜5 V)。「低点以下」だけを見ると、出力が止まっていても
+        // ノイズで少し上なら通り、0 mA のままの電圧を高点にした(2026-11-14、全体見直し・区切り 4)。
+        if (_currentLow is { } low && volts - low.Volts < _settings.MinCurrentRiseVolts)
+            throw new InvalidDataException($"電流の高点の電圧 {F(volts)} V が、低点 {F(low.Volts)} V から {F(_settings.MinCurrentRiseVolts)} V 以上 上がっていません。" +
+                "WF1973 の出力・アンプの電源・配線を確かめてください。");
         _currentHigh = (volts, (float)milliamps.Value);
         _operator.ShowStatus($"② 電流の高点：{F(volts)} V = {F((float)milliamps.Value)} mA");
     }
@@ -189,6 +192,10 @@ internal sealed class AutoCalibrationProcedure
             double settled = await WaitSettledAsync(gauge, "④ 圧力の高点", ct);
             // 落ち着いたときの CH2 の電圧を、その場で読む(知らせのあいだに変わらないように)。
             float volts = ReadVolts(_settings.PressureChannel, "圧力");
+            // 高点が低点より上かを、この段の中で確かめる(止まったら④からやり直せる)。それまでは④のあとの最後の確かめで止まり、
+            // 手入力用の文が出て、①〜③の値も消えた(2026-11-14、全体見直し・区切り 4)。
+            if (_pressureLow is { } low && volts <= low.Volts)
+                throw new InvalidDataException($"圧力の高点の電圧 {F(volts)} V が低点 {F(low.Volts)} V 以下です。NR-500 CH{_settings.PressureChannel}（圧力）の配線を確かめてください。");
             double limit = target * _settings.HighDeviationRatio;
             if (Math.Abs(settled - target) > limit)
             {
@@ -198,6 +205,9 @@ internal sealed class AutoCalibrationProcedure
                 if (choice == DeviationChoice.Readjust) continue;
                 if (choice == DeviationChoice.Abort) throw new OperationCanceledException("校正の自動読み取りを中止しました。");
             }
+            // 「このまま使う」を選んでも、低点以下の圧力は高点にできない。
+            if (_pressureLow is { } lowPoint && (float)settled <= lowPoint.Kilopascals)
+                throw new InvalidDataException($"圧力の高点 {F(settled)} kPa が低点 {F(lowPoint.Kilopascals)} kPa 以下です。供給圧力とボールバルブの向きを確かめてください。");
             _pressureHigh = (volts, (float)settled);
             _operator.ShowStatus($"④ 圧力の高点：{F(volts)} V = {F((float)settled)} kPa（目標 {target} kPa）");
             return;
@@ -352,6 +362,8 @@ internal sealed record AutoCalibrationSettings
     public double CommandVolts { get; init; } = 5.0;
     // ①② で出力を変えてから CH1 を読むまでの待ち。
     public TimeSpan CurrentSettle { get; init; } = TimeSpan.FromSeconds(1);
+    // ② の電圧が ① からこれだけ上がっていなければ、30 mA が出ていないとみなして止める(AI が決めた値。アンプの設定で高点は約 1〜5 V)。
+    public double MinCurrentRiseVolts { get; init; } = 0.3;
     // GC16 を読む間隔(表示の更新は 0.3 秒ごと)。
     public TimeSpan SampleInterval { get; init; } = TimeSpan.FromSeconds(0.3);
     // 落ち着いた: 直近 5 秒の値がすべて、最後の値から ±0.2 kPa 以内。
@@ -379,7 +391,7 @@ internal sealed record AutoCalibrationSettings
             CurrentSettle < TimeSpan.Zero || ZeroSettle < TimeSpan.Zero)
             throw new ArgumentOutOfRangeException(nameof(WaitLimit), "待ち時間を確かめてください。");
         if (StableToleranceKpa <= 0 || ZeroIdealKpa <= 0 || ZeroAllowedKpa < ZeroIdealKpa || ZeroRetries < 0 ||
-            LowDeviationKpa <= 0 || HighDeviationRatio <= 0)
+            LowDeviationKpa <= 0 || HighDeviationRatio <= 0 || !(MinCurrentRiseVolts > 0))
             throw new ArgumentOutOfRangeException(nameof(ZeroAllowedKpa), "落ち着き・0 点・外れの基準を確かめてください。");
     }
 }

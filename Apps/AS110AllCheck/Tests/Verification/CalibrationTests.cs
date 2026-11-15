@@ -79,6 +79,34 @@ internal static class CalibrationTests
                         "invalid endpoints rejected before changing either channel");
                 }
             }
+            // ふつうの値から外れている校正値は、適用の前に聞く(2026-11-14、全体見直し・区切り 4)。止めはしない(Validate は通る)。
+            var template = new As110Calibration(new(-0.002f, 0.01f, 0.993f, 30f), new(-0.001f, 0f, 5.524f, 540f));
+            Check(valid.FindUnusual(template).Count == 0 && valid.FindUnusual(null).Count == 0 && template.FindUnusual(template).Count == 0,
+                "usual calibration values are not questioned");
+            // アンプの設定で電流の電圧は変わる(3 V = 30 mA・5 V = 30 mA)。雛形(1 V)と違っても聞かない。
+            Check((valid with { Current = new(0.001f, 0f, 2.992f, 29.9f) }).FindUnusual(template).Count == 0 &&
+                (valid with { Current = new(0.001f, 0f, 4.98f, 29.9f) }).FindUnusual(template).Count == 0,
+                "current voltage of another amplifier setting is not questioned");
+            // 供給圧力の違う型式(350〜588 kPa)でも、1 V あたりの kPa は同じなので聞かない。
+            Check((valid with { Pressure = new(0.001f, 0f, 3.58f, 350f) }).FindUnusual(template).Count == 0,
+                "pressure high point of another supply pressure is not questioned");
+            foreach (var (unusual, word, name) in new[]
+            {
+                (valid with { Pressure = new(0.001f, 0.1f, 5503f, 539.5f) }, "圧力の 1 V あたり", "missing decimal point in the pressure voltage"),
+                (valid with { Pressure = new(0.001f, 0.1f, 5.503f, 53.95f) }, "圧力の 1 V あたり", "pressure kPa one digit short"),
+                (valid with { Pressure = new(0.1f, 0.001f, 539.5f, 5.503f) }, "圧力の 1 V あたり", "pressure V and kPa columns swapped"),
+                (valid with { Pressure = new(0.001f, 100f, 5.503f, 639.5f) }, "圧力の低点", "pressure low point far from 0 kPa"),
+                (valid with { Current = new(-0.002f, 0.01f, 0.998f, 300.2f) }, "電流の高点の表示値", "current mA ten times too large"),
+                (valid with { Current = new(0.01f, -0.002f, 30.02f, 0.998f) }, "電流の高点の表示値", "current V and mA columns swapped"),
+                (valid with { Current = new(-0.002f, 0.01f, 998f, 30.02f) }, "電流の高点の計測値", "missing decimal point in the current voltage"),
+                (valid with { Current = new(-0.002f, 10f, 0.998f, 30.02f) }, "電流の低点", "current low point far from 0 mA"),
+            })
+            {
+                unusual.Validate();
+                Check(unusual.FindUnusual(template).Any(line => line.Contains(word)), "questioned before applying: " + name);
+            }
+            Check((valid with { Pressure = new(0.001f, 0.1f, 5503f, 539.5f) }).FindUnusual(null).Count == 0,
+                "without a template the pressure slope is not compared");
         }
         finally { Directory.Delete(folder, recursive: true); }
     }

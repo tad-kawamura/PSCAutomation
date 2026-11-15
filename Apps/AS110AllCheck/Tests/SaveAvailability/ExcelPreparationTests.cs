@@ -44,6 +44,19 @@ internal static class ExcelPreparationTests
             if (!ReferenceEquals(book, Book())) throw new Exception("Preparation replaced the work book of a captured measurement");
             Console.WriteLine("PASS preparation does not touch Excel while a measurement result exists");
         }
-        finally { (Excel() as IDisposable)?.Dispose(); }
+        finally
+        {
+            (Excel() as IDisposable)?.Dispose();
+            // 終了処理を通して閉じる。Dispose だけで終わると、new MainForm() が始めた LOGGER 本体ソフトの事前起動が破棄されず、
+            // 検査のたびに窓なしの WAVE LOGGER(NRWL.exe)が 1 つ残った(2026-11-14、全体見直し・区切り 6 で気づいた。区切り 3 で直したのと同じこと)。
+            // 測定結果が残っていても、終了の確認は出さずに閉じる。
+            ((System.Windows.Forms.Timer)Field("_statusHeartbeat")).Stop();
+            type.GetField("_confirmClose", Private)!.SetValue(form, (Func<string, bool>)(_ => true));
+            _ = form.Handle;
+            form.Close();
+            var closing = System.Diagnostics.Stopwatch.StartNew();
+            while (!form.IsDisposed && closing.Elapsed < TimeSpan.FromSeconds(10)) { Application.DoEvents(); Thread.Sleep(5); }
+            if (!form.IsDisposed) throw new Exception("Excel preparation test form did not close");
+        }
     }
 }

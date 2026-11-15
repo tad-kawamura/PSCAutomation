@@ -85,9 +85,10 @@ internal sealed partial class MainForm : Form
                 editor = new XdtScalingEditor(originalPath);
                 // 初期値は雛形の値。入れ直しのときだけ、いま適用している値から直せるようにする。
                 // 「GC16 で読み取る」(校正の自動読み取り 段階 1)。読み取りの電圧は、LOGGER にファイルが無ければこの雛形を開いて読む。
+                var templateCalibration = As110Calibration.FromTemplate(editor);
                 using var dialog = new CalibrationDialog(hardware, templateName,
-                    _calibrationApplied && _appliedCalibration is not null ? _appliedCalibration : As110Calibration.FromTemplate(editor),
-                    (model, owner) => ReadCalibrationWithGauge(model, originalPath, owner));
+                    _calibrationApplied && _appliedCalibration is not null ? _appliedCalibration : templateCalibration,
+                    (model, owner) => ReadCalibrationWithGauge(model, originalPath, owner)) { Template = templateCalibration };
                 UseWaitCursor = false;
                 try
                 {
@@ -131,7 +132,8 @@ internal sealed partial class MainForm : Form
     // AS110-006 でデータ調整とデータ取りを替えたとき)に、
     // いま適用している校正値のまま、その型式の雛形で作業用ファイルを作り直して LOGGER に読み込む(校正画面は出さない。2026-11-12、SPEC「AS110-006 の雛形と測り方」)。
     // 校正記録は新しい雛形の名前で書き直す(同じ保存先にも書く)。失敗したら雛形待ちに戻る(校正からやり直す)。
-    private void ReloadTemplateForModel(string originalPath)
+    // reason はログに出す読み直しの理由(型式で替わる / モードで替わる)。
+    private void ReloadTemplateForModel(string originalPath, string reason = "型式で雛形が替わるため")
     {
         if (!_calibrationApplied)
             throw new InvalidOperationException("校正値を適用してから参照波形を選択してください。");
@@ -144,7 +146,7 @@ internal sealed partial class MainForm : Form
         As110Calibration? calibration = _appliedCalibration;
         string workingPath = CreateWorkingTemplate(originalPath, calibration);
         LoadWorkingTemplate(originalPath, workingPath, calibration, _detectedHardwareName,
-            result => AppendLog("雛形読み直し（型式で雛形が替わるため、同じ校正値で読み込み）：" + result),
+            result => AppendLog($"雛形読み直し（{reason}、同じ校正値で読み込み）：" + result),
             reading: _appliedCalibrationRecord?.Reading);
     }
 

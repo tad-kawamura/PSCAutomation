@@ -134,7 +134,8 @@ internal sealed class AutoCalibrationDialog : Form, IAutoCalibrationOperator
         }
         catch (OperationCanceledException ex)
         {
-            Finish(ex.InnerException is { } cause ? "中止しました（" + cause.Message + "）。" : "中止しました。");
+            Finish(_abortReason is { } reason ? reason + "ため、読み取りを中止しました。" :
+                ex.InnerException is { } cause ? "中止しました（" + cause.Message + "）。" : "中止しました。");
         }
         catch (Exception ex)
         {
@@ -168,6 +169,18 @@ internal sealed class AutoCalibrationDialog : Form, IAutoCalibrationOperator
         _promptLabel.Text = message + "\r\n「閉じて手入力に戻る」を押してください。";
         _stopButton.Text = "閉じて手入力に戻る";
         _stopButton.Enabled = true;
+    }
+
+    // 画面の外で起きた異常(M5Stack の通信切れ)で読み取りを中止する(2026-11-14、全体見直し・区切り 4)。
+    // 通信切れの処理は発振器の出力を止めるので、続けると 30 mA が出ていないまま ③④ を読み取った。後片付けは「中止」と同じ。
+    private string? _abortReason;
+    public void Abort(string reason)
+    {
+        if (!_running || _cancel.IsCancellationRequested) return;
+        _abortReason = reason;
+        _stopButton.Enabled = false;
+        _stopButton.Text = "中止しています…";
+        _cancel.Cancel();
     }
 
     private void StopOrClose()

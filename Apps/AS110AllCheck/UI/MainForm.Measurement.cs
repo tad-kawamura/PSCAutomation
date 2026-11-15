@@ -8,7 +8,7 @@ namespace PSCAutomation.Apps.AS110AllCheck;
 
 // MainFormを役割別に分割。すべて同じFormの一部です。
 // MainFormのうち、測定開始の条件確認と開始・終了の処理を担当する。
-// Arduinoの測定要求を受け、通電・接続・雛形・LOGGERの状態を確認する。
+// 測定開始の操作(PC のボタン・M5Stack の A)を受け、通電・接続・雛形・LOGGERの状態を確認する。
 // LOGGERの測定開始に成功した直後、発振器へトリガーを送る。
 // 非通電や通信異常の通知と、測定終了時の処理も担当する。
 // 将来の測定終了後の自動保存は、このファイルへ追加する予定。
@@ -34,13 +34,15 @@ internal sealed partial class MainForm : Form
             // 「確認」の途中は閉じない(接続確認がポートを開け閉めしている最中で、つないだばかりのポートを閉じてしまうため。失敗したら接続確認が閉じる)。
             if (!_checkingConnections) CloseArduinoPort();
             _leakCancel?.Cancel();
+            // 校正の読み取り中なら中止する(下で出力を止めるので、続けると 30 mA が出ていないまま読み取る。2026-11-14、全体見直し・区切り 4)。
+            _autoCalibrationDialog?.Abort("M5Stack の通信が途切れた");
             try { StopLeakOutput(); } catch { }
             ResetTemplate();
             _nfCommunicationAlertShown = true;
-            AppendLog("Arduino の通信が途切れました。「確認」を押してください。");
+            AppendLog("M5Stack の通信が途切れました。「確認」を押してください。");
             // 「確認」の途中で切れた(生存確認の失敗を含む)ときは、接続確認の結果にまとめて出すので、ここでは重ねて出さない。
             if (_checkingConnections) return;
-            ErrorNotification.Show(this, "Arduino の通信が途切れました。接続を確認してください。",
+            ErrorNotification.Show(this, "M5Stack の通信が途切れました。接続を確認してください。",
                 "通信エラー", MessageBoxButtons.OK, MessageBoxIcon.Error);
         }
         finally { _arduinoDisconnectHandling = false; }
@@ -79,21 +81,6 @@ internal sealed partial class MainForm : Form
                 MessageBoxButtons.OK, MessageBoxIcon.Warning);
         }
         finally { _nfNotEnergizedAlertShown = false; }
-    }
-
-    private void ArduinoMeasurementRequested()
-    {
-        if (_flow.Mode != TestMode.Motion) return;
-        // C#がArduinoの測定要求を受け取った時刻。物理押下時刻ではない。
-        long receivedAt = Stopwatch.GetTimestamp();
-        long requestVersion = _arduino.MeasurementRequestVersion;
-        if (IsDisposed || !IsHandleCreated) return;
-        if (InvokeRequired)
-        {
-            BeginInvoke((Action)(() => ExecuteMeasurement(receivedAt, requestVersion)));
-            return;
-        }
-        ExecuteMeasurement(receivedAt, requestVersion);
     }
 
     private async void ExecuteMeasurement(long? receivedAt = null, long? requestVersion = null)
@@ -236,15 +223,56 @@ internal sealed partial class MainForm : Form
     private bool UseManualLoggerTrigger => _flow.Mode == TestMode.Motion &&
         _logger.ActiveEdition == WaveLoggerEdition.WaveLoggerX;
 
+    // 測定開始の後、LOGGER が「停止」以外になるのをまだ見ていない間 true(データ調整・データ取りだけ)。
+    // 見るまでは「停止」を測定の終わりとみなさない。それまでは、開始から 0.5 秒後に「停止」と読めると終わったものとして一時保存し、
+    // LOGGER が始まっていない・始まるのが遅れたときに、前回のデータ(または雛形の波形)が今回の結果になった(2026-11-14、区切り 3 の残り。人の決定)。
+    private bool _awaitingLoggerStart;
+    private long _loggerStartDeadline;
+    private const int LoggerStartTimeoutMilliseconds = 5000;
+    // 始まらなかったときの通知(検査では差し替える)。
+    private Action<string> _showLoggerStartFailure;
+
     private void RefreshLoggerState()
     {
-        if (_measurementState.Refresh(_logger.GetState, AppendLog, UseManualLoggerTrigger))
+        long? read = null;
+        if (_awaitingLoggerStart && !_flow.Measuring) _awaitingLoggerStart = false;
+        if (_awaitingLoggerStart && Environment.TickCount64 >= _measurementState.ReadAfter)
+        {
+            long state = _logger.GetState();
+            if (state == 1)
+            {
+                // まだ始まっていない。期限までは待ち、過ぎたら保存せずにやめる。
+                if (Environment.TickCount64 >= _loggerStartDeadline) AbandonUnstartedMeasurement();
+                return;
+            }
+            if (state > 0) _awaitingLoggerStart = false;
+            read = state;
+        }
+        if (_measurementState.Refresh(() => read ?? _logger.GetState(), AppendLog, UseManualLoggerTrigger))
             OnMeasurementCompleted();
         if (_measurementState.State == 11 && _flow.Measuring)
         {
             _flow.Invalidate(); StopLeakOutput();
             throw new InvalidOperationException("LOGGERがエラー停止しました。設定を確認して再測定してください。");
         }
+    }
+
+    // 測定開始から期限を過ぎても LOGGER が「停止」のまま。一時保存せず、出力を止めて今回の測定をやめる。
+    private void AbandonUnstartedMeasurement()
+    {
+        _awaitingLoggerStart = false;
+        try { StopLeakOutput(); } catch { }
+        if (_logger.IsInitialized) { try { _logger.Stop(); } catch { } }
+        _logger.ResetMeasurementStart();
+        _measurementState.MeasurementStarted = false;
+        _measurementState.State = null;
+        _measurementState.ReadAfter = 0;
+        _flow.Invalidate();
+        const string message = "LOGGER が測定を始めませんでした。今回の測定は保存していません。LOGGER の画面を確かめて、測り直してください";
+        _captureDiscardedNotice = message;
+        AppendLog($"測定開始エラー：{message}（開始から {LoggerStartTimeoutMilliseconds / 1000} 秒たっても LOGGER が「停止」のまま）");
+        UpdateControls();
+        _showLoggerStartFailure(message);
     }
 
     private void OnMeasurementCompleted()
@@ -275,6 +303,9 @@ internal sealed partial class MainForm : Form
         _measurementState.State = 2;
         // GetStateは約200ms間隔で更新されるため、開始直後の古い停止情報を避ける。
         _measurementState.ReadAfter = Environment.TickCount64 + 500;
+        // データ調整・データ取りは、LOGGER が「停止」以外になるのを見てから終わりを待つ(動き検査は保存しないので今までどおり)。
+        _awaitingLoggerStart = _flow.Mode != TestMode.Motion;
+        _loggerStartDeadline = Environment.TickCount64 + LoggerStartTimeoutMilliseconds;
         if (writeLog) AppendLog("WAVE LOGGER 測定開始");
     }
 

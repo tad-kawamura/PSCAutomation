@@ -127,6 +127,40 @@ internal static class AutoCalibrationTests
             Check(rig.Operator.ResumeMessages.Single().Contains("GC16 が見つかりません"), "GC16 not found: the reason is shown");
         }
 
+        // 6b. 30 mA が出ていない(アンプの電源忘れ・出力が止まった): ② の電圧が ① から 0.3 V 上がらなければ止める。
+        //     それまでは「低点以下」だけを見ていて、ノイズで少し上なら 0 mA のままの電圧を高点にした(2026-11-14、全体見直し・区切り 4)。
+        {
+            var rig = new Rig { AmplifierOff = true };
+            rig.Operator.ResumeAnswers.Enqueue(true);
+            rig.Operator.OnResume = () => rig.AmplifierOff = false;
+            var result = await rig.Procedure().RunAsync(model, CancellationToken.None);
+            Check(rig.Operator.ResumeAsked == 1 && rig.Operator.ResumeMessages[0].Contains("②") && rig.Operator.ResumeMessages[0].Contains("上がっていません") &&
+                rig.Operator.ResumeMessages[0].Contains("アンプの電源"), "② no current: stopped although the voltage is slightly above the low point");
+            Check(rig.Operator.CurrentAsked == 2 && Near(result.Calibration.Current.Input2, Rig.Ch1Volts(5)), "② no current: 再開 reads ② again");
+        }
+
+        // 6c. 圧力の電圧が上がらない(CH2 の配線): ④ の中で止め、「再開」で ④ だけやり直す(① 〜 ③ は残す)。
+        //     それまでは ④ のあとの最後の確かめで止まり、手入力用の文が出て、全部やり直しになった(2026-11-14、全体見直し・区切り 4)。
+        {
+            var rig = new Rig { Ch2Stuck = true };
+            rig.Operator.ResumeAnswers.Enqueue(true);
+            rig.Operator.OnResume = () => rig.Ch2Stuck = false;
+            var result = await rig.Procedure().RunAsync(model, CancellationToken.None);
+            Check(rig.Operator.ResumeAsked == 1 && rig.Operator.ResumeMessages[0].Contains("④") && rig.Operator.ResumeMessages[0].Contains("CH2（圧力）の配線"),
+                "④ pressure voltage not above the low point: stopped inside ④ with the wiring hint");
+            Check(rig.Operator.CurrentAsked == 1 && rig.Gauge.ZeroAdjusts == 1 &&
+                rig.Operator.Instructions.Count(i => i == ManualBallValveSwitcher.AtmosphereInstruction) == 1 &&
+                rig.Operator.Instructions.Count(i => i == ManualBallValveSwitcher.SupplyInstruction) == 2 &&
+                Near(result.Calibration.Pressure.Input2, Rig.Ch2Volts(539.4)), "④ pressure voltage: 再開 restarts ④ only (① ② ③ kept)");
+        }
+        {
+            // 低点以下の圧力は高点にしない。
+            var rig = new Rig { RegulatorKpa = -1 };
+            rig.Operator.ResumeAnswers.Enqueue(false);
+            await ExpectCanceled(rig, model, "④ pressure not above the low point is not recorded");
+            Check(rig.Operator.ResumeMessages.Single().Contains("以下です"), "④ pressure not above the low point: the reason is shown");
+        }
+
         // 7. ② で中止(マルチメータの値を入れない)・画面の中止(キャンセル)でも、出力を止める。
         {
             var rig = new Rig();
@@ -187,7 +221,7 @@ internal static class AutoCalibrationTests
             var s = AutoCalibrationSettings.Default;
             Check(s.CommandVolts == 5 && s.StableWindow == TimeSpan.FromSeconds(5) && s.StableToleranceKpa == 0.2 && s.WaitLimit == TimeSpan.FromSeconds(15) &&
                 s.ZeroSettle == TimeSpan.FromSeconds(3) && s.ZeroIdealKpa == 0.1 && s.ZeroAllowedKpa == 0.2 && s.ZeroRetries == 3 &&
-                s.LowDeviationKpa == 5 && s.HighDeviationRatio == 0.10, "settings: defaults match SPEC 20〜24・27");
+                s.LowDeviationKpa == 5 && s.HighDeviationRatio == 0.10 && s.MinCurrentRiseVolts == 0.3, "settings: defaults match SPEC 20〜24・27");
             bool rejected = false;
             try { (s with { CommandVolts = 6 }).Validate(); } catch (ArgumentOutOfRangeException) { rejected = true; }
             Check(rejected, "settings: WF1973 command above 5 V is rejected");
@@ -218,6 +252,10 @@ internal static class AutoCalibrationTests
         public double AtmosphereNoiseKpa;
         public double RegulatorKpa = 539.4;
         public DateTimeOffset? HighSettledAt;
+        // アンプの電源が入っていない(指令を出しても CH1 が上がらない。ノイズで少しだけ上)。
+        public bool AmplifierOff;
+        // CH2 が圧力に付いてこない(配線外れ)。
+        public bool Ch2Stuck;
 
         public Rig()
         {
@@ -271,7 +309,8 @@ internal static class AutoCalibrationTests
         public double ReadVolts(int channel)
         {
             if (FailNext) { FailNext = false; throw new InvalidDataException("LOGGER から CH1 の今の値を読めません（無効値）。"); }
-            return channel == 1 ? Rig.Ch1Volts(rig.Output.Volts ?? 0) : Rig.Ch2Volts(rig.TruePressure);
+            if (channel == 1) return rig.AmplifierOff ? Rig.Ch1Volts(0) + (rig.Output.Volts > 0 ? 0.001 : 0) : Rig.Ch1Volts(rig.Output.Volts ?? 0);
+            return rig.Ch2Stuck ? Rig.Ch2Volts(0) : Rig.Ch2Volts(rig.TruePressure);
         }
     }
 
@@ -331,7 +370,7 @@ internal static class AutoCalibrationTests
         public readonly Queue<WaitChoice> NotSettledAnswers = new();
         public readonly Queue<bool> ZeroRetryAnswers = new(), ResumeAnswers = new();
         public double? CurrentAnswer = 29.9;
-        public Action? OnDeviation, OnNotSettled, OnAdjustWait;
+        public Action? OnDeviation, OnNotSettled, OnAdjustWait, OnResume;
         public int PressuresShown, CurrentAsked, DeviationAsked, NotSettledAsked, ZeroRetryAsked, ResumeAsked;
         public bool Adjusted;
         public DateTimeOffset? AdjustedAt;
@@ -403,6 +442,7 @@ internal static class AutoCalibrationTests
         {
             ResumeAsked++;
             ResumeMessages.Add(message);
+            OnResume?.Invoke();
             return Task.FromResult(ResumeAnswers.Dequeue());
         }
     }

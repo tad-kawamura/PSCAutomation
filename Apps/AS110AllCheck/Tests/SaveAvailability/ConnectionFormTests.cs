@@ -50,6 +50,8 @@ internal static class ConnectionFormTests
     private static void Close(Form form)
     {
         // 終了処理を通して閉じる(先に起動を始めた LOGGER の参照もここで手放す)。
+        // 測定結果が残っていても、終了の確認は出さずに閉じる(確認そのものは Tests/AppShutdown で確かめる)。
+        form.GetType().GetField("_confirmClose", Private)!.SetValue(form, (Func<string, bool>)(_ => true));
         form.Close();
         var closing = Stopwatch.StartNew();
         while (!form.IsDisposed && closing.Elapsed < TimeSpan.FromSeconds(10)) { Application.DoEvents(); Thread.Sleep(5); }
@@ -136,7 +138,7 @@ internal static class ConnectionFormTests
             finally { rig.Set("_checkingConnections", false); }
             if ((bool)rig.Field("_calibrationApplied")! || (bool)rig.Field("_templateLoaded")! || rig.FlowIs("CaptureFailed") || (bool)rig.Field("_leakOutputReady")! || rig.Generator.Stops == stopsBefore)
                 throw new Exception("A disconnect must stop the output, release the calibration and discard a failed capture");
-            if ((bool)rig.Field("_arduinoDisconnectHandling")! || !rig.Log.Contains("Arduino の通信が途切れました"))
+            if ((bool)rig.Field("_arduinoDisconnectHandling")! || !rig.Log.Contains("M5Stack の通信が途切れました"))
                 throw new Exception("The disconnect handling must finish and be logged");
             Console.WriteLine("PASS M5Stack disconnect: a nested notification is ignored; during a connection check it is handled without a second popup");
 
@@ -181,6 +183,103 @@ internal static class ConnectionFormTests
             if (notReady is not null || !rig.Log.Contains("測定要求を取り消しました")) throw new Exception("Without M5Stack the start must return without starting: " + notReady);
             Kept("M5Stack not ready", 1);
             Console.WriteLine("PASS measurement start: failures before the LOGGER start (folder range, reference, generator preparation, M5Stack not ready) keep the previous result and do not stop the LOGGER");
+
+            // 6. 状態監視の案内は原因に合わせる(2026-11-14、区切り 3 の残り)。以前は発振器の応答なしでも「LOGGER／NR本体 が未接続」と出た。
+            // 6-1. 応答があれば何も変えない(雛形を開いていないので NR 本体は確かめない)。
+            rig.Set("_templateLoaded", false);
+            rig.Call("ConfirmDevicesAlive");
+            if (!(bool)rig.Field("_hardwareDetected")! || rig.Field("_monitorFailureNotice") is not null) throw new Exception("A responding generator must not raise a monitor notice");
+            // 6-2. 発振器の応答なし: 校正を外し、発振器の案内を出す。
+            Loaded("前の測定データ");
+            rig.Generator.FailIdentity = true;
+            rig.Call("ConfirmDevicesAlive");
+            rig.Generator.FailIdentity = false;
+            if ((bool)rig.Field("_calibrationApplied")! || !rig.NextStep.Contains("発振器の応答がありません") || rig.NextStep.Contains("LOGGER") || !rig.NextStep.Contains("「確認」"))
+                throw new Exception("A silent generator must be reported as the generator: " + rig.NextStep);
+            // 6-3. NR 本体を確かめられない(模擬の LOGGER は本体の問い合わせに答えない): NR 本体の案内を出す。
+            rig.Set("_hardwareDetected", true); rig.Set("_monitorFailureNotice", null);
+            Loaded("前の測定データ");
+            rig.Call("ConfirmDevicesAlive");
+            if ((bool)rig.Field("_calibrationApplied")! || !rig.NextStep.Contains("NR 本体を確認できません") || rig.NextStep.Contains("発振器"))
+                throw new Exception("A silent NR unit must be reported as the NR unit: " + rig.NextStep);
+            Console.WriteLine("PASS status monitor: the next-step guide names the device that stopped responding (generator / NR unit)");
+
+            // 7. 測定開始の後、LOGGER が「停止」以外になるのを見るまでは、「停止」を測定の終わりとみなさない(2026-11-14、区切り 3 の残り)。
+            // 以前は開始から 0.5 秒後に「停止」と読めると一時保存し、前回のデータが今回の結果になった。
+            object state = rig.Field("_measurementState")!;
+            var failures = new List<string>();
+            rig.Set("_showLoggerStartFailure", (Action<string>)failures.Add);
+            void Started(long deadline)
+            {
+                Loaded("前回の測定データ");
+                rig.Set("_hardwareDetected", true);
+                rig.FlowCall("BeginMeasurement", DateTime.Now);
+                state.GetType().GetProperty("MeasurementStarted")!.SetValue(state, true);
+                state.GetType().GetProperty("ReadAfter")!.SetValue(state, 0L);
+                rig.Set("_awaitingLoggerStart", true); rig.Set("_loggerStartDeadline", deadline);
+            }
+            // 7-1. 期限の前に「停止」: まだ待つ(保存しない)。
+            int saves = rig.Logger.Saves;
+            Started(Environment.TickCount64 + 60000);
+            rig.Logger.State = 1;
+            rig.Call("RefreshLoggerState");
+            if (!rig.FlowIs("Measuring") || rig.Logger.Saves != saves || failures.Count != 0) throw new Exception("A stopped LOGGER before the deadline must be waited for, not captured");
+            // 7-2. 「測定中」を見た後の「停止」: 今までどおり一時保存する。
+            rig.Logger.State = 4;
+            rig.Call("RefreshLoggerState");
+            if (!rig.FlowIs("Measuring") || (bool)rig.Field("_awaitingLoggerStart")!) throw new Exception("A running LOGGER must end the wait for the start");
+            rig.Logger.State = 1;
+            rig.Call("RefreshLoggerState");
+            if (!rig.FlowIs("HasCapture") || rig.Logger.Saves != saves + 1 || failures.Count != 0) throw new Exception("After the LOGGER ran, the stop must capture the measurement");
+            // 7-3. 期限を過ぎても「停止」: 保存せず、出力 OFF・LOGGER の Stop・測定の破棄を行い、知らせる。
+            saves = rig.Logger.Saves; int loggerStops = rig.Logger.Stops, outputStops = rig.Generator.Stops;
+            Started(0);
+            rig.Call("RefreshLoggerState");
+            if (rig.FlowIs("Measuring") || rig.FlowIs("HasCapture") || rig.Logger.Saves != saves) throw new Exception("A LOGGER that never started must not be captured");
+            if (rig.Logger.Stops != loggerStops + 1 || rig.Generator.Stops != outputStops + 1) throw new Exception("A LOGGER that never started must be stopped with the output off");
+            if (failures.Count != 1 || !failures[0].Contains("LOGGER が測定を始めませんでした") || !rig.NextStep.Contains("LOGGER が測定を始めませんでした") || !rig.Log.Contains("測定開始エラー：LOGGER が測定を始めませんでした"))
+                throw new Exception("A LOGGER that never started must be reported once: " + rig.NextStep);
+            Console.WriteLine("PASS LOGGER start: a stopped LOGGER is not taken as the end of the measurement until it has been seen running; if it never starts nothing is captured");
+
+            // 8. 動き検査と、データ調整・データ取りの間でモードを替えても、校正は外さず、同じ校正値のまま雛形を読み直す(2026-11-14、人の決定)。
+            // 以前は校正が外れ、校正画面で 8 項目を打ち直した。
+            var calibrationType = assembly.GetType("PSCAutomation.Apps.AS110AllCheck.As110Calibration")!;
+            var fromTemplate = calibrationType.GetMethod("FromTemplate", BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic)!;
+            object calibration = fromTemplate.Invoke(null, [Activator.CreateInstance(fromTemplate.GetParameters()[0].ParameterType, template)])!;
+            rig.Logger.State = 1;
+            rig.Call("LoadWorkingTemplate", template, (string)rig.Call("CreateWorkingTemplate", template, calibration, null)!, calibration, "NR-500", (Action<string>)(_ => { }), null, null);
+            if (!(bool)rig.Field("_calibrationApplied")! || !(bool)rig.Field("_templateLoaded")! || (string?)rig.Field("_workingTemplateSource") != template)
+                throw new Exception("Setup: the calibration was not applied");
+            var testMode = assembly.GetType("PSCAutomation.Apps.AS110AllCheck.TestMode")!;
+            var modeBox = (ComboBox)rig.Field("_modeBox")!;
+            void Switch(string mode)
+            {
+                modeBox.SelectedIndex = (int)Enum.Parse(testMode, mode);
+                rig.Call("ChangeTestMode");
+                if (rig.Flow.GetType().GetProperty("Mode")!.GetValue(rig.Flow)!.ToString() != mode) throw new Exception("The mode did not change to " + mode);
+            }
+            void Kept8(string scenario, string templateName)
+            {
+                if (!(bool)rig.Field("_calibrationApplied")! || !(bool)rig.Field("_templateLoaded")! || !ReferenceEquals(rig.Field("_appliedCalibration"), calibration))
+                    throw new Exception(scenario + ": the calibration must stay applied with the same values");
+                if (Path.GetFileName((string?)rig.Field("_workingTemplateSource")) != templateName)
+                    throw new Exception($"{scenario}: the LOGGER template must be {templateName}, not {rig.Field("_workingTemplateSource")}");
+            }
+            Switch("Motion");
+            Kept8("to motion", "AS110動き検査用.xdt");
+            if (!rig.Log.Contains("モードで雛形が替わるため、同じ校正値で読み込み")) throw new Exception("The reload for the mode must be logged");
+            Switch("Adjustment");
+            Kept8("back to adjustment", "AS110データ調整・データ取り用.xdt");
+            Switch("Production");
+            Kept8("adjustment to data acquisition", "AS110データ調整・データ取り用.xdt");
+            // 読み直せないとき(LOGGER が止まっていない)は、前のモードの雛形のまま測らないよう、校正を外す。
+            rig.Flow.GetType().GetProperty("Mode")!.SetValue(rig.Flow, Enum.Parse(testMode, "Motion"));
+            rig.Logger.State = 4;
+            try { rig.Call("ReloadTemplateForMode", true); throw new Exception("The reload must fail while the LOGGER is running"); }
+            catch (TargetInvocationException ex) when (ex.InnerException is InvalidOperationException) { }
+            finally { rig.Logger.State = 1; }
+            if ((bool)rig.Field("_calibrationApplied")! || (bool)rig.Field("_templateLoaded")!) throw new Exception("A failed reload must release the calibration");
+            Console.WriteLine("PASS mode change between motion and adjustment/data acquisition keeps the calibration and reloads the template with the same values; a failed reload releases it");
         }
         finally
         {
@@ -250,11 +349,11 @@ internal static class ConnectionFormTests
 public sealed class ConnectionFakeGenerator : IFunctionGeneratorSession
 {
     public int Stops;
-    public bool FailPrepare;
+    public bool FailPrepare, FailIdentity;
     public string Identity => "fake,WF1973,0,0";
     public string PreparationSummary => "fake";
     public bool IsConnected => true;
-    public string QueryIdentity() => Identity;
+    public string QueryIdentity() => FailIdentity ? throw new IOException("mock identity failure") : Identity;
     public void PrepareBurst(GeneratorBurstSettings settings) { if (FailPrepare) throw new IOException("mock prepare failure"); }
     public void TriggerBurst() => throw new Exception("Unexpected trigger");
     public void SetDcOutput(double volts) => throw new Exception("Unexpected output ON");
@@ -271,7 +370,8 @@ public sealed class ConnectionFakeLogger(string dataSource)
     public bool Visible { get; private set; } = true;
     public long GetIdentifier() => 0;
     public long GetFileCount() => !Visible || OpenDocument is null ? 0 : 1;
-    public long GetState() => 1;
+    public long State = 1;
+    public long GetState() => State;
     public long Start() { Starts++; return 0; }
     public void Stop() => Stops++;
     public void Quit() { Visible = false; OpenDocument = null; }

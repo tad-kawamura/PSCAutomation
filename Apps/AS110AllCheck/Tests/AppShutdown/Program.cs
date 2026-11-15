@@ -28,6 +28,7 @@ internal static class Program
     private static void Main()
     {
         ApplicationConfiguration.Initialize();
+        As110Application.ConfigureDiagnostics();
         foreach(var scenario in new[]{"normal","generator-stop","generator-dispose","logger","all","pending-operation","pending-success","sync-operation","leak-cancel","leak-stop-ok","leak-stop-fail"})
         {
             using var form=new MainForm();
@@ -57,6 +58,9 @@ internal static class Program
             watchdog.Start();
             int closed=0;
             form.FormClosed+=(_,_)=>closed++;
+            // 終了の確認(区切り 6)。漏れ試験の途中だけ 1 回聞かれる(「はい」で進める)。ほかの場面は何も残っていないので聞かれない。
+            int confirms=0;
+            Set(form,"_confirmClose",(Func<string,bool>)(_=>{confirms++;return true;}));
             TaskCompletionSource? pending=null;
             Task? operation=null;
             if(scenario is "pending-operation" or "pending-success")
@@ -95,6 +99,7 @@ internal static class Program
             PumpUntil(()=>form.IsDisposed);
             Check(dialogsSeen==0,"Shutdown displayed a blocking error dialog");
             Check(closed==1,"Close event did not complete exactly once");
+            Check(confirms==(scenario=="leak-cancel"?1:0),"Close confirmation was asked "+confirms+" times");
             Check(trace.Count(t=>t=="generator-stop")==1,"Generator stop was skipped or repeated");
             Check(trace.Count(t=>t=="generator-dispose")==1,"Generator dispose was skipped or repeated");
             Check(trace.IndexOf("generator-stop")<trace.IndexOf("logger-stop"),"Logger step did not follow output stop attempt");
@@ -117,6 +122,7 @@ internal static class Program
                 Check((bool)Field(form,"_leakOutputReady")! && (bool)Field(form,"_generatorOutputUnknown")!,"Failed output stop was shown as OFF");
             Console.WriteLine($"PASS real MainForm.Close {scenario}: closed={closed}, errors={errors}, trace={string.Join(',',trace)}");
         }
+        Review6Tests.Run();
     }
 }
 

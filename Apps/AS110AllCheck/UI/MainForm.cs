@@ -9,9 +9,6 @@ namespace PSCAutomation.Apps.AS110AllCheck;
 // MainFormを役割別に分割。すべて同じFormの一部です。
 internal sealed partial class MainForm : Form
 {
-    // 別アプリで雛形操作をデバッグするときは true にしてGUIを再表示します。
-
-
     private readonly WaveLoggerSession _logger = new() { ObserveOperation = name => PcDelayObservation.Begin(name) };
 
     private readonly As110ArduinoProtocol _arduino = new();
@@ -20,14 +17,15 @@ internal sealed partial class MainForm : Form
 
     public MainForm()
     {
+        _confirmClose = AskClose;
+        _showLoggerStartFailure = text => ErrorNotification.Show(this, text + "。", "測定開始エラー", MessageBoxButtons.OK, MessageBoxIcon.Error);
+        _confirmModeChange = AskModeChange;
         // LOGGER 本体ソフトの起動(約 7 秒)だけ先に始め、画面準備・発振器確認と重ねる。
         BeginLoggerStartup();
         _nr500Connection = new Nr500Connection(_logger);
         _nrXConnection = new NrXConnection(_logger, _wifiManager);
         _arduino.Disconnected += ArduinoDisconnected;
-        _arduino.MeasurementRequested += ArduinoMeasurementRequested;
         _arduino.ButtonRequested += BoardButtonRequested;
-        _arduino.MeasurementBlocked += ShowNfNotEnergizedAlert;
         _arduino.NfStatusChanged += ArduinoNfStatusChanged;
         _statusHeartbeat.Tick += StatusHeartbeatTick;
         _statusHeartbeat.Start();
@@ -43,12 +41,28 @@ internal sealed partial class MainForm : Form
         ConfigureLoggerSelection();
         ConfigureConnectionSelection();
         UpdateControls();
+        // Windows の表示倍率に合わせる(ここまでの大きさは 100% のときの値)。倍率が大きくて画面に収まらないときは、画面の作業領域までにする
+        // (操作欄がスクロールする)。
+        DisplayScale.Apply(this);
+        var area = (Screen.PrimaryScreen ?? Screen.AllScreens[0]).WorkingArea;
+        Size = new Size(Math.Min(Width, area.Width), Math.Min(Height, area.Height));
+        FitNextStepLabel();
+        UnexpectedErrors.Register(this);
         StartPcDelayObservation();
     }
 
     protected override async void OnShown(EventArgs e)
     {
         base.OnShown(e);
+        // 使う一時フォルダーに印を置いてから、前の起動の残りを片づける(SessionFolders)。
+        HoldTemporaryFolders();
+        _ = CleanupLeftoversAsync();
+        // 設定ファイルを読めずに初期値で起動したときは、最初に知らせる(TransferSettings.LoadFrom)。
+        if (_transferSettings.LoadWarning is { } warning)
+        {
+            AppendLog("設定ファイル：" + warning.Replace("\n", " "));
+            ErrorNotification.Show(this, warning, "設定ファイルを読めませんでした", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
         await CheckConnectionsAsync();
     }
 

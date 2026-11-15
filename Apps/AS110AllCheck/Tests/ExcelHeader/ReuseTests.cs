@@ -94,6 +94,36 @@ internal static class ReuseTests
             Check(Header().Contains("AS110-015") && Header().Contains("588") && Header().Contains(serial) && Header().Contains("2026.10.31"),"changed model/serial/pressure/date updated");
             Check(ReferenceEquals(original,Book()),"model change with common template retains workbook");
             Check(ReferenceEquals(app,App()),"own Excel instance reused");
+            // 人の書き換えを見つける(2026-11-14、全体見直し・区切り 5)。測定値の書き直しと見出しの書き換えは書き換えに数えない。
+            // 規格値などを書き換えると 1 件として見つかり、同じ番号の測り直しではブックをそのまま使い、番号が変わると雛形から作り直す。
+            System.Collections.IList Edits()=>(System.Collections.IList)type.GetMethod("FindEdits")!.Invoke(session,null)!;
+            var editTimer=Stopwatch.StartNew();
+            int untouched=Edits().Count;
+            Console.WriteLine($"TIMING FindEdits={editTimer.Elapsed.TotalMilliseconds:F0}ms (sheets={((dynamic)RawBook()!).Worksheets.Count})");
+            Check(untouched==0,"transfers and header updates are not reported as edits");
+            book=RawBook()!;sheet=book.Worksheets["sheet1"];
+            string editedFormula=(string)sheet.Range["E21"].Formula;
+            sheet.Range["E21"].Value2="OK";sheet.Range["Z1"].Value2=5;
+            var found=Edits();
+            Check(found.Count==2 && found.Cast<object>().Select(e=>e.ToString()).SequenceEqual([$"sheet1 の Z1：（空） → 「5」",$"sheet1 の E21：「{editedFormula}」 → 「OK」"]),
+                "an overwritten judgment formula and a typed cell are found: "+string.Join(" / ",found.Cast<object>()));
+            var needs=type.GetMethod("NeedsApproval")!;
+            Check((bool)needs.Invoke(session,[found])!,"edits need a password before saving");
+            type.GetMethod("Approve")!.Invoke(session,[found]);
+            Check(!(bool)needs.Invoke(session,[Edits()])!,"the same edits are not asked again after the password");
+            sheet.Range["Z2"].Value2="x";
+            Check((bool)needs.Invoke(session,[Edits()])!,"a further edit is asked again");
+            object editedBook=Book()!;
+            Transfer(changed);
+            Check(ReferenceEquals(editedBook,Book()) && Edits().Count==3,"re-measuring the same serial keeps the edited workbook and its edits");
+            serial="0001234568";Transfer(captured);
+            Check(!ReferenceEquals(editedBook,Book()) && Edits().Count==0 && logs.Any(x=>x.Contains("雛形から作り直します")) && lastPass,
+                "a new serial rebuilds the edited workbook from the template (edits are not carried to the next unit)");
+            book=RawBook()!;sheet=book.Worksheets["sheet1"];
+            Check((string)sheet.Range["E21"].Formula==editedFormula && sheet.Range["Z1"].Value2 is null,"the rebuilt workbook has the template formula again");
+            original=Book()!;
+            serial="0001234569";Transfer(captured);
+            Check(ReferenceEquals(original,Book()),"a new serial without edits keeps reusing the workbook");
             var freshTimes=new List<double>();var reuseTimes=new List<double>();
             for(int i=0;i<3;i++)
             {

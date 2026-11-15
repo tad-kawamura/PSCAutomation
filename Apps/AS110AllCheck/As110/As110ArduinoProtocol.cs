@@ -5,7 +5,7 @@ using System.Threading.Tasks;
 namespace PSCAutomation.Apps.AS110AllCheck;
 
 // AS110専用のArduino通信内容を解釈する。
-// 接続確認の要求・応答と、測定要求・測定禁止・NF弁状態を扱う。
+// 接続確認の要求・応答と、ボタン操作・NF弁状態を扱う。
 // NF弁状態の受信時刻を管理し、MainFormへ各通知を渡す。
 // COMポートの操作や文字列の送受信はArduinoConnectionへ依頼する。
 // Arduino側の送受信文字列を変更するときは、このファイルを修正する。
@@ -30,10 +30,8 @@ internal sealed class As110ArduinoProtocol : IDisposable
     private static readonly TimeSpan AlertLimit = TimeSpan.FromSeconds(3);
     private const string HelloRequest = "AS110_PING";
     private const string HelloResponse = "AS110_READY:1";
-    public event Action? MeasurementRequested;
     public event Action<int,long,string>? ButtonRequested;
     public void SendDisplay(string line) => _connection.SendLine(line);
-    public event Action? MeasurementBlocked;
     public event Action? NfStatusChanged;
     public event Action? Disconnected;
     public bool IsConnected => _connection.IsConnected;
@@ -201,16 +199,6 @@ internal sealed class As110ArduinoProtocol : IDisposable
             string[] parts=line.Split(':');
             if(parts.Length==4 && int.TryParse(parts[1],out int button) && button is >=1 and <=3 && long.TryParse(parts[2],out long epoch))
                 ButtonRequested?.Invoke(button,epoch,parts[3]);
-        }
-        else if (line == "MEASURE_BLOCKED") MeasurementBlocked?.Invoke();
-        else if (line == "MEASURE")
-        {
-            if (!MeasurementInputReady)
-            {
-                ArduinoDiagnosticLog.Write("MEASURE_DROPPED", "受信停止中または復旧確認中の測定要求を破棄。再操作が必要です");
-                return;
-            }
-            MeasurementRequested?.Invoke();
         }
     }
 

@@ -2,7 +2,12 @@ namespace PSCAutomation.Apps.AS110AllCheck;
 
 internal sealed partial class MainForm : Form
 {
-    private readonly CheckBox _developerMode = new() { Text = "開発者モード（接点模擬）", AutoSize = true, Margin = new Padding(24, 5, 0, 0) };
+    // 開発者モード(接点模擬)のチェックは、ふだんは出さない(2026-11-14、全体見直し・区切り 6、人の決定。それまでは動き検査モードで誰でも入れられ、
+    // 通電していなくても測定を始められた)。使うときは、exe を「--developer」付きで起動する(README「動き検査と開発者モード」)。
+    internal const string DeveloperArgument = "--developer";
+    private static readonly bool DeveloperModeAvailable =
+        Environment.GetCommandLineArgs().Skip(1).Any(a => string.Equals(a, DeveloperArgument, StringComparison.OrdinalIgnoreCase));
+    private readonly CheckBox _developerMode = new() { Text = "開発者モード（接点模擬）", AutoSize = true, Margin = new Padding(24, 5, 0, 0), Visible = DeveloperModeAvailable };
     private readonly Button _developerContact = new() { AutoSize = true };
     private bool _simulatedContactEnergized;
     private bool MotionContactEnergized => _flow.Mode == TestMode.Motion && _developerMode.Checked ? _simulatedContactEnergized : _arduino.NfEnergized;

@@ -61,6 +61,25 @@ internal static class ExcelComChecks
                 data.CopyRow(2, 10);
                 Check(data.HasFormula("C10") && Equals(data.GetValue("A10"), 1d), "行のコピー");
                 Console.WriteLine("PASS ExcelSheet: セル・範囲の読み書き、消去、数式の有無、最後の行、行のコピー");
+
+                // 使っている範囲をまとめて読む: 数式のセルは数式の文字、値のセルは値。書き換えると、その 1 セルだけが変わって読める。
+                string Entered(ExcelRangeValues used, string address)
+                {
+                    var (column, row) = TemplateWriter.ParseCell(address);
+                    int r = row - used.Row, c = column - used.Column;
+                    return r < 0 || c < 0 || r >= used.Values.GetLength(0) || c >= used.Values.GetLength(1)
+                        ? "" : Convert.ToString(used.Values[r, c], System.Globalization.CultureInfo.InvariantCulture) ?? "";
+                }
+                var usedBefore = data.ReadUsedFormulas();
+                Check(usedBefore.Sheet == "データ" && Entered(usedBefore, "A2") == "1" && Entered(usedBefore, "C2").StartsWith('=') && Entered(usedBefore, "I2") == "x" && Entered(usedBefore, "H1") == "",
+                    $"使っている範囲の読み取り A2={Entered(usedBefore, "A2")} C2={Entered(usedBefore, "C2")}");
+                string formulaBefore = Entered(usedBefore, "C2");
+                data.SetValue("A2", 5d);
+                var usedAfter = data.ReadUsedFormulas();
+                Check(Entered(usedAfter, "A2") == "5" && Entered(usedAfter, "C2") == formulaBefore && Entered(usedAfter, "B3") == Entered(usedBefore, "B3"),
+                    "値を書き換えると、そのセルだけが変わり、それを使う数式の文字は変わらない");
+                data.SetValue("A2", 1d);
+                Console.WriteLine("PASS ExcelSheet.ReadUsedFormulas: 数式は数式の文字・値は値で読み、書き換えたセルだけが変わる");
             }
 
             app.Calculate();

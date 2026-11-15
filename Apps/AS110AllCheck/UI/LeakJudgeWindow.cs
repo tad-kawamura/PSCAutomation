@@ -40,9 +40,11 @@ internal sealed class LeakJudgeWindow : Form
         _valuesLabel.Padding = _infoLabel.Padding = new Padding(16, 0, 0, 0);
         // Dock=Top は後から足したものほど上に並ぶ。
         Controls.AddRange([_infoLabel, _valuesLabel, _resultLabel]);
+        // Windows の表示倍率に合わせる(位置は、合わせた後の幅で決める)。
+        DisplayScale.Apply(this);
         // 画面の上の中央(LOGGER のグラフの上部が隠れる位置)。
         var area = Screen.PrimaryScreen?.WorkingArea ?? new Rectangle(0, 0, 1280, 800);
-        Location = new Point(area.Left + (area.Width - Width) / 2, area.Top + 40);
+        Location = new Point(area.Left + (area.Width - Width) / 2, area.Top + DisplayScale.Pixels(this, 40));
         ShowResult(LeakOutcome.Pass);
         ShowValues(double.NaN, double.NaN, double.NaN, TimeSpan.Zero);
     }

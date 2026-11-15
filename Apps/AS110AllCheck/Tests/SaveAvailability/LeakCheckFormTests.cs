@@ -163,6 +163,8 @@ internal static class LeakCheckFormTests
         finally
         {
             // 模擬の発振器と LOGGER のまま終了処理を通して閉じる(先に起動を始めた LOGGER の参照もここで手放す)。
+                // 測定結果が残っていても、終了の確認は出さずに閉じる(確認そのものは Tests/AppShutdown で確かめる)。
+            form.GetType().GetField("_confirmClose", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(form, (Func<string, bool>)(_ => true));
             form.Close();
             var closing = Stopwatch.StartNew();
             while (!form.IsDisposed && closing.Elapsed < TimeSpan.FromSeconds(10)) { Application.DoEvents(); Thread.Sleep(5); }
@@ -171,12 +173,15 @@ internal static class LeakCheckFormTests
         if (!form.IsDisposed) throw new Exception("Leak check form did not close");
     }
 
-    // 「人の判断で合格」の確認画面: 既定は「いいえ」(Enter・Esc で合格にならない)。画像も残す。
+    // 既定が「いいえ」の確認画面(終了・モード変更などで使う): Enter・Esc では進まない。画像も残す。
+    // 漏れ判定の「人の判断で合格」はなくした(2026-11-14)。転送設定にその項目が無いことも確かめる。
     private static void OverrideDialog(Assembly assembly)
     {
-        var dialogType = assembly.GetType("PSCAutomation.Apps.AS110AllCheck.LeakOverrideDialog")!;
-        string message = "漏れ判定は不合格です。\r\n不合格（差 1.114 kPa がしきい値 1.0 kPa を超えました）\r\n\r\nそれでも合格にしますか？\r\n「はい」：人の判断で合格にする（漏れ試験記録に残します）\r\n「いいえ」：合格にしない（「+30mA」から漏れ試験をやり直せます）";
-        using var dialog = (Form)Activator.CreateInstance(dialogType, message, SystemFonts.DefaultFont)!;
+        if (assembly.GetType("PSCAutomation.Apps.AS110AllCheck.TransferSettings")!.GetProperty("AllowLeakOverride") is not null)
+            throw new Exception("The leak override setting must be gone");
+        var dialogType = assembly.GetType("PSCAutomation.Apps.AS110AllCheck.DefaultNoDialog")!;
+        string message = "S/N 100 の測定結果を、まだ保存していません。\r\nモードを「データ調整」に替えると、この測定結果は破棄されます。\r\n\r\nモードを替えますか？\r\n「はい」：替える（測定結果を破棄する）\r\n「いいえ」：替えない（このまま続ける）";
+        using var dialog = (Form)Activator.CreateInstance(dialogType, message, SystemFonts.DefaultFont, "モード変更の確認")!;
         var yes = (Button)dialogType.GetProperty("YesButton")!.GetValue(dialog)!;
         var no = (Button)dialogType.GetProperty("NoButton")!.GetValue(dialog)!;
         if (!ReferenceEquals(dialog.AcceptButton, no) || !ReferenceEquals(dialog.CancelButton, no) || !ReferenceEquals(dialog.ActiveControl, no))

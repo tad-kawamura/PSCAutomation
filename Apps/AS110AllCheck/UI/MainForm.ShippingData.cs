@@ -41,6 +41,11 @@ internal sealed partial class MainForm : Form
         _rootBox.Text.Length == 0 ? "" :
         _flow.ShippingData ? Path.Combine(_rootBox.Text, ShippingDataModels.FolderName(_flow.Model)) : _rootBox.Text;
 
+    // 出荷データの保存先「出荷データ(350kPa)」がまだ無いか。フォルダーは最初の保存のときに作る(2026-11-14、全体見直し・区切り 1 の残り、人の決定。
+    // それまでは 350 kPa を選んだだけで、完了済みかを確かめる処理がフォルダーと「完了記録.lock」を作った)。
+    // 無いあいだは、完了済みの番号も保存済みのデータも無いものとして扱い、完了記録を開かない。
+    private bool ShippingRootMissing => _flow.ShippingData && _rootBox.Text.Length > 0 && !Directory.Exists(SaveRootPath);
+
     private string JudgedNotPassedText =>
         $"S/N {_flow.Serial} は {_flow.JudgedModel?.Name}（{_flow.JudgedModel?.SupplyPressure} kPa）のデータ取りで合格していません（保存先の完了記録で保護中ではありません）。合格した S/N だけ出荷データを測れます";
 
@@ -60,7 +65,8 @@ internal sealed partial class MainForm : Form
         catch (Exception ex)
         {
             _judgedPassed = false;
-            _judgedPassReadError = ex.Message;
+            // 完了記録の「開けません」の案内(FileAccessAdvice)は、下の JudgedReadFailedText が同じことを順に書くので、ここでは元の理由だけを持つ。
+            _judgedPassReadError = ex is FileAccessAdviceException ? ex.InnerException!.Message : ex.Message;
             AppendLog("データ取りの完了記録の確認に失敗：" + ex.Message);
             if (throwOnError) throw new IOException(JudgedReadFailedText(afterMeasurement: false), ex);
         }

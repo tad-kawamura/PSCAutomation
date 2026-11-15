@@ -52,6 +52,32 @@ internal sealed partial class MainForm : Form
     private readonly Label _serialLabel = new() { Text="測定開始S/N", AutoSize=true };
     // 測定開始S/N が空のときの赤字。欄の右に出す。
     private readonly Label _serialMissingLabel = new() { Text="入力してください", AutoSize=true, ForeColor=Color.Red, Visible=false };
+    // 測定開始S/N に、保存ファイルがすでにある番号(合格にはなっていない)を入れたときの知らせ。S/N の行の下に出す。止めはしない(測り直しのことがある)。
+    // 2026-11-14、全体見直し・区切り 5(人の指摘: 保存の確認まで進んでから気づくのでは遅い。番号を入れた時点で分かるようにする)。
+    private readonly Label _serialSavedLabel = new() { AutoSize=true,ForeColor=Color.DarkOrange,MaximumSize=new Size(680,0),Visible=false,Margin=new Padding(0,0,0,6) };
+    // 知らせを作ったときの保存先・S/N と文(作ったあとで保存先・S/N が変わったら出さない)。
+    private (string Root,string Serial,string Text)? _savedSerialNotice;
+    // この起動で自分が保存した S/N か(測り直しで自分のファイルを知らせない)。
+    private bool OwnsSavedSerial(string root) => _ownedSaveBase is { } owned && owned.StartsWith($"{root}|{_flow.Model.Name}_SN{_flow.Serial}_",StringComparison.OrdinalIgnoreCase);
+    // 保存先に、いまの測定開始S/N の保存ファイルがあるかを見直す(完了記録を読み直すとき・合格で次の番号へ進んだときに呼ぶ)。
+    // 完了済み(保護中)の番号は専用の案内が出るので対象外。出荷データの保存先がまだ無いときに、フォルダーを作らない。
+    private void RefreshSavedSerialNotice()
+    {
+        var previous=_savedSerialNotice;
+        _savedSerialNotice=null;
+        if(_flow.Mode!=TestMode.Production || _flow.SerialMissing || _rootBox.Text.Length==0 || _serialCompleted)return;
+        try
+        {
+            string root=Path.GetFullPath(SaveRootPath);
+            if(!Directory.Exists(root) || OwnsSavedSerial(root))return;
+            var files=SaveFolder.FindSerialFiles(root,_flow.Serial);
+            if(files.Count==0)return;
+            string names=string.Join("、",files.Select(Path.GetFileNameWithoutExtension).Distinct(StringComparer.OrdinalIgnoreCase));
+            _savedSerialNotice=(root,_flow.Serial,$"S/N {_flow.Serial} は保存ファイルがすでにあります（{names}。合格にはなっていません）。測り直しなら、このまま進めてください。番号の入れ間違いなら、測定開始S/N を直してください。");
+            if(previous!=_savedSerialNotice)AppendLog("測定開始S/N："+_savedSerialNotice.Value.Text);
+        }
+        catch(Exception ex) when(ex is IOException or UnauthorizedAccessException) { AppendLog("保存ファイルの確認に失敗："+ex.Message); }
+    }
     private readonly TextBox _rootBox = new() { Width=280,ReadOnly=true };
     private readonly Label _flowLabel = new() { AutoSize=true,MaximumSize=new Size(680,0) };
     private readonly Button _transferButton=new(),_saveButton=new(),_leakOutputButton=new(),_leakButton=new(),_completeButton=new(),_remeasureButton=new(),_retryCaptureButton=new();
@@ -72,7 +98,10 @@ internal sealed partial class MainForm : Form
     // 正式保存で同名ファイルがあって保存しなかったときの案内(「次にすること」に赤字で出す)。転送結果が無効になるか保存できたら消す。
     private string? _saveConflict;
     private CancellationTokenSource? _leakCancel;
-    private readonly string _sessionFolder=Path.Combine(Path.GetTempPath(),"AS110BoltCheck","ver3-"+Guid.NewGuid().ToString("N"));
+    // 一時フォルダーの置き場はアプリ名(2026-11-14、人の決定。それまでは移植前の名前 AS110BoltCheck のままだった)。
+    private readonly string _sessionFolder=Path.Combine(Path.GetTempPath(),"AS110AllCheck","ver3-"+Guid.NewGuid().ToString("N"));
+    // 前の版(ver3.01 まで)が使っていた一時フォルダーの置き場。前の版が異常終了で残したものを、起動のときに片づける。
+    private static readonly string LegacySessionParent=Path.Combine(Path.GetTempPath(),"AS110BoltCheck");
 
     // モードを選ぶまで全体を非表示にする。型式・Excel転送はデータ調整とデータ取りで、保存先・S/N・保存・漏れ試験・合格はデータ取りを選んだときだけ表示する。
     // 並びは上から 型式 → 保存先 → 開始S/N・最後S/N(フォルダー名から) → 測定開始S/N → 保護解除・転送設定 → ボタン → 状態。表示/非表示を切り替えても並びが変わらないよう、行も列も TableLayoutPanel で位置を固定する。
@@ -129,7 +158,7 @@ internal sealed partial class MainForm : Form
     // 保存先の Excel/PDF/LOGGER にある、完了記録に無い S/N のデータを知らせる(保護は「完了番号の保護と解除」の画面で付ける)。
     private void ReportUnrecordedData()
     {
-        if(_rootBox.Text.Length==0) return;
+        if(_rootBox.Text.Length==0 || ShippingRootMissing) return;
         try
         {
             var store=Store;using var held=store.Lock();
@@ -210,7 +239,7 @@ internal sealed partial class MainForm : Form
         // 漏れ試験の試験秒数・しきい値(データ取りだけ表示。MainForm.LeakJudgment.cs)。
         _actionPanel.Controls.Add(mainActions,0,0);_actionPanel.Controls.Add(BuildLeakSettingsRow(),0,1);_actionPanel.Controls.Add(subActions,0,2);
         // 供給圧力(出荷データの工程がある型式だけ。MainForm.ShippingData.cs)は一番上。
-        Control[] rows=[BuildSupplyPressureRow(),_shippingNoticeLabel,_savePathPanel,_saveRootWarningLabel,_rangePanel,_serialPanel,_protectionPanel,_actionPanel,_flowLabel];
+        Control[] rows=[BuildSupplyPressureRow(),_shippingNoticeLabel,_savePathPanel,_saveRootWarningLabel,_rangePanel,_serialPanel,_serialSavedLabel,_protectionPanel,_actionPanel,_flowLabel];
         _productionPanel.RowCount=rows.Length;
         for(int i=0;i<rows.Length;i++){ _productionPanel.RowStyles.Add(new RowStyle(SizeType.AutoSize)); _productionPanel.Controls.Add(rows[i],0,i); }
 
@@ -291,10 +320,35 @@ internal sealed partial class MainForm : Form
     private void RefreshSerialCompletion(bool throwOnError=false)
     {
         _serialCompleted=false;
-        RefreshJudgedPass(throwOnError);
-        if(_flow.Mode!=TestMode.Production || _flow.SerialMissing || _rootBox.Text.Length==0)return;
-        try { var store=Store;using var held=store.Lock();_serialCompleted=store.IsComplete(_flow.Serial); }
-        catch(Exception ex) when(!throwOnError) { AppendLog("完了記録の確認に失敗："+ex.Message); }
+        try
+        {
+            RefreshJudgedPass(throwOnError);
+            if(_flow.Mode!=TestMode.Production || _flow.SerialMissing || _rootBox.Text.Length==0)return;
+            // 出荷データの保存先がまだ無ければ、完了していない(フォルダーは作らない)。
+            if(ShippingRootMissing)return;
+            try { var store=Store;using var held=store.Lock();_serialCompleted=store.IsComplete(_flow.Serial); }
+            catch(Exception ex) when(!throwOnError) { AppendLog("完了記録の確認に失敗："+ex.Message); }
+        }
+        // 完了済みかどうかが決まってから、保存ファイルがすでにある番号かを見直す。
+        finally { RefreshSavedSerialNotice(); }
+    }
+    // モードを替えると破棄される、データ取りの測定結果(保存していないもの)があれば、その説明(無ければ null)。
+    // 2026-11-14、全体見直し・区切り 1 の残り(人の決定)。それまでは、データ取りで測って保存する前にモードを替えると、聞かずに破棄した。
+    // 聞くのは終了の確認(CloseWarning)と同じく、保存する工程(データ取り)の結果だけ。データ調整の結果は保存しないので聞かない。
+    // S/N なしの結果(データ調整から持ってきたもの)は、データ調整へ戻しても残るので聞かない。
+    private string? ModeChangeWarning(TestMode next)
+    {
+        if(!_modeSelected || next==_flow.Mode || _flow.Mode!=TestMode.Production || !_flow.HasCapture || _flow.SerialMissing)return null;
+        return $"S/N {_flow.Serial} の測定結果を、まだ保存していません。\r\nモードを「{_modeBox.Items[(int)next]}」に替えると、この測定結果は破棄されます。";
+    }
+    // 検査では、画面を出さずに答えを差し替える(既定は「いいえ」の確認画面)。
+    private Func<string,bool> _confirmModeChange;
+    private bool AskModeChange(string warning)
+    {
+        using var dialog=new DefaultNoDialog(
+            warning+"\r\n\r\nモードを替えますか？\r\n「はい」：替える（測定結果を破棄する）\r\n「いいえ」：替えない（このまま続ける）",Font,"モード変更の確認");
+        dialog.Shown+=(_,_)=>ActivateJudgmentNotice(dialog,dialog.NoButton);
+        return dialog.ShowDialog(this)==DialogResult.Yes;
     }
     private void ChangeTestMode()
     {
@@ -302,14 +356,23 @@ internal sealed partial class MainForm : Form
         TestMode next=(TestMode)_modeBox.SelectedIndex;
         if (_modeBox.SelectedIndex < 0) return;
         if(next==TestMode.Motion && _flow.HasCapture) { _modeBox.SelectedIndex=(int)_flow.Mode;return; }
+        if(ModeChangeWarning(next) is { } warning)
+        {
+            AppendLog("モード選択："+warning.Replace("\r\n"," "));
+            if(!_confirmModeChange(warning)) { _modeBox.SelectedIndex=(int)_flow.Mode;AppendLog("モード選択：替えませんでした。");return; }
+            AppendLog("モード選択：測定結果を破棄して替えます。");
+        }
         bool templatePurposeChanged = (_flow.Mode == TestMode.Motion) != (next == TestMode.Motion);
         CloseJudgmentNotice();
         _flow.Mode=next;
         _modeSelected=true;
         // モードを変えたら供給圧力は型式の値(データ取り)に戻す(出荷データの 350 kPa をやめる)。
         _shippingDataSelected=false;
-        if (templatePurposeChanged) ResetTemplate();
-        RunOperation("モード選択",()=> { ReloadTemplateForMode(); ConfigureProduct(requireSaveRoot:false); StopLeakOutput();_generator?.PrepareBurst(CurrentBurstSettings);
+        // 動き検査と、データ調整・データ取りの間では LOGGER の雛形が替わる。校正値は同じなので、適用済みなら同じ値のまま雛形を読み直す
+        // (下の ReloadTemplateForMode。校正画面は出さない。2026-11-14、人の決定。それまでは校正を外し、8 項目の打ち直しになった)。
+        // 校正前・雛形を開いていないときは、今までどおり雛形待ちに戻す。
+        if (templatePurposeChanged && !(_templateLoaded && _calibrationApplied && _workingTemplateSource is not null)) ResetTemplate();
+        RunOperation("モード選択",()=> { ReloadTemplateForMode(templatePurposeChanged); ConfigureProduct(requireSaveRoot:false); StopLeakOutput();_generator?.PrepareBurst(CurrentBurstSettings);
             // データ調整で校正を済ませてからデータ取りへ移ったときは、前回の保存先が残っていればここで校正記録を書く。
             WriteCalibrationRecordIfReady();return _modeBox.Text; });
         UpdateControls();
@@ -325,13 +388,18 @@ internal sealed partial class MainForm : Form
     // データ調整とデータ取りで LOGGER の雛形が違う型式(AS110-006 はデータ取りだけ専用の 13000 点。MeasurementProfile)は、
     // モードを替えたときに、いま読み込んでいる雛形と違えば同じ校正値で読み直す(参照波形で型式を替えたときと同じ)。
     // 校正前(雛形をまだ読んでいない)なら何もしない(校正のときにそのモードの雛形を読む)。専用の雛形が無ければ雛形待ちに戻して知らせる。
-    private void ReloadTemplateForMode()
+    // purposeChanged は、動き検査と、データ調整・データ取りの間の切り替え(雛形が必ず替わる)。このときも同じ校正値で読み直す。
+    // 読み直せなかったら(LOGGER が停止していない等)、前のモードの雛形のまま測らないよう、雛形待ちに戻す(校正からやり直す)。
+    private void ReloadTemplateForMode(bool purposeChanged=false)
     {
-        if(_flow.Mode==TestMode.Motion || !_templateLoaded || !_calibrationApplied || _workingTemplateSource is null)return;
+        if((_flow.Mode==TestMode.Motion && !purposeChanged) || !_templateLoaded || !_calibrationApplied || _workingTemplateSource is null)return;
         string template;
         try { template=GetDetectedTemplatePath(); }
         catch { ResetTemplate(); throw; }
-        if(!string.Equals(template,_workingTemplateSource,StringComparison.OrdinalIgnoreCase))ReloadTemplateForModel(template);
+        if(string.Equals(template,_workingTemplateSource,StringComparison.OrdinalIgnoreCase))return;
+        if(!purposeChanged){ReloadTemplateForModel(template);return;}
+        try { ReloadTemplateForModel(template,"モードで雛形が替わるため"); }
+        catch { ResetTemplate(); throw; }
     }
     private void UpdateProductionControls()
     {
@@ -356,6 +424,11 @@ internal sealed partial class MainForm : Form
         _saveRootWarningLabel.Text=production?SaveFolder.CheckRange(_rootBox.Text,_serialBox.Text.Trim()):"";
         _saveRootWarningLabel.Visible=_saveRootWarningLabel.Text.Length>0;
         _serialMissingLabel.Visible=production && _serialBox.Text.Trim().Length==0;
+        // 保存ファイルがすでにある番号の知らせ。保存したあと・完了済み・自分が保存した番号の測り直し・作ったあとで保存先や番号が変わったときは出さない。
+        bool savedNotice=production && _savedSerialNotice is { } notice && !_flow.SerialMissing && !_flow.HasSaved && !_serialCompleted && _rootBox.Text.Length>0
+            && notice.Serial==_flow.Serial && string.Equals(notice.Root,Path.GetFullPath(SaveRootPath),StringComparison.OrdinalIgnoreCase) && !OwnsSavedSerial(notice.Root);
+        _serialSavedLabel.Text=savedNotice?_savedSerialNotice!.Value.Text:"";
+        _serialSavedLabel.Visible=savedNotice;
         _serialBox.Enabled=CanEnterSerial;
         _startButton.Text=_flow.Mode==TestMode.Motion?"測定開始":"データ調整";
         // 型式(参照波形)未選択・データ取りの保存先未選択は、押してからエラーにせず押せない状態にして「次にすること」で案内する(2026-11-06)。
@@ -373,8 +446,8 @@ internal sealed partial class MainForm : Form
         }
         _leakOutputButton.Enabled=ready && _reviewStage && _flow.Mode==TestMode.Production && !_flow.ShippingData && _flow.HasSaved && !_leakOutputReady;
         _leakButton.Enabled=ready && _reviewStage && _flow.Mode==TestMode.Production && !_flow.ShippingData && _flow.HasSaved && _leakOutputReady;
-        // 漏れ判定が不合格・判定できなかったときは、転送設定で回避を許したときだけ押せる(押すと確認する)。
-        _completeButton.Enabled=idle && !_leakOutputReady && (_flow.CanComplete || (_flow.LeakNeedsOverride && _transferSettings.AllowLeakOverride)) && _arduino.MeasurementInputReady && ConnectionsReady;
+        // 漏れ判定が不合格・判定できなかったときは押せない(やり直しだけ。人の判断で合格にする回避は 2026-11-14 になくした。人の決定)。
+        _completeButton.Enabled=idle && !_leakOutputReady && _flow.CanComplete && _arduino.MeasurementInputReady && ConnectionsReady;
         _remeasureButton.Text=_flow.HasSaved?"再測定へ戻る":"設定変更（測定を破棄）";
         _remeasureButton.Enabled=idle && (_reviewStage || _flow.HasCapture) && !_flow.SaveFailed;
         _retryCaptureButton.Visible=_flow.CaptureFailed;_retryCaptureButton.Enabled=idle && _flow.CaptureFailed && ConnectionsReady;
@@ -427,6 +500,8 @@ internal sealed partial class MainForm : Form
         if(_checkingConnections)return "接続確認中です。終わるまで待ってください";
         if(!ConnectionsReady)
         {
+            // 状態監視が異常を見つけたときは、その原因を出す(発振器の応答なしを「LOGGER／NR本体 が未接続」と出さない)。
+            if(_monitorFailureNotice is not null)return _monitorFailureNotice;
             var missing=new List<string>();
             if(!_arduino.IsConnected)missing.Add("M5Stack");
             if(_generator is null)missing.Add("発振器");
@@ -465,9 +540,7 @@ internal sealed partial class MainForm : Form
             if(_flow.ShippingData)return "保存しました（出荷データのため漏れ試験はしません）。「完了」を押してください（やり直すなら「再測定へ戻る」）";
             if(_leakOutputReady)return "+30mA 出力中です。「漏れ試験実施」を押してください";
             if(_flow.CanComplete)return $"漏れ試験が済みました（{LastLeakText()}）。「合格」を押してください（もう一度なら「+30mA」）";
-            if(_flow.LeakNeedsOverride)return _transferSettings.AllowLeakOverride
-                ? $"漏れ判定：{LastLeakText()}。やり直すなら「+30mA」→「漏れ試験実施」。人の判断で合格にするなら「合格」（確認が出ます）"
-                : $"漏れ判定：{LastLeakText()}。「+30mA」→「漏れ試験実施」でやり直してください（「合格」は押せません）";
+            if(_flow.LeakNotPassed)return $"漏れ判定：{LastLeakText()}。「+30mA」→「漏れ試験実施」でやり直してください（「合格」は押せません）";
             return "一式保存済みです。「+30mA」→「漏れ試験実施」→「合格」の順に進めてください（やり直すなら「再測定へ戻る」）";
         }
         if(!_arduino.MeasurementInputReady)return "M5Stack からの状態通知が途切れています。M5Stack の表示とケーブルを確認してください";
@@ -586,6 +659,7 @@ internal sealed partial class MainForm : Form
             // 空文字を書くと見出しの「S/N 数字」が無くなり、S/N を入れた後の転送で置き換えられず、S/N の無い Excel・PDF が保存される(事前準備が S/N を待つのと同じ理由)。
             _excel=ExcelWorkSession.Open(ExcelTemplatePath,ExcelWorkPath,_capturePath,ModelTransferSettings,_flow.Model,
                 _flow.Mode==TestMode.Production && !_flow.SerialMissing?_flow.Serial:"-",_flow.MeasuredAt,_excel,AppendLog);
+            RecordExcelProcess();
             var calculationTimer=Stopwatch.StartNew();
             bool pass=await _excel.IsPassAsync();
             _excelJudgmentError="";
@@ -604,6 +678,9 @@ internal sealed partial class MainForm : Form
             }
             _flow.TransferSucceeded();
             transferred=true;
+            // 同じ番号の測り直しでは、前に人が書き換えたブックをそのまま使う。書き換えが残っていることをログに出す(保存のときにパスワードを聞く)。
+            var carriedEdits=_excel.FindEdits();
+            if(carriedEdits.Count>0)AppendLog($"Excel転送：作業用 Excel に書き換えが {carriedEdits.Count} か所あります（保存のときにパスワードを聞きます）/ "+WorkbookEdits.Describe(carriedEdits,5).Replace("\r\n"," "));
             AppendLog($"Excel転送時間：計算・判定={calculationTimer.Elapsed.TotalMilliseconds:F0}ms / 合計={transferTimer.Elapsed.TotalMilliseconds:F0}ms");
             return _flow.ShippingData?ShippingJudgmentText:pass?"E21・L21：両方OK":"E21・L21：不合格（正式保存できません）";
         });
@@ -663,6 +740,16 @@ internal sealed partial class MainForm : Form
             // 保存先フォルダー名「SN開始-最後」と合わないときは書き込まずに止める。
             string rangeProblem=SaveFolder.CheckRange(_rootBox.Text,_flow.Serial);
             if(rangeProblem.Length>0)throw new InvalidOperationException(rangeProblem);
+            // 作業用 Excel を人が書き換えていたら(測定値の列のほか)、書き換えたところを見せてパスワードを聞く。合えばこのまま保存し、記録に残す
+            // (2026-11-14、全体見直し・区切り 5、人と決めた。それまでは気づかずに保存した)。まだ何も書いていないので、保存失敗にはしない。
+            var workbookEdits=_excel.FindEdits();
+            if(_excel.NeedsApproval(workbookEdits))
+            {
+                AppendLog($"正式保存：作業用 Excel が {workbookEdits.Count} か所書き換えられています / "+WorkbookEdits.Describe(workbookEdits).Replace("\r\n"," "));
+                if(!ConfirmWorkbookEdits(workbookEdits))return "作業用 Excel が書き換えられているため保存しませんでした（パスワードを入れると、このまま保存できます。心当たりが無ければ Excel を確かめてください）。";
+                _excel.Approve(workbookEdits);
+                AppendLog("正式保存：パスワードが入ったので、書き換えたまま保存します。");
+            }
             var store=Store;using var held=store.Lock();
             if(store.IsComplete(_flow.Serial))
             {
@@ -700,21 +787,67 @@ internal sealed partial class MainForm : Form
             _ownedSaveBase=ownership;
             // ここから書き込む。途中で止まったら保存失敗(同じ番号で再保存)。成功したら SaveSucceeded が戻す。
             _flow.SaveFailed=true;
-            foreach(string file in new[]{excel,pdf,logger})Directory.CreateDirectory(Path.GetDirectoryName(file)!);
+            // 前に保存した Excel・PDF を開いたまま保存し直すと、置き換えのところで止まる。どのファイルを閉じるかを日本語で出す
+            // (2026-11-14、全体見直し・区切り 5。それまでは「Access to the path is denied.」だけが出た)。
+            const string retry="閉じたあと、もう一度「保存」を押してください（同じ番号で保存し直します）。";
+            foreach(string file in new[]{excel,pdf,logger})FileAccessAdvice.Run("保存先",Path.GetDirectoryName(file)!,()=>Directory.CreateDirectory(Path.GetDirectoryName(file)!),retry,"保存先のフォルダーが消えていないか確かめてください");
             // 生成は一時ファイルへ。個別の置換が失敗してもSavedRevisionは更新しない。
-            string stage=Path.Combine(root,"tmp",Guid.NewGuid().ToString("N"));Directory.CreateDirectory(stage);
+            string stage=Path.Combine(root,"tmp",Guid.NewGuid().ToString("N"));FileAccessAdvice.Run("保存先",stage,()=>Directory.CreateDirectory(stage),retry,"保存先のフォルダーが消えていないか確かめてください");
+            bool keepStage=false;
             try
             {
                 string x=Path.Combine(stage,"result.xlsx"),p=Path.Combine(stage,"result.pdf"),l=Path.Combine(stage,"result"+Path.GetExtension(logger));
                 if(_flow.ShippingData)_excel.SaveCopiesWithoutJudgment(x,p);else _excel.SaveCopies(x,p);
                 File.Copy(_capturePath,l);
                 foreach(string f in new[]{x,p,l})if(!File.Exists(f)||new FileInfo(f).Length==0)throw new IOException("保存ファイルが生成されませんでした。");
-                File.Move(x,excel,true);File.Move(p,pdf,true);File.Move(l,logger,true);
+                // 置き換えが途中で止まったら、置き換えた分を元に戻す(SaveReplace)。戻せたら保存先は保存の前のままなので、保存失敗にしない。
+                try { SaveReplace.ReplaceAll([(x,excel),(p,pdf),(l,logger)],stage); }
+                catch(SaveReplaceException ex)
+                {
+                    string openHint=$"「{Path.GetFileName(ex.Path)}」を Excel や PDF の画面で開いていたら閉じてください";
+                    if(ex.Restored)
+                    {
+                        _flow.SaveFailed=false;
+                        throw new FileAccessAdviceException(FileAccessAdvice.Text("保存先のファイル",ex.Path,ex.InnerException!,
+                            "今回の分は保存していません（保存先のファイルは保存の前のままです）。閉じたあと、もう一度「保存」を押してください。",openHint),ex);
+                    }
+                    // 戻せなかったときは、よけておいた前のファイルを消さない(一時フォルダーを残す)。保存失敗のままにして、同じ番号で保存し直してもらう。
+                    keepStage=true;
+                    throw new FileAccessAdviceException(FileAccessAdvice.Text("保存先のファイル",ex.Path,ex.InnerException!,
+                        "置き換えの途中で止まり、元に戻せませんでした。保存先に今回と前回のファイルが混ざっています。"+retry+$"\n前のファイルの控え：{stage}",openHint),ex);
+                }
                 _flow.SaveSucceeded();_reviewStage=true;
             }
-            finally {try{Directory.Delete(stage,true);}catch{}}
-            return (_flow.ShippingData?$"Excel・PDF・LOGGERをすべて保存しました（{root}）。「完了」を押してください（漏れ試験はしません）。":"Excel・PDF・LOGGERをすべて保存しました。漏れチェックを行ってください。")+keptNote;
+            // 途中の置き場を消し、保存先の tmp も空なら消す(控えを残すときは消さない)。
+            finally {if(!keepStage)SaveReplace.RemoveStage(stage);}
+            // 書き換えたまま保存したことを記録に残す。保存はもう済んでいるので、記録を書けなくても保存済みのまま、書けなかったことを知らせる。
+            if(workbookEdits.Count>0)
+            {
+                try
+                {
+                    string record=WorkbookEdits.AppendRecord(root,DateTime.Now,_flow.Serial,_flow.Model.Name,baseName,workbookEdits);
+                    keptNote+=$"（作業用 Excel の書き換え {workbookEdits.Count} か所を記録しました：{record}）";
+                }
+                catch(IOException ex)
+                {
+                    AppendLog("Excel 書き換え記録を書けません："+ex.Message.Replace("\n"," "));
+                    keptNote+=$"\n※ 保存はできましたが、Excel の書き換えの記録を書けませんでした。書き換え：{WorkbookEdits.Describe(workbookEdits).Replace("\r\n"," ")}\n{ex.Message}";
+                }
+            }
+            return(_flow.ShippingData?$"Excel・PDF・LOGGERをすべて保存しました（{root}）。「完了」を押してください（漏れ試験はしません）。":"Excel・PDF・LOGGERをすべて保存しました。漏れチェックを行ってください。")+keptNote;
         });
+    }
+    // 作業用 Excel の書き換えを見せて、パスワードを聞く。合って「このまま保存する」なら true。
+    private bool ConfirmWorkbookEdits(IReadOnlyList<WorkbookEdit> edits)
+    {
+        UseWaitCursor=false;
+        try
+        {
+            using var dialog=new WorkbookEditDialog(_flow.Serial,edits,Font);
+            dialog.Shown+=(_,_)=>ActivateJudgmentNotice(dialog,dialog.PasswordBox);
+            return dialog.ShowDialog(this)==DialogResult.OK;
+        }
+        finally { UseWaitCursor=true; }
     }
     private void StartLeakOutput()
     {
@@ -796,13 +929,11 @@ internal sealed partial class MainForm : Form
     {
         if(!_completeButton.Enabled)return;
         RunOperation("合格確定",()=> {
-            bool overriding=!_flow.CanComplete && _flow.LeakNeedsOverride && _transferSettings.AllowLeakOverride;
-            if((!_flow.CanComplete && !overriding) || _excel is null)throw new InvalidOperationException(_flow.LeakNeedsOverride
+            // 漏れ判定が不合格・判定できなかったときは合格にしない(ボタンも押せない。M5Stack の C から来ても同じ)。
+            if(!_flow.CanComplete || _excel is null)throw new InvalidOperationException(_flow.LeakNotPassed
                 ? $"漏れ判定が合格していません（{LastLeakText()}）。「+30mA」から漏れ試験をやり直してください。"
                 : "最新結果の保存と漏れチェックが必要です。");
             var store=Store;using var held=store.Lock();if(store.IsComplete(_flow.Serial))throw new IOException("このS/Nは完了済みです。");
-            // 初期運用の回避(SPEC「漏れ試験の自動判定」5): 人に確かめ、漏れ試験記録に残してから合格にする。
-            if(overriding && !ConfirmLeakOverride())return "漏れ判定が合格していないため、合格にしませんでした。";
             // 閉じる処理が失敗したら記録・加算しない。人が Excel(またはブック)を先に閉じていたときは閉じた扱いで進める(2026-11-06。以前は COM の切断エラーで合格が止まっていた)。
             bool excelAlreadyClosed=_excel.CloseVerifiedOrAlreadyClosed();
             if(excelAlreadyClosed)AppendLog("合格確定：Excel は先に閉じられていました（閉じた扱いで記録します）。");
@@ -813,6 +944,8 @@ internal sealed partial class MainForm : Form
             _serialCompleted=store.IsComplete(_flow.Serial);
             // 出荷データは次の番号もデータ取りで合格しているかを確かめておく(データ取りの完了記録はロックのファイルが別)。
             RefreshJudgedPass();
+            // 次の番号に保存ファイルがすでにあれば(前に測って合格にしていない)、押す前に分かるようにしておく。
+            RefreshSavedSerialNotice();
             _excel.Dispose();_excel=null;_capturePath=null;
             return _flow.SerialRangeFinished ? $"S/N{previous}完了。最後のS/N {_flow.LastSerial} まで終わりました。次の範囲は保存先を選び直し、測定開始S/Nを入力してください。" : $"S/N{previous}完了。次はS/N{_flow.Serial}です。";
         });
@@ -833,8 +966,9 @@ internal sealed partial class MainForm : Form
             return;
         }
         // 一覧の 1 行: 記録のある S/N(保護中・解除済み)と、記録は無いがデータのある S/N(記録なし)。
-        List<(string Serial,bool Protected,string Model,string BaseName,string Note)> entries;
-        try
+        List<(string Serial,bool Protected,string Model,string BaseName,string Note)> entries=[];
+        // 出荷データの保存先がまだ無ければ、記録もデータも無い(フォルダーは作らない)。
+        if(!ShippingRootMissing)try
         {
             var store=Store;using var held=store.Lock();
             entries=store.Entries().Select(e=>(e.Serial,e.Protected,"-","再保護",e.Protected?"":"（解除済み）")).ToList();
@@ -861,10 +995,28 @@ internal sealed partial class MainForm : Form
         var ok=new Button{Text="確定",Left=208,Top=332,Width=96,Height=36,DialogResult=DialogResult.OK};
         var cancel=new Button{Text="キャンセル",Left=312,Top=332,Width=96,Height=36,DialogResult=DialogResult.Cancel};
         dialog.Controls.AddRange([guide,list,ok,cancel]);dialog.AcceptButton=ok;dialog.CancelButton=cancel;
+        DisplayScale.Apply(dialog);
         if(dialog.ShowDialog(this)!=DialogResult.OK)return;
         var desired=entries.Select((e,i)=>(e.Serial,Protected:list.GetItemChecked(i),e.Model,e.BaseName)).ToArray();
         if(desired.Select(d=>d.Protected).SequenceEqual(entries.Select(e=>e.Protected))){AppendLog("保護と解除：チェックを変えた S/N が無いので何もしていません。");return;}
+        // 判定した型式(490 kPa)の保護を解除する S/N に出荷データ(350 kPa)があれば、消去することを確かめる(既定は「いいえ」。「いいえ」なら何も変えない)。
+        // 測り直すと前の調整のときの出荷データは使えないので、残さない(2026-11-14、全体見直し・区切り 5、人の決定)。
+        List<ShippingDataFound> shippingData=[];
+        if(!_flow.ShippingData)
+        {
+            try { shippingData=ShippingDataModels.FindData(_rootBox.Text,entries.Where((e,i)=>e.Protected && !list.GetItemChecked(i)).Select(e=>e.Serial)); }
+            catch(Exception ex) when(ex is IOException or UnauthorizedAccessException or InvalidDataException)
+            { AppendLog($"保護と解除：出荷データを確かめられません / {ex.Message}");ErrorNotification.Show(this,"出荷データを確かめられないため、何も変えていません。\n"+ex.Message,"完了番号の保護と解除",MessageBoxButtons.OK,MessageBoxIcon.Error);return; }
+            if(shippingData.Count>0 && !ConfirmDeleteShippingData(shippingData)){AppendLog("保護と解除：出荷データを消去しないので、何も変えていません。");return;}
+        }
         RunOperation("保護と解除",()=> {
+            // 出荷データの消去が先。消せなかったら(ほかで開いている)保護は解除しない。
+            string shippingNote="";
+            if(shippingData.Count>0)
+            {
+                ShippingDataModels.Remove(shippingData,DeleteToRecycleBin);
+                shippingNote=$"S/N {string.Join(", ",shippingData.Select(f=>f.Serial).Distinct())} の出荷データを消去しました（ファイル {shippingData.Sum(f=>f.Files.Length)} 個。{string.Join("、",shippingData.Select(f=>Path.GetFileName(f.Root)).Distinct())}）。";
+            }
             var store=Store;using var held=store.Lock();
             var (released,reprotected)=store.SetProtection(desired);
             // 今の測定開始S/N の保護が変わったかもしれないので、データ調整ボタンと「次にすること」に反映する。
@@ -872,9 +1024,30 @@ internal sealed partial class MainForm : Form
             var parts=new List<string>();
             if(released.Length>0) parts.Add($"S/N {string.Join(", ",released)} の保護を解除しました（既存ファイルは残しています）");
             if(reprotected.Length>0) parts.Add($"S/N {string.Join(", ",reprotected)} を保護しました");
-            return parts.Count==0?"選んだS/Nはすでにその状態でした。":string.Join("。",parts)+"。";
+            return shippingNote+(parts.Count==0?"選んだS/Nはすでにその状態でした。":string.Join("。",parts)+"。");
         });
     }
+    // 出荷データの消去の確認(既定は「いいえ」)。
+    private bool ConfirmDeleteShippingData(IReadOnlyList<ShippingDataFound> found)
+    {
+        using var dialog=new DefaultNoDialog(ShippingDataDeleteQuestion(found),Font,"保護の解除：出荷データの消去");
+        dialog.Shown+=(_,_)=>ActivateJudgmentNotice(dialog,dialog.NoButton);
+        return dialog.ShowDialog(this)==DialogResult.Yes;
+    }
+    internal static string ShippingDataDeleteQuestion(IReadOnlyList<ShippingDataFound> found)
+    {
+        string serials=string.Join(", ",found.Select(f=>f.Serial).Distinct());
+        string folders=string.Join("、",found.Select(f=>Path.GetFileName(f.Root)).Distinct());
+        var files=found.SelectMany(f=>f.Files).Select(Path.GetFileName).ToArray();
+        return $"S/N {serials} の保護を解除すると、測り直しになるので、前に測った出荷データ（{folders}）を消去します。\r\n\r\n"+
+            (files.Length>0?"消去するファイル（"+files.Length+" 個）\r\n"+string.Join("\r\n",files.Take(12).Select(f=>"・"+f))+(files.Length>12?$"\r\n・ほか {files.Length-12} 個":"")+"\r\n":"")+
+            (found.Any(f=>f.Completed)?"出荷データの「完了」（保護）も解除します。\r\n":"")+
+            "\r\n消去したファイルは Windows のごみ箱に入ります（USB メモリーなど、ごみ箱の無い所では完全に消えます）。\r\n\r\n"+
+            "保護を解除して、出荷データを消去しますか？\r\n「はい」：解除して消去する（測り直したあと、出荷データも測り直してください）\r\n「いいえ」：何も変えない";
+    }
+    // Windows のごみ箱へ入れる(ごみ箱の無いドライブでは完全に消える)。確認の画面は出さない。
+    private static void DeleteToRecycleBin(string file) =>
+        Microsoft.VisualBasic.FileIO.FileSystem.DeleteFile(file,Microsoft.VisualBasic.FileIO.UIOption.OnlyErrorDialogs,Microsoft.VisualBasic.FileIO.RecycleOption.SendToRecycleBin);
     private void EditTransferSettings()
     {
         if(_operationInProgress || _flow.Measuring || _leakRunning || _flow.HasSaved || _flow.SaveFailed)return;
@@ -884,20 +1057,29 @@ internal sealed partial class MainForm : Form
         var draft=_transferSettings.CreateDraft();
         var grid=new PropertyGrid {Dock=DockStyle.Fill,SelectedObject=draft,ToolbarVisible=false,PropertySort=PropertySort.NoSort};
         var ok=new Button{Text="設定保存",Dock=DockStyle.Bottom,Height=40,DialogResult=DialogResult.OK};
-        // 漏れ試験の初期運用の回避(SPEC「漏れ試験の自動判定」5)。軌道に乗ったら外す(人の方針)。
-        var allowLeakOverride=new CheckBox{Text="漏れ判定が不合格でも、人の判断で合格にできる（初期運用）",Dock=DockStyle.Bottom,Height=32,Padding=new Padding(8,0,0,0),Checked=_transferSettings.AllowLeakOverride};
-        dialog.Controls.AddRange([grid,allowLeakOverride,ok]);
-        string previousSaveRoot=_transferSettings.SaveRoot;
+        dialog.Controls.AddRange([grid,ok]);
+        DisplayScale.Apply(dialog);
+        // 「設定保存」のときに値を確かめ、だめなら理由を出して画面を閉じない(直せる)。× で閉じるときは確かめない(何も変えないため)。
+        // 2026-11-14、全体見直し・区切り 5。それまでは何でも保存でき、測定したあとの転送で初めて止まった。
+        dialog.FormClosing+=(_,e)=>{
+            if(dialog.DialogResult!=DialogResult.OK)return;
+            var problems=draft.FindProblems(ExistingExcelTemplates());
+            if(problems.Count==0)return;
+            e.Cancel=true;
+            AppendLog("転送設定：保存しません / "+string.Join(" ",problems));
+            ErrorNotification.Show(dialog,"この設定は保存できません。直してから「設定保存」を押してください（やめるなら × で閉じる）。\n\n・"+string.Join("\n・",problems),"転送設定の確認",MessageBoxButtons.OK,MessageBoxIcon.Warning);
+        };
         if(dialog.ShowDialog(this)!=DialogResult.OK){AppendLog("転送設定：保存せずに閉じました（設定は変えていません）。");return;}
+        // 何も変えずに「設定保存」を押したときは、何もしない(転送済みを取り消さない。2026-11-14、全体見直し・区切り 5。
+        // それまでは値が同じでも「設定が変わった」として転送済みを取り消し、転送のやり直しが要った)。
+        if(_transferSettings.SameEditableValues(draft))
+        {AppendLog("転送設定：変えた項目が無いので、何もしていません（転送済みの結果もそのままです）。");return;}
         RunOperation("転送設定保存",()=>{
             // 設定が変わるので、前の設定で転送した結果では保存させない(転送し直す)。
             _flow.TransferFailed();
             _transferSettings.ApplyEdited(draft);
-            bool overrideChanged=_transferSettings.AllowLeakOverride!=allowLeakOverride.Checked;
-            _transferSettings.AllowLeakOverride=allowLeakOverride.Checked;_transferSettings.Save();
-            return "設定しました。"+(overrideChanged?(allowLeakOverride.Checked?"漏れ判定の不合格を人の判断で合格にできます。":"漏れ判定の不合格では合格にできません。"):"");});
+            _transferSettings.Save();
+            return "設定しました。";});
         UpdateControls();
-        // 転送設定の「保存先フォルダ」を書き換えたときは、「保存先選択」で選んだのと同じ扱いにする(変えていなければ今の保存先のまま)。
-        if(_transferSettings.SaveRoot!=previousSaveRoot && _transferSettings.SaveRoot.Length>0) SelectSaveRoot(_transferSettings.SaveRoot);
     }
 }
