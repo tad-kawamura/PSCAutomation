@@ -27,8 +27,25 @@ internal sealed class As100201SerialLink : IAs100201SerialLink
     public event Action<string>? LineReceived;
     public event Action? Disconnected;
     public bool IsConnected => _connection.IsConnected;
-    public Task VerifyAsync(string request, Func<string, bool> isReply, Action<string>? timingLog = null) =>
-        _connection.VerifyAsync(request, isReply, timingLog);
+
+    public async Task VerifyAsync(string request, Func<string, bool> isReply, Action<string>? timingLog = null)
+    {
+        try
+        {
+            await _connection.VerifyAsync(request, isReply, timingLog).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is not ObjectDisposedException && ex.Message.StartsWith(ArduinoNotFound, StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(ToPanelMessage(ex.Message), ex);
+        }
+    }
+
+    // 共通部品(ArduinoConnection)の見つからないときの文は Arduino 向け。ここはタッチパネルなので言い換える(2026-11-17、人の指摘)。
+    public const string ArduinoNotFound = "Arduino を確認できません。";
+    public const string PanelNotFound = "タッチパネルを COM ポートで確認できません。";
+    public static string ToPanelMessage(string message) =>
+        message.StartsWith(ArduinoNotFound, StringComparison.Ordinal) ? PanelNotFound + message[ArduinoNotFound.Length..] : message;
+
     public Task DisconnectAsync() => _connection.DisconnectAsync();
     public void SendLine(string line) => _connection.SendLine(line);
     public void Dispose() => _connection.Dispose();

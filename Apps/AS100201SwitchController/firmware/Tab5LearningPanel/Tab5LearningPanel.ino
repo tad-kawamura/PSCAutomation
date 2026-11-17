@@ -98,6 +98,7 @@ const unsigned long WIFI_CHIP_BOOT_MS = 500;       // 入れてから Wi-Fi を�
 
 const unsigned long BATTERY_INTERVAL_MS = 30000;   // 電池残量を読んで送る間隔
 const int LOW_BATTERY_LEVEL = 20;                  // これ以下で画面の残量を警告の色にする(PC のログと同じ値)
+const int BATTERY_MIN_PRESENT_MV = 4000;           // これ未満の電圧は電池なし(PC の As100201PanelBattery.MinPresentMillivolts と揃える)
 const unsigned long DIM_AFTER_MS = 60000;          // 触らなければ画面を暗くするまで(AI の仮決め。実物で決める)
 const uint8_t DIM_BRIGHTNESS = 24;                 // 暗いときの明るさ(0〜255。状態は読める程度。実物で決める)
 const unsigned long FRAME_INTERVAL_MS = 250;
@@ -322,7 +323,9 @@ void readBattery() {
   int level = -1, millivolts = 0;
   bool charging = false;
   int raw = M5.Power.getBatteryVoltage();
-  if (M5.Power.getBatteryPresence() != m5::battery_presence_t::absent && raw > 0) {
+  // 電池を付けていない Tab5 は「付いている・約 1100mV・残量 0」と読めた(2026-11-13 実機)。2 セルの電池は空でも
+  // BATTERY_MIN_PRESENT_MV を下回らないので、それ未満は電池なし(-1)にする(2026-11-17)。
+  if (M5.Power.getBatteryPresence() != m5::battery_presence_t::absent && raw >= BATTERY_MIN_PRESENT_MV) {
     millivolts = raw;
     level = M5.Power.getBatteryLevel();
     if (level < 0) level = 0;

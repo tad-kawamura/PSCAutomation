@@ -584,10 +584,19 @@ internal static class LearningChecks
             Check(batteries.Count == 1 && batteries[0] == new As100201PanelBattery(75, 7900, false), "battery line not reported once");
         }
 
+        // USB でパネルが見つからないときの文は「Arduino」でなく「タッチパネル」と出す(共通部品の文を言い換える)
+        Check(As100201SerialLink.ToPanelMessage("Arduino を確認できません。\nCOM8: FileNotFoundException — x") ==
+            "タッチパネルを COM ポートで確認できません。\nCOM8: FileNotFoundException — x" &&
+            As100201SerialLink.ToPanelMessage("other") == "other", "USB not-found message not reworded");
+
         // BATT: の読み取り
         Check(As100201PanelBattery.TryParse("BATT:40:7600:1", out var b) && b.Level == 40 && b.Millivolts == 7600 && b.Charging && b.Present && b.DisplayText == "充電中 40%", "BATT charging");
         Check(As100201PanelBattery.TryParse("BATT:75:7900:0", out b) && b.DisplayText == "電池 75%", "BATT text");
         Check(As100201PanelBattery.TryParse("BATT:-1:0:0", out b) && !b.Present && b.DisplayText == "電池なし", "BATT none");
+        // 電池を付けていない Tab5 は残量 0・約 1100mV を送ってきた(2026-11-13 実機)。古いスケッチでも電池なしと出し、充電の催促もしない
+        Check(As100201PanelBattery.TryParse("BATT:0:1133:0", out b) && !b.Present && b.DisplayText == "電池なし" &&
+            new As100201BatteryWatch().Update(b) is null, "BATT low voltage not treated as no battery");
+        Check(As100201PanelBattery.TryParse("BATT:3:5600:0", out b) && b.Present && b.DisplayText == "電池 3%", "BATT nearly empty treated as no battery");
         foreach (string bad in new[] { "BATT:101:7000:0", "BATT:-2:7000:0", "BATT:50:7000:2", "BATT:50:-1:0", "BATT:50:7000", "BATT:50:7000:0:1", "BATT:x:7000:0", "batt:50:7000:0" })
             Check(!As100201PanelBattery.TryParse(bad, out _), "accepted bad battery line: " + bad);
 
@@ -600,7 +609,7 @@ internal static class LearningChecks
         var charging = new As100201BatteryWatch();
         Check(charging.Update(new(10, 6600, true)) is null && charging.Update(new(-1, 0, false)) is null, "warned while charging / without battery");
         Check(charging.Update(new(10, 6600, false))?.Contains("10%") == true, "charging consumed the warning");
-        Pass("panel paths: USB preferred, inactive path ignored, failover to Wi-Fi on drop (also via protocol reconnect), stays on Wi-Fi until re-verify then back to USB, both-missing reasons; BATT lines; low battery log once at 20% (rearm above 30%, not while charging)");
+        Pass("panel paths: USB preferred, inactive path ignored, failover to Wi-Fi on drop (also via protocol reconnect), stays on Wi-Fi until re-verify then back to USB, both-missing reasons, USB not-found message says panel; BATT lines (below 4000 mV = no battery); low battery log once at 20% (rearm above 30%, not while charging)");
     }
 
     // 9. Wi-Fi の子機のつなぎ直し(2026-11-17 人の決定 B)。2 回続けて失敗したら裏でつなぎ直し、終わったあとの確認で Wi-Fi に移る。30 秒に 1 回まで

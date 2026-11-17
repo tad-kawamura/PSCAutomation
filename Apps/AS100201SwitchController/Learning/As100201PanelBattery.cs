@@ -5,11 +5,15 @@ namespace PSCAutomation.Apps.AS100201SwitchController;
 // タッチパネル(Tab5)の電池残量(SPEC_調整操作の記録.md「Wi-Fi・バッテリーへの変更」、2026-11-13 承認)。
 // パネルは 30 秒ごとと、PC の確認に答えた直後に今の道へ BATT:<残量%>:<電圧mV>:<充電中 0/1> を送る(やり取りの版 2)。
 // 残量は Tab5 の M5Unified(getBatteryLevel)が電池の電圧から出した値。電池が付いていないときは残量 -1。
+// ただし電池を付けていない Tab5 は、実機で残量 0・約 1100mV を送ってきた(2026-11-13、BATT:0:1133:0)。
+// 電池(NP-F550 互換、2 セル 7.4V)なら空でも 5000mV を下回らないので、MinPresentMillivolts 未満は電池なしとみなす
+// (2026-11-17。スケッチ側でも同じ値で -1 にしたが、古いスケッチでも正しく出るようアプリでも見る)。
 internal sealed record As100201PanelBattery(int Level, int Millivolts, bool Charging)
 {
     public const string Prefix = "BATT:";
+    public const int MinPresentMillivolts = 4000;   // スケッチの BATTERY_MIN_PRESENT_MV と揃える
 
-    public bool Present => Level >= 0;
+    public bool Present => Level >= 0 && Millivolts >= MinPresentMillivolts;
 
     public string DisplayText => !Present ? "電池なし" : Charging ? $"充電中 {Level}%" : $"電池 {Level}%";
 
