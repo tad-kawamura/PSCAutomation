@@ -11,6 +11,10 @@ internal static class As100201PanelNetworkSettings
     public const string Host = "192.168.4.1";
     public const int Port = 50201;
 
+    // TCP の接続を諦めるまで(2026-11-17 人の決定 B、共通部品の既定 3 秒から短くした)。Tab5 は同じ部屋の親機で、
+    // 実機の ping は 2ms。子機が古いつながりのときは何秒待ってもつながらないので、早く諦めてつなぎ直しへ進む。
+    public static readonly TimeSpan ConnectTimeout = TimeSpan.FromSeconds(1);
+
     // 子機に保存した Wi-Fi の登録名(Windows が付ける名前で、ふつうはスケッチの WIFI_SSID と同じ)。
     // Wi-Fi で 2 回続けてつながらないとき、この登録を持つ子機だけを切ってつなぎ直す(2026-11-17 人の決定)。
     // 子機はアダプターの名前(「Wi-Fi 2」など、PC ごとに変わる)ではなく、この登録を持っていることで見つける。

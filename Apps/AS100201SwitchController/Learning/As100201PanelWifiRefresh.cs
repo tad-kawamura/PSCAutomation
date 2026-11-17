@@ -19,33 +19,40 @@ internal interface IAs100201WifiAdapterControl
     Task<As100201WifiRefreshResult> ReconnectAsync(string profileName, CancellationToken cancellationToken = default);
 }
 
-// Wi-Fi の道(As100201NetworkLink)を包み、確認が 2 回続けて失敗したら子機のつなぎ直しを裏で始める。
-// つなぎ直しは最大 20 秒ほどかかるので待たない(見張りは Arduino・LOGGER と同じ流れで回るため、止めない)。
-// つなぎ直している間の確認はすぐ失敗にし、終わったあとの次の確認(見張りの再接続、約 2 秒おき)で Wi-Fi に移る。
-// つなぎ直しは MinInterval に 1 回まで(Tab5 の電源が切れているときに繰り返さない)。
+// Wi-Fi の道(As100201NetworkLink)を包み、子機のつなぎ直しを裏で進める。つなぎ直しを始めるのは次の 2 つ。
+// - 確認が 2 回続けて失敗したとき(人の決定「2 回続けて」)
+// - 使っていた USB が切れたとき(RefreshNow。2026-11-17 人の決定 C。アプリが USB を開くと Tab5 が再起動して子機が古いつながりに
+//   なっていることがほぼ確実なので、Wi-Fi の失敗を待たない)
+// つなぎ直しは最大 20 秒ほどかかるので、確認は最大 WaitForRefresh だけ終わりを待ち、終わっていれば続けて TCP につなぐ。
+// 終わっていなければすぐ失敗にする(見張りは Arduino・LOGGER と同じ流れで回るため、長く止めない)。
+// 2 回続けての失敗で始めるつなぎ直しは MinInterval に 1 回まで(Tab5 の電源が切れているときに繰り返さない)。
 internal sealed class As100201WifiRefreshLink : IAs100201SerialLink
 {
     public const int FailuresBeforeRefresh = 2;               // 人の決定「2 回続けてつながらないとき」
     public static readonly TimeSpan MinInterval = TimeSpan.FromSeconds(30);
+    public static readonly TimeSpan DefaultWaitForRefresh = TimeSpan.FromSeconds(3);
 
     private readonly IAs100201SerialLink _inner;
     private readonly IAs100201WifiAdapterControl _adapter;
     private readonly string _profileName;
     private readonly Func<long> _nowMs;
+    private readonly TimeSpan _waitForRefresh;
+    private readonly object _gate = new();
     private int _failures;
     private long? _lastRefreshAt;
     private Task? _refresh;
 
     // 裏で進めているつなぎ直し(テストで終わりを待つため)。無ければ完了済みの Task。
-    internal Task RefreshTask => _refresh ?? Task.CompletedTask;
+    internal Task RefreshTask { get { lock (_gate) return _refresh ?? Task.CompletedTask; } }
 
     public As100201WifiRefreshLink(IAs100201SerialLink inner, IAs100201WifiAdapterControl adapter, string profileName,
-        Func<long>? nowMs = null)
+        Func<long>? nowMs = null, TimeSpan? waitForRefresh = null)
     {
         _inner = inner;
         _adapter = adapter;
         _profileName = profileName;
         _nowMs = nowMs ?? (() => Environment.TickCount64);
+        _waitForRefresh = waitForRefresh ?? DefaultWaitForRefresh;
         _inner.LineReceived += line => LineReceived?.Invoke(line);
         _inner.Disconnected += () => Disconnected?.Invoke();
     }
@@ -57,26 +64,46 @@ internal sealed class As100201WifiRefreshLink : IAs100201SerialLink
 
     public bool IsConnected => _inner.IsConnected;
 
+    // 使っていた USB が切れたとき(As100201PanelPathLink.PathLost)に呼ぶ。つなぎ直しを裏で始める(進めている最中なら何もしない)。
+    public void RefreshNow(string reason)
+    {
+        lock (_gate)
+        {
+            if (_refresh is { IsCompleted: false }) return;
+            _failures = 0;
+            _lastRefreshAt = _nowMs();
+            _refresh = RefreshAsync(reason);
+        }
+    }
+
     // 見張り(As100201PanelProtocol)が順に呼ぶので、同時には呼ばれない。
     public async Task VerifyAsync(string request, Func<string, bool> isReply, Action<string>? timingLog = null)
     {
-        if (_refresh is { IsCompleted: false })
-            throw new InvalidOperationException($"Wi-Fi の子機を {_profileName} につなぎ直しています。");
-        _refresh = null;
+        Task? running;
+        lock (_gate) running = _refresh is { IsCompleted: false } ? _refresh : null;
+        if (running is not null)
+        {
+            await Task.WhenAny(running, Task.Delay(_waitForRefresh)).ConfigureAwait(false);
+            if (!running.IsCompleted)
+                throw new InvalidOperationException($"Wi-Fi の子機を {_profileName} につなぎ直しています。");
+        }
         try
         {
             await _inner.VerifyAsync(request, isReply, timingLog).ConfigureAwait(false);
-            _failures = 0;
+            lock (_gate) _failures = 0;
         }
         catch (Exception ex) when (ex is not ObjectDisposedException)
         {
-            _failures++;
-            long now = _nowMs();
-            if (_failures < FailuresBeforeRefresh ||
-                (_lastRefreshAt is long last && now - last < (long)MinInterval.TotalMilliseconds)) throw;
-            _failures = 0;
-            _lastRefreshAt = now;
-            _refresh = RefreshAsync();
+            lock (_gate)
+            {
+                _failures++;
+                long now = _nowMs();
+                if (_failures < FailuresBeforeRefresh || _refresh is { IsCompleted: false } ||
+                    (_lastRefreshAt is long last && now - last < (long)MinInterval.TotalMilliseconds)) throw;
+                _failures = 0;
+                _lastRefreshAt = now;
+                _refresh = RefreshAsync($"Wi-Fi で {FailuresBeforeRefresh} 回続けてタッチパネルにつながらないため");
+            }
             throw new InvalidOperationException($"{ex.Message}（{FailuresBeforeRefresh} 回続けてつながらないため、子機を {_profileName} につなぎ直します）", ex);
         }
     }
@@ -85,13 +112,16 @@ internal sealed class As100201WifiRefreshLink : IAs100201SerialLink
     public void SendLine(string line) => _inner.SendLine(line);
     public void Dispose() => _inner.Dispose();
 
-    private async Task RefreshAsync()
+    private async Task RefreshAsync(string reason)
     {
+        await Task.Yield();   // 呼んだ側(切断の通知・見張り)をつなぎ直しで止めない
+        long started = _nowMs();
         As100201WifiRefreshResult result;
         try { result = await _adapter.ReconnectAsync(_profileName).ConfigureAwait(false); }
         catch (Exception ex) { result = new As100201WifiRefreshResult(false, ex.Message); }
+        double seconds = (_nowMs() - started) / 1000.0;
         Report(result.Ok
-            ? $"Wi-Fi で {FailuresBeforeRefresh} 回続けてタッチパネルにつながらないため、子機（{result.Message}）を {_profileName} につなぎ直しました。"
+            ? $"{reason}、子機（{result.Message}）を {_profileName} につなぎ直しました（{seconds:F1} 秒）。"
             : $"Wi-Fi の子機を {_profileName} につなぎ直せませんでした：{result.Message}");
     }
 
@@ -111,17 +141,44 @@ internal sealed class As100201WlanAdapterControl : IAs100201WifiAdapterControl
     // Windows がすぐ諦め、自動接続の次の機会(実機で約 30 秒後)まで切れたままになったため、数秒おきに頼み直す(2026-11-17 実機)。
     private static readonly TimeSpan ConnectTimeout = TimeSpan.FromSeconds(20);
     private static readonly TimeSpan RetryInterval = TimeSpan.FromSeconds(4);
-    private static readonly TimeSpan AddressWait = TimeSpan.FromSeconds(1.5);   // つながってから IP が配られるまでの余裕
+    // つながってから IP が配られて Tab5 に届くまで。固定で待たず、Tab5 に ping が通ったらすぐ戻る(2026-11-17 人の決定 D)。
+    // 通らないまま過ぎても「つながった」として戻す(TCP の確認で分かる)。
+    private static readonly TimeSpan AddressWait = TimeSpan.FromSeconds(3);
+    private static readonly TimeSpan PollInterval = TimeSpan.FromMilliseconds(100);
+    private static readonly TimeSpan DisconnectWait = TimeSpan.FromSeconds(1);
+
+    private readonly string? _probeHost;
+
+    // probeHost: つながったあと ping で届くのを確かめる相手(Tab5 の親機の IP)。null なら確かめずに戻る。
+    public As100201WlanAdapterControl(string? probeHost = null) => _probeHost = probeHost;
 
     public Task<As100201WifiRefreshResult> ReconnectAsync(string profileName, CancellationToken cancellationToken = default) =>
         Task.Run(() =>
         {
             // 例外は理由に変えて返す(呼ぶ側はつながらなかったことを人に見せるだけ)。
-            try { return ReconnectCore(profileName, cancellationToken); }
+            try { return ReconnectCore(profileName, _probeHost, cancellationToken); }
             catch (Exception ex) when (ex is not OperationCanceledException) { return new As100201WifiRefreshResult(false, ex.Message); }
         }, cancellationToken);
 
-    private static As100201WifiRefreshResult ReconnectCore(string profileName, CancellationToken cancellationToken)
+    // 子機がつながったあと、Tab5 に ping が通るまで待つ(最大 AddressWait)。
+    private static void WaitUntilReachable(string? host, CancellationToken cancellationToken)
+    {
+        if (host is null) return;
+        using var ping = new System.Net.NetworkInformation.Ping();
+        var deadline = DateTime.UtcNow + AddressWait;
+        while (DateTime.UtcNow < deadline)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            try
+            {
+                if (ping.Send(host, 300).Status == System.Net.NetworkInformation.IPStatus.Success) return;
+            }
+            catch (System.Net.NetworkInformation.PingException) { }
+            Thread.Sleep(PollInterval);
+        }
+    }
+
+    private static As100201WifiRefreshResult ReconnectCore(string profileName, string? probeHost, CancellationToken cancellationToken)
     {
         uint error = WlanOpenHandle(2, IntPtr.Zero, out _, out IntPtr handle);
         if (error != 0) return Failed("Wi-Fi の仕組みを開けません", error);
@@ -136,9 +193,10 @@ internal sealed class As100201WlanAdapterControl : IAs100201WifiAdapterControl
                     "内蔵の Wi-Fi まで切らないよう、つなぎ直しません。子機以外の登録を消してください。");
             var (guid, description) = matches[0];
 
-            // 切断の結果は問わない(もともと切れていることもある)。
+            // 切断の結果は問わない(もともと切れていることもある)。切れたのを見てから(最大 DisconnectWait)接続を頼む。
             WlanDisconnect(handle, ref guid, IntPtr.Zero);
-            Thread.Sleep(500);
+            var disconnectDeadline = DateTime.UtcNow + DisconnectWait;
+            while (DateTime.UtcNow < disconnectDeadline && QueryState(handle, guid) == 1) Thread.Sleep(PollInterval);
             var parameters = new WlanConnectionParameters
             {
                 ConnectionMode = 0,        // wlan_connection_mode_profile
@@ -159,10 +217,10 @@ internal sealed class As100201WlanAdapterControl : IAs100201WifiAdapterControl
                     lastError = WlanConnect(handle, ref guid, ref parameters, IntPtr.Zero);
                     nextRequest = DateTime.UtcNow + RetryInterval;
                 }
-                Thread.Sleep(250);
+                Thread.Sleep(PollInterval);
                 if (QueryState(handle, guid) == 1)   // wlan_interface_state_connected
                 {
-                    Thread.Sleep(AddressWait);
+                    WaitUntilReachable(probeHost, cancellationToken);
                     return new(true, description);
                 }
             }

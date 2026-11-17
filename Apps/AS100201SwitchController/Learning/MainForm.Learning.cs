@@ -168,6 +168,13 @@ internal sealed partial class MainForm : Form
     // Wi-Fi の子機をつなぎ直した・つなぎ直せなかった(2026-11-17)。
     private void PanelWifiNotice(string message) => PostToUi(() => AppendLog(message));
 
+    // 使っていた USB が切れたら、Wi-Fi の失敗を待たずに子機をつなぎ直す(2026-11-17 人の決定 C)。
+    // アプリが USB を開くと Tab5 が再起動し、子機は古いつながりのまま残っていることがほぼ確実なため。
+    private void PanelPathLost(As100201PanelPath path)
+    {
+        if (path == As100201PanelPath.Usb) _panelWifi?.RefreshNow("使っていた USB が切れたため");
+    }
+
     private void PanelPathChanged(As100201PanelPath path)
     {
         PostToUi(() =>
@@ -395,7 +402,11 @@ internal sealed partial class MainForm : Form
         _panel.StatusChanged -= PanelStatusChanged;
         _panel.BatteryReported -= PanelBatteryReported;
         _panel.SelectionChanged -= PanelSelectionChanged;
-        if (_panelPaths is not null) _panelPaths.PathChanged -= PanelPathChanged;
+        if (_panelPaths is not null)
+        {
+            _panelPaths.PathChanged -= PanelPathChanged;
+            _panelPaths.PathLost -= PanelPathLost;
+        }
         if (_panelWifi is not null) _panelWifi.Notice -= PanelWifiNotice;
         _panel.Dispose();
     }

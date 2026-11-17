@@ -16,6 +16,7 @@ internal sealed class As100201PanelPathLink : IAs100201SerialLink
     private readonly IAs100201SerialLink _wifi;
     private readonly object _gate = new();
     private As100201PanelPath _active, _lastConnected;
+    private bool _lossReported;   // _lastConnected が切れたことを PathLost で知らせ済み
     private volatile bool _disposed;
 
     public As100201PanelPathLink(IAs100201SerialLink usb, IAs100201SerialLink wifi)
@@ -32,6 +33,10 @@ internal sealed class As100201PanelPathLink : IAs100201SerialLink
     public event Action? Disconnected;
     // 確認が通った道が、前回つながっていた道と違うとき(最初につながったときも)に知らせる。
     public event Action<As100201PanelPath>? PathChanged;
+    // 使っていた道が切れたとき、その道を 1 回だけ知らせる(2026-11-17、USB が切れたら子機をつなぎ直すため)。
+    // 切断の知らせ(Disconnected の直前)のほか、最後につながっていた道の確認が失敗したときにも知らせる
+    // (見張りが先にポートを閉じて切断の知らせが届かず、つなぎ直しが遅れたことが実機であったため)。
+    public event Action<As100201PanelPath>? PathLost;
 
     public As100201PanelPath ActivePath { get { lock (_gate) return _active; } }
     public bool IsConnected => Link(ActivePath)?.IsConnected == true;
@@ -61,6 +66,7 @@ internal sealed class As100201PanelPathLink : IAs100201SerialLink
             {
                 lock (_gate) if (_active == path) _active = As100201PanelPath.None;
                 failures.Add($"{PathName(path)}：{ex.Message}");
+                ReportLost(path);
                 continue;
             }
             var other = Link(Other(path))!;
@@ -70,6 +76,7 @@ internal sealed class As100201PanelPathLink : IAs100201SerialLink
             {
                 changed = _lastConnected != path;
                 _lastConnected = path;
+                _lossReported = false;
             }
             if (changed) PathChanged?.Invoke(path);
             return;
@@ -115,7 +122,19 @@ internal sealed class As100201PanelPathLink : IAs100201SerialLink
             if (_disposed || _active != path) return;
             _active = As100201PanelPath.None;
         }
+        ReportLost(path);
         Disconnected?.Invoke();
+    }
+
+    // 最後につながっていた道 path が切れたことを、まだなら 1 回だけ知らせる。
+    private void ReportLost(As100201PanelPath path)
+    {
+        lock (_gate)
+        {
+            if (_disposed || _lossReported || _lastConnected != path) return;
+            _lossReported = true;
+        }
+        PathLost?.Invoke(path);
     }
 
     public void Dispose()

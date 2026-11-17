@@ -625,7 +625,7 @@ internal static class LearningChecks
         var adapter = new FakeWifiAdapter();
         long now = 0;
         var notices = new List<string>();
-        using var link = new As100201WifiRefreshLink(wifi, adapter, "AS100201_PANEL", () => now);
+        using var link = new As100201WifiRefreshLink(wifi, adapter, "AS100201_PANEL", () => now, TimeSpan.FromMilliseconds(50));
         link.Notice += notices.Add;
 
         // 1 回目の失敗ではつなぎ直さない
@@ -634,8 +634,8 @@ internal static class LearningChecks
         adapter.OnReconnect = () => wifi.Fail = false;
         now = 5000;
         string? second = await Failure(() => link.VerifyAsync(ping, IsHello));
-        Check(second?.Contains("つなぎ直します") == true && adapter.Calls == 1 && adapter.Profiles.SequenceEqual(new[] { "AS100201_PANEL" }), "refresh not started on second failure: " + second);
         await link.RefreshTask;
+        Check(second?.Contains("つなぎ直します") == true && adapter.Calls == 1 && adapter.Profiles.SequenceEqual(new[] { "AS100201_PANEL" }), "refresh not started on second failure: " + second);
         Check(notices.Count == 1 && notices[0].Contains("つなぎ直しました") && notices[0].Contains("FAKE-ADAPTER"), "refresh not reported");
         // 終わったあとの確認で通る
         Check(await Failure(() => link.VerifyAsync(ping, IsHello)) is null && wifi.Requests.Count == 3 && link.IsConnected, "not connected after refresh");
@@ -660,8 +660,8 @@ internal static class LearningChecks
         // 30 秒を過ぎたらまたつなぎ直す
         now = 95001;
         await Failure(() => link.VerifyAsync(ping, IsHello));
-        Check(adapter.Calls == 3, "no refresh after 30 s");
         await link.RefreshTask;
+        Check(adapter.Calls == 3, "no refresh after 30 s");
         // つなぎ直せなかったら、その理由を出す(例外にしない)
         adapter.Error = "子機が見つかりません";
         now = 200000;
@@ -678,6 +678,73 @@ internal static class LearningChecks
         wifi.Drop();
         Check(lines.SequenceEqual(new[] { "DIAG_FRAME:1:250" }) && dropped == 1, "lines / drop not forwarded");
 
+        // 使っていた USB が切れたとき(RefreshNow、人の決定 C): Wi-Fi の失敗を待たずにすぐつなぎ直す。
+        // 確認はつなぎ直しの終わりを待ち(最大 waitForRefresh)、終われば同じ確認の中で TCP につなぐ
+        var wifi3 = new FakePanelLink { Fail = true };
+        var adapter3 = new FakeWifiAdapter { Hold = new TaskCompletionSource(), OnReconnect = () => wifi3.Fail = false };
+        var notices3 = new List<string>();
+        using (var link3 = new As100201WifiRefreshLink(wifi3, adapter3, "AS100201_PANEL", () => 0, TimeSpan.FromSeconds(5)))
+        {
+            link3.Notice += notices3.Add;
+            link3.RefreshNow("使っていた USB が切れたため");
+            link3.RefreshNow("使っていた USB が切れたため");   // 進めている最中は増やさない
+            var verify = link3.VerifyAsync(ping, IsHello);
+            await Task.Delay(50);
+            Check(!verify.IsCompleted && wifi3.Requests.Count == 0 && adapter3.Calls == 1, "verify did not wait for refresh");
+            adapter3.Hold.SetResult();
+            Check(await Failure(() => verify) is null && adapter3.Calls == 1 && wifi3.Requests.Count == 1 &&
+                notices3.Count == 1 && notices3[0].StartsWith("使っていた USB が切れたため"), "verify not connected right after refresh");
+        }
+
+        // 道が切れたことの知らせ(PathLost): 使っていた道が切れたときだけ。アプリが閉じたとき・使っていない道では知らせない
+        var usb4 = new FakePanelLink();
+        var wifi4 = new FakePanelLink();
+        var lost = new List<As100201PanelPath>();
+        using (var paths4 = new As100201PanelPathLink(usb4, wifi4))
+        {
+            paths4.PathLost += lost.Add;
+            await paths4.VerifyAsync(ping, IsHello);
+            await paths4.DisconnectAsync();
+            await paths4.VerifyAsync(ping, IsHello);
+            wifi4.Drop();
+            usb4.Drop();
+            Check(lost.SequenceEqual(new[] { As100201PanelPath.Usb }), "PathLost not only for the active path");
+            // 見張りが先に閉じて切断の知らせが届かなかったとき(実機であった): USB の確認が失敗した時点で 1 回だけ知らせる
+            await paths4.VerifyAsync(ping, IsHello);
+            await paths4.DisconnectAsync();
+            usb4.Fail = true;
+            await paths4.VerifyAsync(ping, IsHello);   // Wi-Fi でつながる
+            usb4.Fail = false;
+            await paths4.VerifyAsync(ping, IsHello);   // USB に戻る
+            await paths4.DisconnectAsync();
+            usb4.Fail = wifi4.Fail = true;
+            try { await paths4.VerifyAsync(ping, IsHello); } catch (InvalidOperationException) { }
+            try { await paths4.VerifyAsync(ping, IsHello); } catch (InvalidOperationException) { }
+            Check(lost.SequenceEqual(new[] { As100201PanelPath.Usb, As100201PanelPath.Usb, As100201PanelPath.Usb }),
+                "PathLost not reported once on failed verify of the last path: " + string.Join(",", lost));
+        }
+
+        // 挿さっている USB 機器を Windows に聞ける(機器は開かない)。無い ID は false
+        Check(As100201UsbDevices.IsPresent(@"USB\VID_FFFF&PID_FFFE&NOSUCH") == false, "USB device query failed");
+
+        // 見張りと組み合わせ(人の決定 C): USB で使っていて Wi-Fi が古いつながりのとき、USB が切れたら 1 回の再接続で Wi-Fi に移る
+        var usb5 = new FakePanelLink();
+        var wifi5 = new FakePanelLink { Fail = true };
+        var adapter5 = new FakeWifiAdapter { OnReconnect = () => wifi5.Fail = false };
+        var refresh5 = new As100201WifiRefreshLink(wifi5, adapter5, "AS100201_PANEL", () => 0);
+        var paths5 = new As100201PanelPathLink(usb5, refresh5);
+        paths5.PathLost += path => { if (path == As100201PanelPath.Usb) refresh5.RefreshNow("使っていた USB が切れたため"); };
+        using (var panel5 = new As100201PanelProtocol(paths5))
+        {
+            await panel5.VerifyAsync();
+            Check(paths5.ActivePath == As100201PanelPath.Usb && adapter5.Calls == 0, "refreshed while on USB");
+            usb5.Fail = true;
+            usb5.Drop();
+            await panel5.MaintainAsync();
+            Check(adapter5.Calls == 1 && paths5.ActivePath == As100201PanelPath.Wifi && panel5.IsConnected && wifi5.Requests.Count == 1,
+                "USB drop did not move to Wi-Fi in one reconnect");
+        }
+
         // 見張り(As100201PanelProtocol)と組み合わせ: USB が無く Wi-Fi が古いつながりのとき、2 回目でつなぎ直し、次の確認で Wi-Fi に移る
         var usb2 = new FakePanelLink { Fail = true };
         var wifi2 = new FakePanelLink { Fail = true };
@@ -687,12 +754,13 @@ internal static class LearningChecks
         using (var panel = new As100201PanelProtocol(paths2))
         {
             Check(await Failure(() => panel.VerifyAsync()) is not null && adapter2.Calls == 0, "protocol refreshed on first failure");
-            Check(await Failure(() => panel.VerifyAsync()) is not null && adapter2.Calls == 1, "protocol did not start refresh");
+            Check(await Failure(() => panel.VerifyAsync()) is not null, "protocol second verify passed");
             await refresh2.RefreshTask;
+            Check(adapter2.Calls == 1, "protocol did not start refresh");
             await panel.VerifyAsync();
             Check(paths2.ActivePath == As100201PanelPath.Wifi && panel.IsConnected, "protocol not on Wi-Fi after refresh");
         }
-        Pass("Wi-Fi refresh: not on first failure, background refresh on second (verify short-circuited meanwhile), connects on next verify, count reset by success, at most once per 30 s, failure reason reported without exception, lines/drop forwarded, works through path link and protocol");
+        Pass("Wi-Fi refresh: not on first failure, background refresh on second (verify waits briefly, then short-circuits), connects on next verify, count reset by success, at most once per 30 s, failure reason reported without exception, lines/drop forwarded; on USB drop refresh at once and connect in the same verify; PathLost only for the active path; works through path link and protocol");
     }
 
     private sealed class FakeWifiAdapter : IAs100201WifiAdapterControl
