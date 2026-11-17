@@ -90,8 +90,8 @@
 
 説明書 TY-GC15-004 Ver.2(2021 年版)の「10. 外部インターフェース」で作った。最初に使うのは AS110AllCheck の校正の自動読み取り(`Apps/AS110AllCheck/README.md`「校正の自動読み取り」)。
 
-- 探す(`Gc16Session.Find(new Gc16SearchOptions { PreferredPort, ExcludedPorts })`): PC の COM ポートを、先に試す番号(前回見つけた番号など)→ 残りを番号順で開き、状態を変えない問い合わせ `RM,Q` に `RM,0` / `RM,1` が返ったポートを GC16 とする。除くポート(マイコンなど)には何も送らない。1 ポートの問い合わせは既定 1 秒で諦める。見つからなければ試したポートと理由を付けて `InvalidOperationException`。変換ケーブルの種類・識別番号には頼らない。見分ける問い合わせと返事の判定は `ProbeCommand` / `IsProbeReply` で差し替えられる(実機で `RM,Q` が通らなかったとき用)
-- 操作: `EnterRemote`(`RM,1`。通信で操作する状態。電源キー以外の前面キーが効かなくなる)、`ExitRemote`(`RM,0`)、`QueryRemoteState`(`RM,Q`)、`ReadPressure`(`MP`。表示の単位のまま)、`ReadUnit`(`PU,Q`)、`ReadPressureKilopascals`(単位を 1 回問い合わせて Pa・kPa・MPa を kPa に換算)、`ZeroAdjust`(`ZA`)、任意のコマンド `Query`
+- 探す(`Gc16Session.Find(new Gc16SearchOptions { PreferredPort, ExcludedPorts })`): PC の COM ポートを、先に試す番号(前回見つけた番号など)→ 残りを番号順で開き、状態を変えない問い合わせ `RM,Q` に `RM,0` / `RM,1` / `ER0`〜`ER3` が返ったポートを GC16 とする(`Gc16Session.IsGc16Reply`。実機のキー入力状態では `ER2` が返るため。2026-11-17 に直した)。除くポート(マイコンなど)には何も送らない。1 ポートの問い合わせは既定 1 秒で諦める。見つからなければ試したポートと理由を付けて `InvalidOperationException`。変換ケーブルの種類・識別番号には頼らない。見分ける問い合わせと返事の判定は `ProbeCommand` / `IsProbeReply` で差し替えられる(実機で `RM,Q` が通らなかったとき用)
+- 操作: `EnterRemote`(`RM,1`。通信で操作する状態。電源キー以外の前面キーが効かなくなる)、`ExitRemote`(`RM,0`。すでにキー入力状態で `ER2` が返っても戻った扱い)、`QueryRemoteState`(`RM,Q`。`ER2` はキー入力状態として false)、`ReadPressure`(`MP`。表示の単位のまま)、`ReadUnit`(`PU,Q`)、`ReadPressureKilopascals`(単位を 1 回問い合わせて Pa・kPa・MPa を kPa に換算)、`ZeroAdjust`(`ZA`)、任意のコマンド `Query`
 - `ER0`〜`ER3` の返事は意味を付けて `Gc16Exception`(`IOException` の仲間)。返事が来なければ `TimeoutException`(既定 3 秒)
 - `Dispose` は、この接続で `RM,1` にしていれば `RM,0` を試してから閉じる(前面キーが効かないまま残さない)
 
@@ -99,8 +99,8 @@
 - 9600 bps・8 ビット・パリティなし・ストップ 1・RTS/CTS(既定。速度は `BaudRate` で変えられる)。本体の設定 S-1 を `rS` にしておく(出荷時は `non`)。コマンドの終わりは CR だけ。返事を受け取ってから次を送る
 - 単位がスケーリング(U1・U2)と絶対圧(kPa abs・MPa abs)のときは kPa に換算しない(例外)
 - 実機での通信は 2026-11-17 に確認(社内の 2005 年製の本体、FTDI 変換ケーブル。詳しくは `Apps/AS110AllCheck/README.md`「通信の実機確認」)。返事の終わりは CR だけ。`RM,1` の後は `RM,Q`・`PU,Q`・`MP`・`RM,0` が説明書どおりに返る
-- **キー入力状態では `RM,1` 以外のコマンドに `ER2` が返る**(説明書と違う)。そのため既定の探し方(`RM,Q` に `RM,0` / `RM,1`)では、電源を入れたばかりの GC16 は見つからない。今は使う側が `IsProbeReply` で `ER2` も受けるよう指定する必要がある
-- ほかのプログラムが同じ COM ポートへ何か送った後は、最初のコマンドに `ER0` が返ることがある(GC16 の受け側に文字が残る。CR を 1 回送ると戻る)
+- **キー入力状態では `RM,1` 以外のコマンドに `ER2` が返る**(説明書と違う)。`MP`・`PU,Q`・`ZA` などは `EnterRemote` の後でないと `Gc16Exception`(`ER2`)になる。探し方・`QueryRemoteState`・`ExitRemote` はこれに合わせてある(2026-11-17。直した後の既定の設定で実機の GC16 を見つけ、圧力を読んで戻せることを確認)
+- ほかのプログラムが同じ COM ポートへ何か送った後は、最初のコマンドに `ER0` が返ることがある(GC16 の受け側に文字が残る。次のコマンドからは戻る)。探すときの問い合わせがこれを受けるので、探した後の操作には響かない
 - 未確認: `ZA` の範囲外で `ER3` を返すか、CTS が来ないとき送信の期限で止まるか、圧力をかけたときの値。テスト(`Instruments.Tests`)は通信を模擬に差し替えた範囲だけ
 - 使っているアプリ: AS110AllCheck(校正の自動読み取り)
 

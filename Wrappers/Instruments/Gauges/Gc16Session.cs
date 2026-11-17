@@ -5,20 +5,25 @@ using System.Text.RegularExpressions;
 namespace PSCAutomation.Wrappers.Instruments;
 
 // GC16 精密デジタル圧力計を RS-232C で操作する(2026-11-13 追加。最初に使うのは AS110AllCheck の校正の自動読み取り)。
-// 説明書 TY-GC15-004 Ver.2(2021 年版)の「10. 外部インターフェース」による。社内の本体は 2005 年製で、説明書のコマンド・返事の形で動くかは実機で未確認。
+// 説明書 TY-GC15-004 Ver.2(2021 年版)の「10. 外部インターフェース」による。社内の本体(2005 年製)で通信を 2026-11-17 に実機確認した。
+// 実機では説明書と違い、キー入力状態のとき RM,1 以外のコマンドに ER2(モードの相違)が返る(RM,Q・RM,0 も)。
+// ほかのプログラムが同じポートへ送った文字が本体に残っていると、最初のコマンドに ER0 が返ることもある。
 //
 // - 通信: 既定 9600 bps・8 ビット・パリティなし・ストップ 1・ハードウェアハンドシェイク(RTS/CTS)。本体の設定 S-1 を「rS」にしておく(出荷時は「non」)
 // - コマンドは「ヘッダー,パラメータ」+ CR(0DH)だけ。CR+LF にしない。返事を受け取ってから次を送る。返事の終わりは CR とし、続く LF・空行は読み捨てる
 // - 前面キーで操作する状態(キー入力状態)と、通信で操作する状態(コマンド入力状態。REMOTE が点灯し、電源キー以外の前面キーが効かない)がある。
 //   圧力の読み取り(MP)・ゼロ調整(ZA)などは EnterRemote(RM,1)の後で使う。ExitRemote(RM,0)か電源の入れ直しで戻る
 // - Dispose は、この接続で RM,1 にしていれば RM,0 を試してから閉じる(前面キーが効かないまま残さないため)
-// - COM ポートは、状態を変えない問い合わせ(既定 RM,Q)への返事で見分ける(Find)。変換ケーブルの種類・識別番号には頼らない
+// - COM ポートは、状態を変えない問い合わせ(既定 RM,Q)への返事で見分ける(Find)。変換ケーブルの種類・識別番号には頼らない。
+//   返事は RM,0 / RM,1 のほか、ER0〜ER3 も GC16 のものとして受ける(キー入力状態の ER2・残った文字による ER0。2026-11-17、実機の結果で直した)
 // - 値(先に試す COM・除く COM・待ち時間)はアプリが渡す。この箱は製品の既定値を持たない
 public sealed class Gc16Session : IDisposable
 {
     public const int DefaultBaudRate = 9600;
     public const string DefaultProbeCommand = "RM,Q";
     private static readonly Regex ErrorReply = new(@"^ER\d$", RegexOptions.CultureInvariant);
+    // 説明書にあるエラーの返事(ER0〜ER3)。見分けにはこれだけを使う。
+    private static readonly Regex KnownErrorReply = new(@"^ER[0-3]$", RegexOptions.CultureInvariant);
     private static readonly Regex RemoteStateReply = new(@"^RM,[01]$", RegexOptions.CultureInvariant);
 
     private ISerialLineChannel? _channel;
@@ -38,6 +43,14 @@ public sealed class Gc16Session : IDisposable
 
     // 既定の問い合わせ(RM,Q)への正しい返事か(RM,0 か RM,1)。
     public static bool IsRemoteStateReply(string reply) => RemoteStateReply.IsMatch(reply.Trim());
+
+    // GC16 の返事の形か(RM,0 / RM,1 / ER0〜ER3)。Find が既定で使う(2026-11-17 追加)。
+    // 実機ではキー入力状態の RM,Q に ER2 が返り、ほかのプログラムの送った文字が残っていると ER0 が返るため、エラーの返事も GC16 の印とする。
+    public static bool IsGc16Reply(string reply)
+    {
+        string text = reply.Trim();
+        return RemoteStateReply.IsMatch(text) || KnownErrorReply.IsMatch(text);
+    }
 
     // 試す順の COM ポート: 先に試す番号(あれば)→ 残りを番号順(COM2 は COM10 より前)。除くポートは入れない。大文字小文字は区別しない。
     public static IReadOnlyList<string> OrderCandidates(IEnumerable<string> portNames, Gc16SearchOptions options)
@@ -82,7 +95,7 @@ public sealed class Gc16Session : IDisposable
             {
                 channel = open(name, options.ProbeTimeoutMilliseconds);
                 string reply = Exchange(channel, options.ProbeCommand, options.ProbeTimeoutMilliseconds);
-                if ((options.IsProbeReply ?? IsRemoteStateReply)(reply))
+                if ((options.IsProbeReply ?? IsGc16Reply)(reply))
                 {
                     var session = new Gc16Session(channel, options.CommandTimeoutMilliseconds);
                     channel = null;
@@ -116,9 +129,12 @@ public sealed class Gc16Session : IDisposable
     }
 
     // 今の入力状態を問い合わせる(RM,Q)。true = コマンド入力状態(REMOTE)。状態は変えない。
+    // キー入力状態の本体は RM,Q に ER2 を返す(実機)ので、ER2 は false(キー入力状態)とする。
     public bool QueryRemoteState()
     {
-        string reply = Query("RM,Q");
+        string reply;
+        try { reply = Query("RM,Q"); }
+        catch (Gc16Exception ex) when (ex.Reply == "ER2") { return false; }
         if (!IsRemoteStateReply(reply)) throw new Gc16Exception($"GC16 の入力状態の返事を読めません({Describe(reply)})。", reply);
         return reply.EndsWith('1');
     }
@@ -130,10 +146,11 @@ public sealed class Gc16Session : IDisposable
         IsRemote = true;
     }
 
-    // キー入力状態に戻す(RM,0)。
+    // キー入力状態に戻す(RM,0)。すでにキー入力状態なら本体は ER2 を返す(実機)ので、それも戻った扱いにする。
     public void ExitRemote()
     {
-        ExpectOk("RM,0");
+        try { ExpectOk("RM,0"); }
+        catch (Gc16Exception ex) when (ex.Reply == "ER2") { }
         IsRemote = false;
     }
 
@@ -264,7 +281,7 @@ public sealed class Gc16SearchOptions
     public int BaudRate { get; init; } = Gc16Session.DefaultBaudRate;
     // 見分けるための問い合わせ。状態を変えないものにする(既定 RM,Q)。
     public string ProbeCommand { get; init; } = Gc16Session.DefaultProbeCommand;
-    // 問い合わせの返事が GC16 のものか(既定は RM,0 / RM,1)。
+    // 問い合わせの返事が GC16 のものか(既定は Gc16Session.IsGc16Reply: RM,0 / RM,1 / ER0〜ER3)。
     public Func<string, bool>? IsProbeReply { get; init; }
 
     internal void Validate()

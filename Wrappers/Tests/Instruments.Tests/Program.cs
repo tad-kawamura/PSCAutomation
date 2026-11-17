@@ -415,7 +415,7 @@ void Same(IEnumerable<string> actual, string[] expected, string name)
 
     // 見つからないとき: 試したポートと理由を付ける。M5Stack など除くポートしか無いときも
     var none = Fails<InvalidOperationException>(() => Gc16Session.Find(new Gc16SearchOptions { ProbeTimeoutMilliseconds = 10 },
-        new[] { "COM2", "COM4" }, (name, _) => name == "COM2" ? new FakeLineChannel("COM2", _ => null) : new FakeLineChannel("COM4", _ => "ER2")), "見つからない");
+        new[] { "COM2", "COM4" }, (name, _) => name == "COM2" ? new FakeLineChannel("COM2", _ => null) : new FakeLineChannel("COM4", _ => "ER")), "見つからない");
     Check(none.Message.Contains("COM2:") && none.Message.Contains("COM4:"), "見つからない理由にポートを付ける: " + none.Message);
     var onlyExcluded = Fails<InvalidOperationException>(() => Gc16Session.Find(new Gc16SearchOptions { ExcludedPorts = new[] { "COM4" } },
         new[] { "COM4" }, (_, _) => throw new Exception("除いたポートを開いた")), "除くポートしか無い");
@@ -425,7 +425,38 @@ void Same(IEnumerable<string> actual, string[] expected, string name)
         new[] { "COM1" }, (_, _) => new FakeLineChannel("COM1", c => c == "MO,Q" ? "MO,1" : null));
     Check(custom.PortName == "COM1", "見分ける問い合わせの差し替え");
     custom.Dispose();
-    Console.WriteLine("PASS Gc16Session: 探す順・除くポート・見分け方・RM,1/RM,0・単位の換算・ゼロ調整・エラーの返事");
+
+    // 実機(2026-11-17)の返事: キー入力状態では RM,1 以外に ER2。ほかのプログラムの送った文字が残ると最初に ER0
+    Check(Gc16Session.IsGc16Reply("ER2") && Gc16Session.IsGc16Reply(" ER0 ") && Gc16Session.IsGc16Reply("RM,1") &&
+        !Gc16Session.IsGc16Reply("ER") && !Gc16Session.IsGc16Reply("ER4") && !Gc16Session.IsGc16Reply("AS110_READY:1") && !Gc16Session.IsGc16Reply(""),
+        "GC16 の返事の形");
+    bool remote = false;
+    var keyMode = new FakeLineChannel("COM9", c =>
+    {
+        if (c == "RM,1") { remote = true; return "OK"; }
+        if (!remote) return "ER2";
+        if (c == "RM,0") { remote = false; return "OK"; }
+        return c switch { "RM,Q" => "RM,1", "MP" => "MP,-0.0001", _ => "ER0" };
+    });
+    var keySession = Gc16Session.Find(new Gc16SearchOptions { ProbeTimeoutMilliseconds = 10 }, new[] { "COM9" }, (_, _) => keyMode);
+    Check(keySession.PortName == "COM9" && !keySession.IsRemote && keyMode.Writes.SequenceEqual(new[] { "RM,Q\r" }), "キー入力状態(RM,Q に ER2)の GC16 を見つける");
+    Check(!keySession.QueryRemoteState(), "ER2 はキー入力状態");
+    keySession.EnterRemote();
+    Check(keySession.QueryRemoteState() && Math.Abs(keySession.ReadPressure() + 0.0001) < 1e-12, "RM,1 の後は RM,Q・MP が返る");
+    keySession.ExitRemote();
+    Check(!keySession.IsRemote && !keySession.QueryRemoteState(), "RM,0 で戻る");
+    keySession.ExitRemote();
+    Check(!keySession.IsRemote, "すでにキー入力状態の RM,0(ER2)は戻った扱い");
+    Fails<Gc16Exception>(() => keySession.ReadPressure(), "キー入力状態の MP は ER2 のエラー");
+    keySession.Dispose();
+    var leftover = Gc16Session.Find(new Gc16SearchOptions { ProbeTimeoutMilliseconds = 10 }, new[] { "COM9" },
+        (_, _) => new FakeLineChannel("COM9", _ => "ER0"));
+    Check(leftover.PortName == "COM9", "残った文字で最初が ER0 でも GC16 とする");
+    leftover.Dispose();
+    var unreadable = new Gc16Session(new FakeLineChannel("COM9", c => c == "RM,Q" ? "RM,2" : c == "RM,0" ? "ER1" : null), 10);
+    Fails<Gc16Exception>(() => unreadable.QueryRemoteState(), "RM,Q の読めない返事");
+    Fails<Gc16Exception>(() => unreadable.ExitRemote(), "RM,0 に ER2 以外のエラー");
+    Console.WriteLine("PASS Gc16Session: 探す順・除くポート・見分け方・RM,1/RM,0・単位の換算・ゼロ調整・エラーの返事・キー入力状態の ER2");
 }
 
 Console.WriteLine("Instruments: すべての検査に合格(機器には何も送っていない)");
