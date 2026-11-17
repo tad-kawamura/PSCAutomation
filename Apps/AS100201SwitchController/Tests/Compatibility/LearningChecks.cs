@@ -18,6 +18,7 @@ internal static class LearningChecks
         PressedRowChecks();
         await PanelOutageChecks();
         await PanelPathAndBatteryChecks();
+        await WifiRefreshChecks();
         await VirtualPanelChecks();
         // 画面(MainForm)を作るとこのスレッドに WinForms の SynchronizationContext が入り、以後の await が戻らなくなる。
         // 画面を作る確認は await の後に置く(VirtualPanelChecks も画面の確認は最後で、その後に await しない)。
@@ -600,6 +601,107 @@ internal static class LearningChecks
         Check(charging.Update(new(10, 6600, true)) is null && charging.Update(new(-1, 0, false)) is null, "warned while charging / without battery");
         Check(charging.Update(new(10, 6600, false))?.Contains("10%") == true, "charging consumed the warning");
         Pass("panel paths: USB preferred, inactive path ignored, failover to Wi-Fi on drop (also via protocol reconnect), stays on Wi-Fi until re-verify then back to USB, both-missing reasons; BATT lines; low battery log once at 20% (rearm above 30%, not while charging)");
+    }
+
+    // 9. Wi-Fi の子機のつなぎ直し(2026-11-17 人の決定 B)。2 回続けて失敗したら裏でつなぎ直し、終わったあとの確認で Wi-Fi に移る。30 秒に 1 回まで
+    private static async Task WifiRefreshChecks()
+    {
+        const string ping = As100201PanelProtocol.HelloRequest;
+        static bool IsHello(string line) => line.StartsWith(As100201PanelProtocol.HelloPrefix, StringComparison.Ordinal);
+        static async Task<string?> Failure(Func<Task> action)
+        {
+            try { await action(); return null; } catch (InvalidOperationException ex) { return ex.Message; }
+        }
+        var wifi = new FakePanelLink { Fail = true };
+        var adapter = new FakeWifiAdapter();
+        long now = 0;
+        var notices = new List<string>();
+        using var link = new As100201WifiRefreshLink(wifi, adapter, "AS100201_PANEL", () => now);
+        link.Notice += notices.Add;
+
+        // 1 回目の失敗ではつなぎ直さない
+        Check(await Failure(() => link.VerifyAsync(ping, IsHello)) is not null && adapter.Calls == 0, "refreshed after first failure");
+        // 2 回目: 失敗を返し、裏でつなぎ直しを始める(子機が古いつながりから戻る)
+        adapter.OnReconnect = () => wifi.Fail = false;
+        now = 5000;
+        string? second = await Failure(() => link.VerifyAsync(ping, IsHello));
+        Check(second?.Contains("つなぎ直します") == true && adapter.Calls == 1 && adapter.Profiles.SequenceEqual(new[] { "AS100201_PANEL" }), "refresh not started on second failure: " + second);
+        await link.RefreshTask;
+        Check(notices.Count == 1 && notices[0].Contains("つなぎ直しました") && notices[0].Contains("FAKE-ADAPTER"), "refresh not reported");
+        // 終わったあとの確認で通る
+        Check(await Failure(() => link.VerifyAsync(ping, IsHello)) is null && wifi.Requests.Count == 3 && link.IsConnected, "not connected after refresh");
+        // つなぎ直している間の確認は、Wi-Fi を試さずにすぐ失敗にする
+        wifi.Fail = true;
+        adapter.OnReconnect = null;
+        now = 60000;
+        Check(await Failure(() => link.VerifyAsync(ping, IsHello)) is not null && adapter.Calls == 1, "count not reset by success");
+        adapter.Hold = new TaskCompletionSource();
+        now = 65000;
+        await Failure(() => link.VerifyAsync(ping, IsHello));
+        int requests = wifi.Requests.Count;
+        string? busy = await Failure(() => link.VerifyAsync(ping, IsHello));
+        Check(adapter.Calls == 2 && busy?.Contains("つなぎ直しています") == true && wifi.Requests.Count == requests, "verify not short-circuited while refreshing: " + busy);
+        adapter.Hold.SetResult();
+        await link.RefreshTask;
+        adapter.Hold = null;
+        // 30 秒以内は何回失敗してもつなぎ直さない(Tab5 が無いとき繰り返さない)
+        now = 70000;
+        Check(await Failure(() => link.VerifyAsync(ping, IsHello)) is not null && await Failure(() => link.VerifyAsync(ping, IsHello)) is not null &&
+            await Failure(() => link.VerifyAsync(ping, IsHello)) is not null && adapter.Calls == 2, "refreshed within 30 s");
+        // 30 秒を過ぎたらまたつなぎ直す
+        now = 95001;
+        await Failure(() => link.VerifyAsync(ping, IsHello));
+        Check(adapter.Calls == 3, "no refresh after 30 s");
+        await link.RefreshTask;
+        // つなぎ直せなかったら、その理由を出す(例外にしない)
+        adapter.Error = "子機が見つかりません";
+        now = 200000;
+        await Failure(() => link.VerifyAsync(ping, IsHello));
+        await Failure(() => link.VerifyAsync(ping, IsHello));
+        await link.RefreshTask;
+        Check(adapter.Calls == 4 && notices[^1].Contains("つなぎ直せませんでした") && notices[^1].Contains("子機が見つかりません"), "refresh failure not reported: " + notices[^1]);
+        // 行・切断はそのまま流す
+        var lines = new List<string>();
+        int dropped = 0;
+        link.LineReceived += lines.Add;
+        link.Disconnected += () => dropped++;
+        wifi.Receive("DIAG_FRAME:1:250");
+        wifi.Drop();
+        Check(lines.SequenceEqual(new[] { "DIAG_FRAME:1:250" }) && dropped == 1, "lines / drop not forwarded");
+
+        // 見張り(As100201PanelProtocol)と組み合わせ: USB が無く Wi-Fi が古いつながりのとき、2 回目でつなぎ直し、次の確認で Wi-Fi に移る
+        var usb2 = new FakePanelLink { Fail = true };
+        var wifi2 = new FakePanelLink { Fail = true };
+        var adapter2 = new FakeWifiAdapter { OnReconnect = () => wifi2.Fail = false };
+        var refresh2 = new As100201WifiRefreshLink(wifi2, adapter2, "AS100201_PANEL", () => 0);
+        var paths2 = new As100201PanelPathLink(usb2, refresh2);
+        using (var panel = new As100201PanelProtocol(paths2))
+        {
+            Check(await Failure(() => panel.VerifyAsync()) is not null && adapter2.Calls == 0, "protocol refreshed on first failure");
+            Check(await Failure(() => panel.VerifyAsync()) is not null && adapter2.Calls == 1, "protocol did not start refresh");
+            await refresh2.RefreshTask;
+            await panel.VerifyAsync();
+            Check(paths2.ActivePath == As100201PanelPath.Wifi && panel.IsConnected, "protocol not on Wi-Fi after refresh");
+        }
+        Pass("Wi-Fi refresh: not on first failure, background refresh on second (verify short-circuited meanwhile), connects on next verify, count reset by success, at most once per 30 s, failure reason reported without exception, lines/drop forwarded, works through path link and protocol");
+    }
+
+    private sealed class FakeWifiAdapter : IAs100201WifiAdapterControl
+    {
+        public int Calls;
+        public List<string> Profiles { get; } = new();
+        public Action? OnReconnect;
+        public string? Error;
+        public TaskCompletionSource? Hold;
+        public async Task<As100201WifiRefreshResult> ReconnectAsync(string profileName, CancellationToken cancellationToken = default)
+        {
+            Calls++;
+            Profiles.Add(profileName);
+            if (Hold is not null) await Hold.Task;
+            if (Error is not null) return new(false, Error);
+            OnReconnect?.Invoke();
+            return new(true, "FAKE-ADAPTER");
+        }
     }
 
     // 6. 通常モードを選んだとき今までと同じ

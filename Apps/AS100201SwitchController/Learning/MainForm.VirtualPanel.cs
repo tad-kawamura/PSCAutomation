@@ -16,8 +16,12 @@ internal sealed partial class MainForm : Form
         if (!_useVirtualPanel)
         {
             // USB と Wi-Fi の 2 本(2026-11-13 承認。両方つながっていれば USB、切れたらもう一方へ)。
-            _panelPaths = new As100201PanelPathLink(new As100201SerialLink(),
-                new As100201NetworkLink(As100201PanelNetworkSettings.Host, As100201PanelNetworkSettings.Port));
+            // Wi-Fi は 2 回続けてつながらなければ子機をつなぎ直す(2026-11-17 人の決定)。
+            _panelWifi = new As100201WifiRefreshLink(
+                new As100201NetworkLink(As100201PanelNetworkSettings.Host, As100201PanelNetworkSettings.Port),
+                new As100201WlanAdapterControl(), As100201PanelNetworkSettings.WifiProfileName);
+            _panelWifi.Notice += PanelWifiNotice;
+            _panelPaths = new As100201PanelPathLink(new As100201SerialLink(), _panelWifi);
             _panelPaths.PathChanged += PanelPathChanged;
             return _panelPaths;
         }

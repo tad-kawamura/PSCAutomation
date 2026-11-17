@@ -28,6 +28,12 @@
 //   - 2 画面目以降(操作を選んでいる途中)に入ったら SELECT、1 画面目に戻ったら HOME を送る。PC は SELECT の間、
 //     READY LED を消し PC_go / CR_go / F8 を受け付けない(sw4 は受け付ける)。PC の確認(PING)に答えた直後にも送り直す
 //     (つなぎ直し・パネルの再起動で、PC が選択中のまま止まらないように)
+//   - 2026-11-17 追記(PC とのやり取りは変えないので版は 4 のまま):
+//     PC が USB を開いたときなどに本体(ESP32-P4)が再起動すると、PC と Wi-Fi で通じなくなっていた。
+//     原因は PC の子機が親機のやり直しに気づかず古いつながりに留まることで、PC のアプリが子機をつなぎ直して直した。
+//     その前に、無線用チップ ESP32-C6 が前の状態のまま残ることを疑って、起動のたびに Wi-Fi を始める前に
+//     C6 の電源を入れ直す処理(wifiChipPowerCycle)を入れた。害はないので残している。
+//     あわせて、USB の確認に答えたあと切り分け用の DIAG_WIFI: を送る(PC は知らない行としてログに残すだけ)。
 //
 // PC とのやり取り(LF の行単位。USB-C の内蔵 USB シリアル、または Wi-Fi の TCP。どちらも同じ行):
 //   PC → パネル  AS100201_PANEL_PING           → パネルは AS100201_PANEL_READY:4 を返す(この道が今の道になる)
@@ -81,6 +87,14 @@ static const char* const WIFI_SSID = "AS100201_PANEL";
 static const char* const WIFI_PASSWORD = "as100201-panel";   // 8 文字以上
 const IPAddress PANEL_IP(192, 168, 4, 1);                    // 社内 LAN と同じ範囲なら PC 側と両方を変える
 const uint16_t PANEL_PORT = 50201;
+
+// 無線用チップ ESP32-C6 の電源(WLAN_PWR_EN)。I/O 拡張チップ 2 個目(PI4IOE5V6408、I2C 0x44 = M5Unified の
+// getIOExpander(1))の P0 で、High で電源が入る(M5GFX の Tab5 の電源投入手順で 0x44 の出力を 0x89 にしている)。
+// 本体だけが再起動しても M5GFX は P0 を High のまま書くので、C6 は止まらない。そのため起動時に自分で切って入れ直す。
+const uint8_t WIFI_CHIP_POWER_EXPANDER = 1;
+const uint8_t WIFI_CHIP_POWER_PIN = 0;
+const unsigned long WIFI_CHIP_OFF_MS = 300;        // 切っておく時間(AI の仮決め)
+const unsigned long WIFI_CHIP_BOOT_MS = 500;       // 入れてから Wi-Fi を始めるまで(この後の Wi-Fi の準備でも C6 の起動を待つ)
 
 const unsigned long BATTERY_INTERVAL_MS = 30000;   // 電池残量を読んで送る間隔
 const int LOW_BATTERY_LEVEL = 20;                  // これ以下で画面の残量を警告の色にする(PC のログと同じ値)
@@ -140,6 +154,9 @@ unsigned long lastUsbSeenAt = 0;  // 最後に USB がつながっていると�
 bool lostShown = false;       // 「PC と切れました」を出したあと、まだつながり直していない
 
 bool wifiStarted = false;     // Wi-Fi の親機を始められた
+// Wi-Fi の切り分け用(2026-11-17)。USB の確認に答えたあとに DIAG_WIFI: で PC へ送る(PC はログに残すだけ)。
+bool wifiPowerOffOk = false, wifiPowerOnOk = false, wifiPowerReadback = false;
+unsigned long wifiStartMs = 0;
 WiFiServer server(PANEL_PORT);
 WiFiClient wifiClient;        // PC からの TCP 接続(1 本だけ。新しい接続が来たら古い方を閉じる)
 
@@ -335,6 +352,15 @@ void handleLine(Path from, const String& line) {
       setMessage(MSG_INFO, String("PC のアプリと ") + pathName(from) + " でつながりました", "操作する前にボタンを押してください");
     }
     sendBattery(from);
+    if (from == PATH_USB) {
+      // Wi-Fi の切り分け用(2026-11-17)。PC は知らない行としてログに残すだけ。
+      // 親機を始められたか / C6 の電源の切る・入れるの書き込みと読み返し / 始めるのにかかった ms / 起動からの ms
+      char diag[96];
+      snprintf(diag, sizeof(diag), "DIAG_WIFI:started=%d:pwr=%d%d%d:start_ms=%lu:up_ms=%lu",
+               wifiStarted ? 1 : 0, wifiPowerOffOk ? 1 : 0, wifiPowerOnOk ? 1 : 0, wifiPowerReadback ? 1 : 0,
+               wifiStartMs, millis());
+      writeLine(from, diag);
+    }
     reportedSelecting = -1;   // 確認のあとに今の画面の位置(SELECT / HOME)を送り直す
     dirty = true;
     return;
@@ -772,6 +798,18 @@ void setupColors() {
   C_MSG_WARN_TEXT = d.color565(0xF2, 0xC2, 0x30);
 }
 
+// 無線用チップ ESP32-C6 の電源を切って入れ直す(WIFI_CHIP_POWER_* の説明)。WiFi を始める前に 1 回だけ呼ぶ。
+// I/O 拡張チップに書けなくても止めない(Wi-Fi を始めて、だめなら「Wi-Fi なし」になるだけ。USB では使える)。
+void wifiChipPowerCycle() {
+  auto& expander = M5.getIOExpander(WIFI_CHIP_POWER_EXPANDER);
+  expander.setDirection(WIFI_CHIP_POWER_PIN, true);   // 出力(M5GFX の設定と同じ。念のため)
+  wifiPowerOffOk = expander.digitalWrite(WIFI_CHIP_POWER_PIN, false);
+  delay(WIFI_CHIP_OFF_MS);
+  wifiPowerOnOk = expander.digitalWrite(WIFI_CHIP_POWER_PIN, true);
+  wifiPowerReadback = expander.getWriteValue(WIFI_CHIP_POWER_PIN);
+  delay(WIFI_CHIP_BOOT_MS);
+}
+
 void setup() {
   Serial.setTxBufferSize(2048);
   Serial.setRxBufferSize(1024);
@@ -794,13 +832,18 @@ void setup() {
   setMessage(MSG_INFO, "起動しました", "Wi-Fi を始めています…");
   drawScreen();
 
+  // C6 を前の状態から始めさせる(本体だけが再起動したとき、C6 が前の状態のまま残らないように。2026-11-17)。
+  wifiChipPowerCycle();
+
   // Wi-Fi の親機を始める(無線用チップ ESP32-C6 を経由。ピンはボード M5Tab5 の設定にある)。
   // 始められなくても USB では使える。
   // ゲートウェイは 0.0.0.0 にして、PC へ「この先にインターネットがある」と知らせない(DHCP でルーターを渡さない)。
   // 渡すと、PC がふだんのインターネットの通信を Tab5 へ流してしまうことがある。DNS も渡さない。
+  unsigned long wifiBeginAt = millis();
   WiFi.mode(WIFI_AP);
   wifiStarted = WiFi.softAPConfig(PANEL_IP, IPAddress(0, 0, 0, 0), IPAddress(255, 255, 255, 0)) &&
                 WiFi.softAP(WIFI_SSID, WIFI_PASSWORD);
+  wifiStartMs = millis() - wifiBeginAt;
   if (wifiStarted) {
     server.begin();
     server.setNoDelay(true);

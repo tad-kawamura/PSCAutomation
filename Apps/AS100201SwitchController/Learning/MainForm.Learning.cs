@@ -10,6 +10,7 @@ internal sealed partial class MainForm : Form
     private As100201PanelProtocol? _panel;
     // 本物のタッチパネルの道(USB / Wi-Fi)。開発用の代わり(--virtual-panel)のときは null。
     private As100201PanelPathLink? _panelPaths;
+    private As100201WifiRefreshLink? _panelWifi;
     private As100201PanelPath _lastPanelPath;
     private As100201PanelBattery? _panelBattery;
     private readonly As100201BatteryWatch _batteryWatch = new();
@@ -164,6 +165,9 @@ internal sealed partial class MainForm : Form
     }
 
     // 確認が通った道が前回と違う(最初につながったときも)。両方つながっていれば USB、切れたらもう一方へ移る(2026-11-13 承認)。
+    // Wi-Fi の子機をつなぎ直した・つなぎ直せなかった(2026-11-17)。
+    private void PanelWifiNotice(string message) => PostToUi(() => AppendLog(message));
+
     private void PanelPathChanged(As100201PanelPath path)
     {
         PostToUi(() =>
@@ -392,6 +396,7 @@ internal sealed partial class MainForm : Form
         _panel.BatteryReported -= PanelBatteryReported;
         _panel.SelectionChanged -= PanelSelectionChanged;
         if (_panelPaths is not null) _panelPaths.PathChanged -= PanelPathChanged;
+        if (_panelWifi is not null) _panelWifi.Notice -= PanelWifiNotice;
         _panel.Dispose();
     }
 
