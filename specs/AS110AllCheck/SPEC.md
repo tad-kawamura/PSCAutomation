@@ -702,7 +702,7 @@ AS110-116B350 は AS110-116B の調整・合否判定(490 kPa)をしたあと、
 
 - 全アプリ共通の部品は変えていない(`WaveLoggerSession` の OpenFile・CloseActiveFile・Start・Stop・GetState・GetDataCount・ReadRawData、`Adcmt7351ESession`、`XdtFile`・`XdtScalingEditor` をそのまま使う)
 - アプリ: `Calibration/AutoCalibration.cs`(読み取りを `RunCurrentAsync`(①②)と `RunPressureAsync`(③④)に分けた。7351E の差し込み口 `ICurrentMeter`・`ICurrentMeterLocator`)、`Calibration/CalibrationLoggerReader.cs`(校正用の雛形で測定させ 1 秒平均で読む)、`Calibration/TodayCalibration.cs`(今日の校正値のファイル)、`Calibration/AutoCalibrationDevices.cs`(7351E と LOGGER の包み)、`UI/CalibrationDialog.cs`(ボタン 2 つ)、`UI/AutoCalibrationDialog.cs`(読み取りの画面を 2 種類に)、`UI/MainForm.Calibration.cs`(1 日 1 回の流れ)、`UI/MainForm.AutoCalibration.cs`
-- 校正用の雛形 `雛形/AS110校正用.xdt` は、データ調整の雛形の周期(位置 516・518)を 10 ms にし、CH1・CH2 の換算を「0 V = 0、1 V = 1」にして作った。**換算は切らずに「1 V = 1」にした**(換算を切る印の書き方は確かめていないため。今の部品で確かめてある書き方だけを使った。アプリは換算前の値を読むので結果は同じ)。記録の長さは位置が分からないので変えていない(元の 6500 点)。人が WAVE LOGGER で開いて確かめ、記録を 10 分くらいにする
+- 校正用の雛形 `雛形/AS110校正用.xdt` は、データ調整の雛形の周期(位置 516・518)を 10 ms にし、CH1・CH2 の換算を「0 V = 0、1 V = 1」にして作った。**換算は切らずに「1 V = 1」にした**(換算を切る印の書き方は確かめていないため。今の部品で確かめてある書き方だけを使った。アプリは換算前の値を読むので結果は同じ)。記録の長さは位置が分からないので変えていなかった(元の 6500 点)。**2026-11-18 追記**: 人が WAVE LOGGER(NR-500 なしの PC)で開き、周期 10 ms・トリガーなし・CH1/CH2 は合っていた。サンプリング数は「設定領域の点数」(旧 LOGGER 形式の 524 バイト目)だけを 65000 にした試しのファイルを人が開き、WAVE LOGGER の「サンプリング数」が 65000(10 分 49.99 秒)と出たので、その位置がサンプリング数の設定と分かった。本物のファイルも 65000 にした(保存してある波形の点数 N(104 バイト目)は 6500 のまま)
 - 決まったことに書いていない細部で AI が決めたこと(実機で変えてよい):
   1. 電圧の平均は「読むと決めた時点の点数から、1 秒 + 0.3 秒(PC に届く遅れの分)待ったあとの点数まで」の点を平均する(周期を雛形から読まないので、周期の書き換えが効いていなくても 1 秒分になる)。点が 5 点未満なら最大 5 秒待つ。ログに点数と 1 秒あたりの点数を出す
   2. 測定しているかは LOGGER の状態で見る(1 停止・11 エラー停止は止まっている、10・12 は止まりかけで止まるのを待つ、それ以外は記録中)。Start のあと記録の点数が増え始めるまで最大 5 秒待ち、かかった秒数をログに出す

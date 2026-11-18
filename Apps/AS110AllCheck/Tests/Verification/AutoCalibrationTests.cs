@@ -684,8 +684,10 @@ internal static class CalibrationLoggerReaderTests
                 var info = PSCAutomation.Wrappers.LoggerFiles.XdtFile.Load(fixture).Info;
                 var editor = new PSCAutomation.Wrappers.LoggerFiles.XdtScalingEditor(fixture);
                 var identity = new PSCAutomation.Wrappers.LoggerFiles.ScalingPoints(0, 0, 1, 1);
-                Check(info.Timing.SampleInterval == TimeSpan.FromMilliseconds(10) && editor.GetScaling(1) == identity && editor.GetScaling(2) == identity,
-                    "calibration template: 10 ms and the voltage as it is on CH1 and CH2");
+                // サンプリング数の設定(旧 LOGGER 形式の 524 バイト目)は 65000(約 10 分 50 秒)。2026-11-18 に人が WAVE LOGGER で 65000 と出ることを確かめた。
+                int samplingCount = System.Buffers.Binary.BinaryPrimitives.ReadInt32LittleEndian(File.ReadAllBytes(fixture).AsSpan(524, 4));
+                Check(info.Timing.SampleInterval == TimeSpan.FromMilliseconds(10) && editor.GetScaling(1) == identity && editor.GetScaling(2) == identity &&
+                    samplingCount == 65000, "calibration template: 10 ms, 65000 samples and the voltage as it is on CH1 and CH2");
             }
             // 5. 校正用の雛形が無い。
             {
