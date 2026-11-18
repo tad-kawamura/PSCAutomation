@@ -328,6 +328,33 @@ internal static class Program
                 throw new Exception("Saved-stage M5Stack A/B/C mapping mismatch: "+signature);
         }
         Console.WriteLine("PASS saved-stage M5Stack labels and enabled masks map to output / leak / complete");
+        // 参照波形で型式を替える(2026-11-18 の不具合: 処理の中で CanChangeSetup を見ていたので、測定結果が無くても AS110-035 以外を選べなかった)。
+        // ReferenceSelectionCommitted は処理に入る前の CanChangeSetup を SelectModelForReference に渡す。
+        {
+            var models=(Array)assembly.GetType("PSCAutomation.Apps.AS110AllCheck.ProductModel")!.GetField("All")!.GetValue(null)!;
+            object model035=models.GetValue(0)!, model015=models.GetValue(1)!;
+            var canChangeSetup=type.GetProperty("CanChangeSetup",Private)!;
+            var selectModel=type.GetMethod("SelectModelForReference",Private)!;
+            var modelProperty=flowType.GetProperty("Model")!;
+            type.GetField("_operationInProgress",Private)!.SetValue(form,false);
+            type.GetField("_reviewStage",Private)!.SetValue(form,false);
+            flowType.GetMethod("Invalidate")!.Invoke(flow,null);
+            serialBox.Text="";
+            flowType.GetMethod("ConfigureWithoutSerial")!.Invoke(flow,[model035]);
+            if(!(bool)canChangeSetup.GetValue(form)!)throw new Exception("Without a capture the setup must be changeable");
+            selectModel.Invoke(form,[model015,true]);
+            if(!Equals(modelProperty.GetValue(flow),model015))throw new Exception("Selecting the AS110-015 reference without a capture must switch the model to AS110-015: "+modelProperty.GetValue(flow));
+            flowType.GetMethod("Configure")!.Invoke(flow,["123",model015]);
+            flowType.GetMethod("BeginMeasurement")!.Invoke(flow,[DateTime.Now]);
+            flowType.GetMethod("CaptureSucceeded")!.Invoke(flow,null);
+            if((bool)canChangeSetup.GetValue(form)!)throw new Exception("With a capture the setup must not be changeable");
+            try{selectModel.Invoke(form,[model035,false]);throw new Exception("Changing the model with a capture must be refused");}
+            catch(TargetInvocationException ex) when(ex.InnerException is InvalidOperationException){}
+            selectModel.Invoke(form,[model015,false]);
+            if(!Equals(modelProperty.GetValue(flow),model015))throw new Exception("Reselecting the same model with a capture must keep it");
+            flowType.GetMethod("Invalidate")!.Invoke(flow,null);
+            Console.WriteLine("PASS reference selection switches the model when no capture remains (AS110-035 -> AS110-015), refuses a different model with a capture");
+        }
         ((System.Windows.Forms.Timer)Field("_statusHeartbeat")).Stop();
         ((IDisposable)Field("_arduino")).Dispose();
         Call("StopPcDelayObservation");

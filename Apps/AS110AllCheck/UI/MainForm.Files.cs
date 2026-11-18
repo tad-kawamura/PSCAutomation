@@ -131,6 +131,9 @@ internal sealed partial class MainForm : Form
             RestoreReferenceSelection();
             return;
         }
+        // 型式を変えてよいかは、処理に入る前に決める。処理の中では「処理中」なので CanChangeSetup がいつも false になり、
+        // 測定結果が無くても起動時の型式(AS110-035)以外の参照波形を選べなかった(2026-11-18、現場で AS110-015 を選べず判明)。
+        bool canChangeSetup = CanChangeSetup;
         await RunOperationAsync("参照波形読み込み", async () =>
         {
             // 型式は参照波形のファイル名から決める(2026-11-06 に「型式」の行を廃止。人の判断)。動き検査では型式を使わない。
@@ -139,12 +142,7 @@ internal sealed partial class MainForm : Form
             {
                 if (model is null)
                     throw new InvalidOperationException($"参照波形「{reference.DisplayName}」に対応する型式がありません。ファイル名に型式名（{string.Join("・", ProductModel.All.Select(m => m.Name))}）を含めてください。");
-                if (!CanChangeSetup && model != _flow.Model)
-                    throw new InvalidOperationException("測定結果が残っている間は型式（参照波形）を変えられません。「設定変更（測定を破棄）」を先に押してください。");
-                // Excel 雛形の無い型式は、測る前に止める(転送してから気づかないように)。
-                ExcelTemplatePathFor(model);
-                _selectedModel = model;
-                if (CanChangeSetup) ConfigureProduct(requireSaveRoot: false);
+                SelectModelForReference(model, canChangeSetup);
             }
             RefreshTemplateState();
             RefreshLoggerState();
@@ -163,6 +161,17 @@ internal sealed partial class MainForm : Form
         RestoreReferenceSelection();
         // 読み込み後はLOGGERを手動操作できるよう固定を解除する。
         if (_selectedReferencePath is not null) CompletePreparationDisplay();
+    }
+
+    // 参照波形で選んだ型式を工程に入れる。canChangeSetup は処理に入る前の CanChangeSetup(ReferenceSelectionCommitted)。
+    private void SelectModelForReference(ProductModel model, bool canChangeSetup)
+    {
+        if (!canChangeSetup && model != _flow.Model)
+            throw new InvalidOperationException("測定結果が残っている間は型式（参照波形）を変えられません。「設定変更（測定を破棄）」を先に押してください。");
+        // Excel 雛形の無い型式は、測る前に止める(転送してから気づかないように)。
+        ExcelTemplatePathFor(model);
+        _selectedModel = model;
+        if (canChangeSetup) ConfigureProduct(requireSaveRoot: false);
     }
 
     // 参照波形のファイル名に含まれる型式名から型式を決める。「AS110-116B」と「AS110-116B350」のように前方が同じ型式があるので、
