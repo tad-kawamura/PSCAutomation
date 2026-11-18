@@ -68,6 +68,8 @@ internal sealed record As110Calibration(ScalingPoints Current, ScalingPoints Pre
     }
 
     public string Summary => $"電流：{Describe(Current, "mA")}／圧力：{Describe(Pressure, "kPa")}";
+    // 電流・圧力の片方の 2 点(校正の読み取りの画面で使う。2026-11-18)。
+    public static string DescribePoints(ScalingPoints p, string unit) => Describe(p, unit);
     private static string Describe(ScalingPoints p, string unit) =>
         $"{p.Input1:G} V＝{p.Output1:G} {unit}、{p.Input2:G} V＝{p.Output2:G} {unit}";
 }

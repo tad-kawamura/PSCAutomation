@@ -233,7 +233,7 @@ internal sealed partial class MainForm : Form
         foreach(var button in new[]{_chooseSaveRootButton,_releaseSerialButton,_transferSettingsButton}) button.MinimumSize=new Size(0,40);
         // 合格は下段の左に置き、上段を 4 つにして横幅を抑える。
         var mainActions=Row(_transferButton,_saveButton,_leakOutputButton,_leakButton);
-        // 「設定変更（測定を破棄）」は校正欄の「校正値を変更」の隣(BuildCalibrationPanel)。
+        // 「設定変更（測定を破棄）」は校正欄の「校正し直す」の隣(BuildCalibrationPanel)。
         var subActions=Row(_completeButton,_retryCaptureButton);
         _actionPanel=new TableLayoutPanel { AutoSize=true,AutoSizeMode=AutoSizeMode.GrowAndShrink,ColumnCount=1,RowCount=3,Margin=Padding.Empty };
         // 漏れ試験の試験秒数・しきい値(データ取りだけ表示。MainForm.LeakJudgment.cs)。
@@ -405,7 +405,8 @@ internal sealed partial class MainForm : Form
     {
         bool idle=!_operationInProgress && !_leakRunning && !_flow.Measuring;
         bool ready=idle && ConnectionsReady && _calibrationApplied && _templateLoaded && LoggerReadyToStart && _arduino.MeasurementInputReady;
-        _modeBox.Enabled=idle && !_flow.SaveFailed && !_flow.CaptureFailed && !_flow.HasSaved;
+        // NR-500 で今日の校正がまだなら、モードを選ぶ前に校正する(2026-11-18、1 日 1 回の流れ)。
+        _modeBox.Enabled=idle && !_flow.SaveFailed && !_flow.CaptureFailed && !_flow.HasSaved && !CalibrationBlocksModeSelection;
 
         bool production=_flow.Mode==TestMode.Production;
         bool excelMode=_modeSelected && _flow.Mode!=TestMode.Motion;
@@ -509,15 +510,16 @@ internal sealed partial class MainForm : Form
             if(!_logger.IsInitialized || !_hardwareDetected)missing.Add("LOGGER／NR本体");
             return $"{string.Join("・",missing)} が未接続です。機器をつないで「確認」を押してください";
         }
+        if(CalibrationBlocksModeSelection)return "今日の校正をしてください（「校正値を入力」）。済むとモードを選べます";
         if(!_modeSelected)return "モードを選んでください";
         if(_excelPreparing)return "Excel を準備中です。終わるまで待ってください";
         if(_operationInProgress)return "処理中です。終わるまで待ってください";
         if(_flow.Measuring)return "測定中です";
         if(_leakRunning)return "漏れチェック中です";
         // データ取りは保存先を選んでから校正に進む(校正記録を保存先に書くため)。
-        if(!SaveRootReady)return "「保存先選択」で保存先を選んでください（選ぶと校正画面が開きます）";
-        if(!_calibrationApplied)return CalibrationSupported?"校正値を入力してください（「校正値を入力」）":"雛形を読み込んでください（「雛形を読み込む」）";
-        if(!_templateLoaded)return "LOGGER で雛形が開かれていません。「校正値を入力」で読み込み直してください";
+        if(!SaveRootReady)return "「保存先選択」で保存先を選んでください（選ぶと"+(CalibrationSupported?"今日の校正値で":"")+"雛形を読み込みます）";
+        if(!_calibrationApplied)return "雛形を読み込んでください（「雛形を読み込む」）";
+        if(!_templateLoaded)return "LOGGER で雛形が開かれていません。「雛形を読み込む」で読み込み直してください";
         if(!LoggerReadyToStart)return $"LOGGER が{GetLoggerStateText()}です。LOGGER を停止してから「状態確認」を押してください";
         if(_flow.Mode!=TestMode.Motion && _selectedReferencePath is null)return "型式（参照波形）を選んでください";
         if(_flow.Mode==TestMode.Production)

@@ -3,12 +3,16 @@ using PSCAutomation.Wrappers.LoggerFiles;
 
 namespace PSCAutomation.Apps.AS110AllCheck;
 
-// 校正の自動読み取り(段階 1。2026-11-13 承認、SPEC「校正の自動読み取り」)。
-// 流れ図「校正_変更」の ①〜④ を順に行い、8 項目(電流 2 点・圧力 2 点)を作る。最後に人が校正画面で「適用」を押す(ここでは適用しない)。
-//   ① 電流の低点: WF1973 0 V(0 mA)→ NR-500 CH1 の電圧 = 0 mA
-//   ② 電流の高点: WF1973 5 V 固定(30 mA の指令)→ 人がマルチメータの mA を入れる → CH1 の電圧 = 入れた mA
-//   ③ 圧力の低点: 30 mA のまま、弁を大気側(①閉・②開)→ GC16 が落ち着いたらゼロ調整 → 3 秒後の GC16 の値と CH2 の電圧
+// 校正の自動読み取り(段階 1。2026-11-13 承認、SPEC「校正の自動読み取り」)。2026-11-18 に 2 つの読み取りに分けた(SPEC「段階 1 の直しと 1 日 1 回の流れ」)。
+// 流れ図「校正_変更」の ①〜④ を行い、8 項目(電流 2 点・圧力 2 点)を作る。最後に人が校正画面で「適用」を押す(ここでは適用しない)。
+//   「マルチメータで読み取る」(RunCurrentAsync):
+//   ① 電流の低点: WF1973 0 V(0 mA)→ NR-500 CH1 の電圧の 1 秒平均と、7351E の電流
+//   ② 電流の高点: WF1973 5 V 固定(30 mA の指令)→ CH1 の電圧の 1 秒平均と、7351E の電流
+//      7351E が見つからなければ「もう一度探す / 電流を手で入れる / 中止」。手で入れるときも電圧は自動で読む
+//   「GC16 で読み取る」(RunPressureAsync):
+//   ③ 圧力の低点: 30 mA、弁を大気側(①閉・②開)→ GC16 が落ち着いたらゼロ調整 → 3 秒後の GC16 の値と CH2 の電圧
 //   ④ 圧力の高点: 30 mA のまま、弁を供給側(①開・②閉)→ 人がレギュレーターを目標に合わせて「合わせた」→ 落ち着いた GC16 の値と CH2 の電圧
+// NR-500 の電圧は、LOGGER に測定させて読む(IChannelVoltageMeter。測定していないと今の値が読めないため。2026-11-17 の実機確認)。
 // 機器と人の操作は下の interface で受け取る(機器なしの模擬に差し替えられる形)。弁は段階 1 では人がボールバルブを切り替える実装を使う。
 // 異常時(決まったこと 17・18・21・27): 通信の失敗は出力を止めて「再開(止まった段の最初から)/ 中止」。済んだ段の値は残す。
 // 中止・失敗しても、呼び出し側(校正画面)で手入力に切り替えれば測定へ進める(人の指示。この中だけの「止める」)。
@@ -16,6 +20,7 @@ internal sealed class AutoCalibrationProcedure
 {
     private readonly IPressureGaugeLocator _locator;
     private readonly ICurrentCommandOutput _current;
+    private readonly ICurrentMeterLocator _currentMeters;
     private readonly IChannelVoltageMeter _meter;
     private readonly IValveSwitcher _valves;
     private readonly IAutoCalibrationOperator _operator;
@@ -23,6 +28,9 @@ internal sealed class AutoCalibrationProcedure
     private readonly AutoCalibrationSettings _settings;
 
     private IPressureGauge? _gauge;
+    private ICurrentMeter? _currentMeter;
+    // 7351E が見つからず、人が「電流を手で入れる」を選んだ(この読み取りのあいだ)。
+    private bool _manualCurrent;
     private double? _currentVolts;
     private ValvePosition _valvePosition = ValvePosition.Measurement;
     // 段ごとの結果(済んだ段は再開しても残す)。
@@ -31,11 +39,13 @@ internal sealed class AutoCalibrationProcedure
     private CalibrationZeroCheck? _zero;
     private TimeSpan? _sinceGaugeConfirmed;
 
-    public AutoCalibrationProcedure(IPressureGaugeLocator locator, ICurrentCommandOutput current, IChannelVoltageMeter meter,
-        IValveSwitcher valves, IAutoCalibrationOperator calibrationOperator, ICalibrationClock clock, AutoCalibrationSettings? settings = null)
+    public AutoCalibrationProcedure(IPressureGaugeLocator locator, ICurrentCommandOutput current, ICurrentMeterLocator currentMeters,
+        IChannelVoltageMeter meter, IValveSwitcher valves, IAutoCalibrationOperator calibrationOperator, ICalibrationClock clock,
+        AutoCalibrationSettings? settings = null)
     {
         _locator = locator;
         _current = current;
+        _currentMeters = currentMeters;
         _meter = meter;
         _valves = valves;
         _operator = calibrationOperator;
@@ -48,41 +58,17 @@ internal sealed class AutoCalibrationProcedure
     public bool OutputStopFailed { get; private set; }
     // 使った GC16 の COM ポート(見つけていなければ null)。
     public string? GaugePort { get; private set; }
+    // 使ったマルチメータの名前(見つけていなければ null)。
+    public string? CurrentMeterName { get; private set; }
 
-    public async Task<AutoCalibrationResult> RunAsync(ProductModel model, CancellationToken cancellationToken)
+    // 「マルチメータで読み取る」: ①② を行い、電流の 2 点を返す。
+    public async Task<CurrentReadingResult> RunCurrentAsync(CancellationToken cancellationToken)
     {
-        ArgumentNullException.ThrowIfNull(model);
         try
         {
-            var stage = AutoCalibrationStage.CurrentLow;
-            while (stage <= AutoCalibrationStage.PressureHigh)
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-                try
-                {
-                    await RunStageAsync(stage, model, cancellationToken);
-                    stage++;
-                }
-                catch (RedoStageException)
-                {
-                    _operator.ShowStatus(StageName(stage) + "を最初からやり直します。");
-                }
-                catch (Exception ex) when (ex is not OperationCanceledException)
-                {
-                    // 17: まず出力を止め、何が起きたかを出す。「再開」で止まった段の最初から(GC16 は探し直す。COM 番号が変わっても探せる)。
-                    StopCurrent();
-                    ReleaseGauge();
-                    string message = $"{StageName(stage)}で止まりました。\r\n{ex.Message}\r\n\r\n" +
-                        "WF1973 の出力を止めました。変換ケーブル・機器を確かめて「再開」を押すと、この段の最初からやり直します。";
-                    if (!await _operator.AskResumeAsync(message, cancellationToken))
-                        throw new OperationCanceledException("校正の自動読み取りを中止しました。", ex);
-                }
-            }
-            var calibration = new As110Calibration(
-                new ScalingPoints(_currentLow!.Value.Volts, _currentLow.Value.Milliamps, _currentHigh!.Value.Volts, _currentHigh.Value.Milliamps),
-                new ScalingPoints(_pressureLow!.Value.Volts, _pressureLow.Value.Kilopascals, _pressureHigh!.Value.Volts, _pressureHigh.Value.Kilopascals));
-            calibration.Validate();
-            return new AutoCalibrationResult(calibration, model, _zero!, _sinceGaugeConfirmed, GaugePort ?? "");
+            await RunStagesAsync(AutoCalibrationStage.CurrentLow, AutoCalibrationStage.CurrentHigh, null, cancellationToken);
+            var points = new ScalingPoints(_currentLow!.Value.Volts, _currentLow.Value.Milliamps, _currentHigh!.Value.Volts, _currentHigh.Value.Milliamps);
+            return new CurrentReadingResult(points, _manualCurrent ? null : CurrentMeterName);
         }
         finally
         {
@@ -90,45 +76,153 @@ internal sealed class AutoCalibrationProcedure
         }
     }
 
-    private Task RunStageAsync(AutoCalibrationStage stage, ProductModel model, CancellationToken ct)
+    // 「GC16 で読み取る」: ③④ を行い、圧力の 2 点を返す。
+    public async Task<PressureReadingResult> RunPressureAsync(ProductModel model, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(model);
+        try
+        {
+            await RunStagesAsync(AutoCalibrationStage.PressureLow, AutoCalibrationStage.PressureHigh, model, cancellationToken);
+            var points = new ScalingPoints(_pressureLow!.Value.Volts, _pressureLow.Value.Kilopascals, _pressureHigh!.Value.Volts, _pressureHigh.Value.Kilopascals);
+            return new PressureReadingResult(points, model, _zero!, _sinceGaugeConfirmed, GaugePort ?? "");
+        }
+        finally
+        {
+            await CleanUpAsync();
+        }
+    }
+
+    private async Task RunStagesAsync(AutoCalibrationStage first, AutoCalibrationStage last, ProductModel? model, CancellationToken cancellationToken)
+    {
+        var stage = first;
+        while (stage <= last)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            try
+            {
+                await RunStageAsync(stage, model, cancellationToken);
+                stage++;
+            }
+            catch (RedoStageException)
+            {
+                _operator.ShowStatus(StageName(stage) + "を最初からやり直します。");
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                // 17: まず出力を止め、何が起きたかを出す。「再開」で止まった段の最初から(GC16・7351E は探し直す。COM 番号が変わっても探せる)。
+                StopCurrent();
+                ReleaseGauge();
+                ReleaseCurrentMeter();
+                string message = $"{StageName(stage)}で止まりました。\r\n{ex.Message}\r\n\r\n" +
+                    "WF1973 の出力を止めました。ケーブル・機器を確かめて「再開」を押すと、この段の最初からやり直します。";
+                if (!await _operator.AskResumeAsync(message, cancellationToken))
+                    throw new OperationCanceledException("校正の自動読み取りを中止しました。", ex);
+            }
+        }
+    }
+
+    private async Task RunStageAsync(AutoCalibrationStage stage, ProductModel? model, CancellationToken ct)
     {
         _operator.ShowStatus(StageName(stage) + "を始めます。");
-        return stage switch
+        // 電圧を読むため、LOGGER に校正用の雛形で測定させる(済んでいれば何もしない)。
+        await _meter.PrepareAsync(ct);
+        await (stage switch
         {
             AutoCalibrationStage.CurrentLow => CurrentLowAsync(ct),
             AutoCalibrationStage.CurrentHigh => CurrentHighAsync(ct),
             AutoCalibrationStage.PressureLow => PressureLowAsync(ct),
-            _ => PressureHighAsync(model, ct),
-        };
+            _ => PressureHighAsync(model!, ct),
+        });
     }
 
-    // ① 0 mA の CH1 の電圧。
+    // ① 0 mA の CH1 の電圧と、そのときの実際の電流(0 mA 固定にはしない。2026-11-18、人)。
     private async Task CurrentLowAsync(CancellationToken ct)
     {
         SetCurrent(0);
+        var meter = await EnsureCurrentMeterAsync(ct);
         await _clock.Delay(_settings.CurrentSettle, ct);
-        float volts = ReadVolts(_settings.CurrentChannel, "電流");
-        _currentLow = (volts, 0f);
-        _operator.ShowStatus($"① 電流の低点：{F(volts)} V = 0 mA");
+        var (volts, milliamps) = await ReadCurrentPointAsync(AutoCalibrationStage.CurrentLow, meter, ct);
+        if (Math.Abs(milliamps) > _settings.LowCurrentToleranceMilliamps)
+            await AskCurrentDeviationAsync($"① 0 mA の指令で {F(milliamps)} mA 流れています（±{F(_settings.LowCurrentToleranceMilliamps)} mA を超えています）。\r\n" +
+                "マルチメータの配線・アンプ・入れた値を確かめてください。", ct);
+        _currentLow = (volts, (float)milliamps);
+        _operator.ShowStatus($"① 電流の低点：{F(volts)} V = {F((float)milliamps)} mA");
     }
 
-    // ② 5 V 固定(30 mA の指令)。実際の電流は人がマルチメータを見て入れる(決まったこと 14・23)。
+    // ② 5 V 固定(30 mA の指令)。実際の電流は 7351E で読む(見つからなければ人が入れる。決まったこと 23、2026-11-18)。
     private async Task CurrentHighAsync(CancellationToken ct)
     {
         SetCurrent(_settings.CommandVolts);
+        var meter = await EnsureCurrentMeterAsync(ct);
         await _clock.Delay(_settings.CurrentSettle, ct);
-        double? milliamps = await _operator.AskActualCurrentAsync(ct);
-        if (milliamps is null) throw new OperationCanceledException("校正の自動読み取りを中止しました。");
-        if (!double.IsFinite(milliamps.Value) || milliamps.Value <= 0)
-            throw new InvalidDataException("マルチメータの電流は 0 より大きい数で入れてください。");
-        float volts = ReadVolts(_settings.CurrentChannel, "電流");
+        var (volts, milliamps) = await ReadCurrentPointAsync(AutoCalibrationStage.CurrentHigh, meter, ct);
         // 30 mA が出ていれば、低点からはっきり上がる(アンプの設定で約 1〜5 V)。「低点以下」だけを見ると、出力が止まっていても
         // ノイズで少し上なら通り、0 mA のままの電圧を高点にした(2026-11-14、全体見直し・区切り 4)。
         if (_currentLow is { } low && volts - low.Volts < _settings.MinCurrentRiseVolts)
             throw new InvalidDataException($"電流の高点の電圧 {F(volts)} V が、低点 {F(low.Volts)} V から {F(_settings.MinCurrentRiseVolts)} V 以上 上がっていません。" +
                 "WF1973 の出力・アンプの電源・配線を確かめてください。");
-        _currentHigh = (volts, (float)milliamps.Value);
-        _operator.ShowStatus($"② 電流の高点：{F(volts)} V = {F((float)milliamps.Value)} mA");
+        if (milliamps < _settings.MinHighCurrentMilliamps)
+            await AskCurrentDeviationAsync($"② 30 mA の指令で {F(milliamps)} mA しか流れていません（{F(_settings.MinHighCurrentMilliamps)} mA 未満）。\r\n" +
+                "アンプの電源・配線・マルチメータのレンジ・入れた値を確かめてください。", ct);
+        if (_currentLow is { } lowPoint && (float)milliamps <= lowPoint.Milliamps)
+            throw new InvalidDataException($"電流の高点 {F(milliamps)} mA が低点 {F(lowPoint.Milliamps)} mA 以下です。配線を確かめてください。");
+        _currentHigh = (volts, (float)milliamps);
+        _operator.ShowStatus($"② 電流の高点：{F(volts)} V = {F((float)milliamps)} mA");
+    }
+
+    // 電圧(NR-500 の 1 秒平均)と電流を、同じ時間帯に読む。マルチメータが無いときは、人が入れた電流のあとで電圧を読む。
+    private async Task<(float Volts, double Milliamps)> ReadCurrentPointAsync(AutoCalibrationStage stage, ICurrentMeter? meter, CancellationToken ct)
+    {
+        if (meter is null)
+        {
+            double? entered = await _operator.AskActualCurrentAsync(stage, ct);
+            if (entered is not { } value) throw new OperationCanceledException("校正の自動読み取りを中止しました。");
+            if (!double.IsFinite(value) || (stage == AutoCalibrationStage.CurrentHigh && value <= 0))
+                throw new InvalidDataException("マルチメータの電流は数で入れてください（② は 0 より大きい数）。");
+            return (await ReadVoltsAsync(_settings.CurrentChannel, "電流", ct), value);
+        }
+        var reading = meter.ReadMilliampsAsync(ct);
+        float volts = await ReadVoltsAsync(_settings.CurrentChannel, "電流", ct);
+        double milliamps = await reading;
+        if (!double.IsFinite(milliamps)) throw new InvalidDataException($"マルチメータ（{meter.Name}）の電流を読めません。");
+        return (volts, milliamps);
+    }
+
+    // 電流が外れていたら知らせる(「やり直す」はこの段の最初から。2026-11-18、AI の案を人が承認)。
+    private async Task AskCurrentDeviationAsync(string message, CancellationToken ct)
+    {
+        var choice = await _operator.AskDeviationAsync(message, "やり直す", ct);
+        if (choice == DeviationChoice.Readjust) throw new RedoStageException();
+        if (choice == DeviationChoice.Abort) throw new OperationCanceledException("校正の自動読み取りを中止しました。");
+    }
+
+    // 7351E を探す。見つからなければ「もう一度探す / 電流を手で入れる / 中止」(2026-11-18、人が選んだ)。手で入れるなら null。
+    private async Task<ICurrentMeter?> EnsureCurrentMeterAsync(CancellationToken ct)
+    {
+        if (_manualCurrent) return null;
+        if (_currentMeter is not null) return _currentMeter;
+        while (true)
+        {
+            _operator.ShowStatus("マルチメータ（7351E）を探しています。");
+            try
+            {
+                _currentMeter = await _currentMeters.FindAsync(ct);
+                CurrentMeterName = _currentMeter.Name;
+                _operator.ShowStatus($"マルチメータ（{_currentMeter.Name}）につなぎました。");
+                return _currentMeter;
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                var choice = await _operator.AskCurrentMeterMissingAsync(
+                    "マルチメータ（7351E）が見つかりません。\r\n" + ex.Message + "\r\n\r\n" +
+                    "USB と電源を確かめて「もう一度探す」を押すか、「電流を手で入れる」を押してください（電圧は自動で読みます）。", ct);
+                if (choice == CurrentMeterMissingChoice.Retry) continue;
+                if (choice == CurrentMeterMissingChoice.Abort) throw new OperationCanceledException("校正の自動読み取りを中止しました。", ex);
+                _manualCurrent = true;
+                _operator.ShowStatus("電流は手で入れます（電圧は自動で読みます）。");
+                return null;
+            }
+        }
     }
 
     // ③ 大気側で落ち着いたらゼロ調整し、0 点を確かめて記録する(決まったこと 20・21・27、AI の案 8)。
@@ -146,7 +240,7 @@ internal sealed class AutoCalibrationProcedure
             // 外れているあいだはゼロ調整しない。
             var choice = await _operator.AskDeviationAsync(
                 $"③ 大気圧のはずが {F(settled)} kPa で落ち着きました（±{F(_settings.LowDeviationKpa)} kPa を超えています）。\r\n" +
-                "ボールバルブ①が閉じ、②が開いているか確かめてください。", ct);
+                "ボールバルブ①が閉じ、②が開いているか確かめてください。", "合わせ直す", ct);
             if (choice == DeviationChoice.UseAsIs) break;
             if (choice == DeviationChoice.Abort) throw new OperationCanceledException("校正の自動読み取りを中止しました。");
         }
@@ -171,7 +265,7 @@ internal sealed class AutoCalibrationProcedure
             if (!again) throw new OperationCanceledException("校正の自動読み取りを中止しました。");
             round = 0;
         }
-        float volts = ReadVolts(_settings.PressureChannel, "圧力");
+        float volts = await ReadVoltsAsync(_settings.PressureChannel, "圧力", ct);
         _zero = new CalibrationZeroCheck(zero, adjustments, Math.Abs(zero) <= _settings.ZeroIdealKpa, _settings.ZeroIdealKpa, _settings.ZeroAllowedKpa);
         _pressureLow = (volts, (float)zero);
         _operator.ShowStatus($"③ 圧力の低点：{F(volts)} V = {F((float)zero)} kPa（0 点 {_zero.Describe()}）");
@@ -191,7 +285,7 @@ internal sealed class AutoCalibrationProcedure
             await WaitRegulatorAdjustedAsync(gauge, target, ct);
             double settled = await WaitSettledAsync(gauge, "④ 圧力の高点", ct);
             // 落ち着いたときの CH2 の電圧を、その場で読む(知らせのあいだに変わらないように)。
-            float volts = ReadVolts(_settings.PressureChannel, "圧力");
+            float volts = await ReadVoltsAsync(_settings.PressureChannel, "圧力", ct);
             // 高点が低点より上かを、この段の中で確かめる(止まったら④からやり直せる)。それまでは④のあとの最後の確かめで止まり、
             // 手入力用の文が出て、①〜③の値も消えた(2026-11-14、全体見直し・区切り 4)。
             if (_pressureLow is { } low && volts <= low.Volts)
@@ -201,7 +295,7 @@ internal sealed class AutoCalibrationProcedure
             {
                 var choice = await _operator.AskDeviationAsync(
                     $"④ {F(settled)} kPa で落ち着きました。目標 {target} kPa から ±{F(limit)} kPa（{_settings.HighDeviationRatio:P0}）を超えています。\r\n" +
-                    "ボールバルブ①が開き、②が閉じているか、レギュレーターを確かめてください。", ct);
+                    "ボールバルブ①が開き、②が閉じているか、レギュレーターを確かめてください。", "合わせ直す", ct);
                 if (choice == DeviationChoice.Readjust) continue;
                 if (choice == DeviationChoice.Abort) throw new OperationCanceledException("校正の自動読み取りを中止しました。");
             }
@@ -289,9 +383,9 @@ internal sealed class AutoCalibrationProcedure
         _currentVolts = volts;
     }
 
-    private float ReadVolts(int channel, string name)
+    private async Task<float> ReadVoltsAsync(int channel, string name, CancellationToken ct)
     {
-        double volts = _meter.ReadVolts(channel);
+        double volts = await _meter.ReadVoltsAsync(channel, ct);
         if (!double.IsFinite(volts)) throw new InvalidDataException($"NR-500 CH{channel}（{name}）の電圧を読めません。");
         return (float)volts;
     }
@@ -320,11 +414,22 @@ internal sealed class AutoCalibrationProcedure
         catch (Exception ex) { _operator.ShowStatus("GC16 を前面キーが効く状態に戻せません（電源を入れ直すと戻ります）：" + ex.Message); }
     }
 
-    // 終わったら(成功・中止・失敗とも): WF1973 の出力を止め、GC16 を RM,0 に戻し、弁を測定の向き(①開・②閉)に戻す(AI の案 7、決まったこと 19)。
+    private void ReleaseCurrentMeter()
+    {
+        var meter = _currentMeter;
+        _currentMeter = null;
+        if (meter is null) return;
+        try { meter.Dispose(); }
+        catch (Exception ex) { _operator.ShowStatus("マルチメータとの通信を閉じられません：" + ex.Message); }
+    }
+
+    // 終わったら(成功・中止・失敗とも): WF1973 の出力を止め、GC16 を RM,0 に戻し、7351E を離し、弁を測定の向き(①開・②閉)に戻す(AI の案 7、決まったこと 19)。
+    // LOGGER(校正用の雛形の測定)は校正画面を閉じるまで続ける(2026-11-18、人が選んだ)ので、ここでは止めない。
     private async Task CleanUpAsync()
     {
         StopCurrent();
         ReleaseGauge();
+        ReleaseCurrentMeter();
         if (_valvePosition != ValvePosition.Measurement)
         {
             try
@@ -353,17 +458,21 @@ internal sealed class AutoCalibrationProcedure
 internal enum AutoCalibrationStage { CurrentLow, CurrentHigh, PressureLow, PressureHigh }
 internal enum WaitChoice { KeepWaiting, RedoStage, Abort }
 internal enum DeviationChoice { Readjust, UseAsIs, Abort }
+internal enum CurrentMeterMissingChoice { Retry, Manual, Abort }
 
-// 読み取りの決まり。実機で変えられるように 1 か所にまとめる(決まったこと 20〜24・27)。
+// 読み取りの決まり。実機で変えられるように 1 か所にまとめる(決まったこと 20〜24・27、2026-11-18 の直し)。
 internal sealed record AutoCalibrationSettings
 {
     public static readonly AutoCalibrationSettings Default = new();
     // ②〜④ で WF1973 に出す電圧(30 mA の指令。1 V = 6 mA)。
     public double CommandVolts { get; init; } = 5.0;
-    // ①② で出力を変えてから CH1 を読むまでの待ち。
+    // ①② で出力を変えてから読み始めるまでの待ち。
     public TimeSpan CurrentSettle { get; init; } = TimeSpan.FromSeconds(1);
     // ② の電圧が ① からこれだけ上がっていなければ、30 mA が出ていないとみなして止める(AI が決めた値。アンプの設定で高点は約 1〜5 V)。
     public double MinCurrentRiseVolts { get; init; } = 0.3;
+    // 電流の外れの知らせ(2026-11-18、AI の案を人が承認): ① は 0 mA から ±1 mA、② は 25 mA 未満。
+    public double LowCurrentToleranceMilliamps { get; init; } = 1.0;
+    public double MinHighCurrentMilliamps { get; init; } = 25.0;
     // GC16 を読む間隔(表示の更新は 0.3 秒ごと)。
     public TimeSpan SampleInterval { get; init; } = TimeSpan.FromSeconds(0.3);
     // 落ち着いた: 直近 5 秒の値がすべて、最後の値から ±0.2 kPa 以内。
@@ -382,6 +491,16 @@ internal sealed record AutoCalibrationSettings
     public double HighDeviationRatio { get; init; } = 0.10;
     public int CurrentChannel { get; init; } = 1;
     public int PressureChannel { get; init; } = 2;
+    // NR-500 の電圧は、読むと決めた時点よりあとに記録された、この長さの分を平均する(2026-11-18、人)。
+    public TimeSpan VoltageAverageWindow { get; init; } = TimeSpan.FromSeconds(1);
+    // LOGGER から PC に点が届く遅れの分、平均の窓の後ろに足して待つ(実機で平均 0.07 秒・最大 0.17 秒。AS100201 の確かめ)。
+    public TimeSpan VoltageDeliveryMargin { get; init; } = TimeSpan.FromSeconds(0.3);
+    // 平均に使う点の最少数。
+    public int MinVoltagePoints { get; init; } = 5;
+    // Start してから記録の点数が増え始めるまで・平均の点がそろうまで待つ上限。
+    public TimeSpan LoggerStartTimeout { get; init; } = TimeSpan.FromSeconds(5);
+    public TimeSpan VoltageReadTimeout { get; init; } = TimeSpan.FromSeconds(5);
+    public TimeSpan LoggerPollInterval { get; init; } = TimeSpan.FromSeconds(0.1);
 
     public void Validate()
     {
@@ -391,8 +510,12 @@ internal sealed record AutoCalibrationSettings
             CurrentSettle < TimeSpan.Zero || ZeroSettle < TimeSpan.Zero)
             throw new ArgumentOutOfRangeException(nameof(WaitLimit), "待ち時間を確かめてください。");
         if (StableToleranceKpa <= 0 || ZeroIdealKpa <= 0 || ZeroAllowedKpa < ZeroIdealKpa || ZeroRetries < 0 ||
-            LowDeviationKpa <= 0 || HighDeviationRatio <= 0 || !(MinCurrentRiseVolts > 0))
+            LowDeviationKpa <= 0 || HighDeviationRatio <= 0 || !(MinCurrentRiseVolts > 0) ||
+            !(LowCurrentToleranceMilliamps > 0) || !(MinHighCurrentMilliamps > 0))
             throw new ArgumentOutOfRangeException(nameof(ZeroAllowedKpa), "落ち着き・0 点・外れの基準を確かめてください。");
+        if (VoltageAverageWindow <= TimeSpan.Zero || VoltageDeliveryMargin < TimeSpan.Zero || MinVoltagePoints < 1 ||
+            LoggerStartTimeout <= TimeSpan.Zero || VoltageReadTimeout <= TimeSpan.Zero || LoggerPollInterval <= TimeSpan.Zero)
+            throw new ArgumentOutOfRangeException(nameof(VoltageAverageWindow), "電圧の平均・LOGGER の待ちを確かめてください。");
     }
 }
 
@@ -406,7 +529,14 @@ internal sealed record CalibrationZeroCheck(double ValueKpa, int Adjustments, bo
         $"、ゼロ調整 {Adjustments} 回）";
 }
 
-internal sealed record AutoCalibrationResult(As110Calibration Calibration, ProductModel Model, CalibrationZeroCheck Zero,
+// 「マルチメータで読み取る」の結果。MeterName は使ったマルチメータ(電流を人が入れたときは null)。
+internal sealed record CurrentReadingResult(ScalingPoints Current, string? MeterName)
+{
+    public string MethodText => MeterName is null ? "電圧を読み取り、電流は手で入れた" : $"マルチメータで読み取り（{MeterName}）";
+}
+
+// 「GC16 で読み取る」の結果。
+internal sealed record PressureReadingResult(ScalingPoints Pressure, ProductModel Model, CalibrationZeroCheck Zero,
     TimeSpan? SinceGaugeConfirmed, string GaugePort);
 
 // GC16(通信で操作する状態にしたもの)。Dispose で前面キーが効く状態(RM,0)に戻して手放す。
@@ -425,6 +555,19 @@ internal interface IPressureGaugeLocator
     Task<IPressureGauge> FindAsync(CancellationToken cancellationToken);
 }
 
+// マルチメータ(7351E)。Dispose で通信を閉じる(本体の前面で読める状態に戻す)。
+internal interface ICurrentMeter : IDisposable
+{
+    string Name { get; }
+    Task<double> ReadMilliampsAsync(CancellationToken cancellationToken);
+}
+
+// マルチメータを探してつなぐ。見つからなければ例外。
+internal interface ICurrentMeterLocator
+{
+    Task<ICurrentMeter> FindAsync(CancellationToken cancellationToken);
+}
+
 // 電流の指令(WF1973 の DC 出力)。
 internal interface ICurrentCommandOutput
 {
@@ -432,10 +575,13 @@ internal interface ICurrentCommandOutput
     void Stop();
 }
 
-// NR-500 の今の電圧(CH 番号は 1 始まり)。
+// NR-500 の電圧(CH 番号は 1 始まり)。LOGGER が測定しているあいだしか読めないので、校正用の雛形で測定させて読む(2026-11-18)。
 internal interface IChannelVoltageMeter
 {
-    double ReadVolts(int channel);
+    // 読み取りの前に、校正用の雛形を開いて測定させる(済んでいれば何もしない)。
+    Task PrepareAsync(CancellationToken cancellationToken);
+    // 読むと決めた時点よりあとに記録された点の平均(V)。
+    Task<double> ReadVoltsAsync(int channel, CancellationToken cancellationToken);
 }
 
 // 弁①(供給側)・②(大気側)の切り替え(AI の案 3)。どの実装でも①と②を同時に開けない(開いている方を閉じてから、もう一方を開ける)。
@@ -459,12 +605,15 @@ internal interface IAutoCalibrationOperator
     Task<bool> ConfirmAsync(string instruction, CancellationToken cancellationToken);
     // 指示を出して OK を待つ(中止は選べない。後片付け用)。
     Task NotifyAsync(string instruction);
-    // ② マルチメータの電流(mA)。null = 中止。
-    Task<double?> AskActualCurrentAsync(CancellationToken cancellationToken);
+    // ①② マルチメータの電流(mA)を人が入れる(7351E が見つからないとき)。null = 中止。
+    Task<double?> AskActualCurrentAsync(AutoCalibrationStage stage, CancellationToken cancellationToken);
+    // 7351E が見つからない: もう一度探す / 電流を手で入れる / 中止。
+    Task<CurrentMeterMissingChoice> AskCurrentMeterMissingAsync(string message, CancellationToken cancellationToken);
     // ④ 人がレギュレーターを目標に合わせて「合わせた」を押すのを待つ。false = 中止。
     Task<bool> WaitRegulatorAdjustedAsync(double targetKilopascals, CancellationToken cancellationToken);
     Task<WaitChoice> AskNotSettledAsync(string message, CancellationToken cancellationToken);
-    Task<DeviationChoice> AskDeviationAsync(string message, CancellationToken cancellationToken);
+    // 外れの知らせ。readjustLabel は Readjust のボタンの文字(③④ は「合わせ直す」、①② は「やり直す」)。
+    Task<DeviationChoice> AskDeviationAsync(string message, string readjustLabel, CancellationToken cancellationToken);
     // 0 点が合わない: true = もう一度、false = 中止。
     Task<bool> AskZeroRetryAsync(string message, CancellationToken cancellationToken);
     // 通信の失敗: true = 再開(止まった段の最初から)、false = 中止。

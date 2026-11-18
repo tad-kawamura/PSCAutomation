@@ -2,14 +2,16 @@ using System.Globalization;
 
 namespace PSCAutomation.Apps.AS110AllCheck;
 
-// 「GC16 で読み取る」の画面(校正の自動読み取り 段階 1。2026-11-13、SPEC「校正の自動読み取り」)。
-// 開くとすぐ ①〜④ を順に行い、人への指示(ボールバルブの切り替え・マルチメータの値・レギュレーター)はこの画面の中に出す。
-// 読み取れたら閉じて、校正画面の 8 欄に入れる(適用は校正画面で人が押す)。
-// いつでも「中止して手入力に戻る」で止められる。止まったときは後片付け(WF1973 の出力停止・GC16 を RM,0・ボールバルブを測定の向き)をしてから、
+// 校正の読み取りの画面(段階 1。2026-11-13、SPEC「校正の自動読み取り」。2026-11-18 に 2 つに分けた)。
+// 「マルチメータで読み取る」は ①②、「GC16 で読み取る」は ③④ を、開くとすぐ順に行う。
+// 人への指示(ボールバルブの切り替え・マルチメータの値・レギュレーター)はこの画面の中に出す。
+// 読み取れたら閉じて、校正画面の欄に入れる(適用は校正画面で人が押す)。
+// いつでも「中止して手入力に戻る」で止められる。止まったときは後片付け(WF1973 の出力停止・GC16 を RM,0・7351E を離す・ボールバルブを測定の向き)をしてから、
 // 校正画面の手入力に戻る(実機で確かめるまで、自動がうまく行かなくても手入力で必ず測定へ進める。人の指示)。
 internal sealed class AutoCalibrationDialog : Form, IAutoCalibrationOperator
 {
-    private readonly ProductModel _model;
+    private readonly AutoCalibrationKind _kind;
+    private readonly ProductModel? _model;
     private readonly Func<IAutoCalibrationOperator, AutoCalibrationProcedure> _createProcedure;
     private readonly CalibrationInProgressMarker _marker;
     private readonly Action<string> _log;
@@ -26,14 +28,18 @@ internal sealed class AutoCalibrationDialog : Form, IAutoCalibrationOperator
     private bool _running;
     private bool _closeWhenDone;
 
-    public AutoCalibrationDialog(ProductModel model, Func<IAutoCalibrationOperator, AutoCalibrationProcedure> createProcedure,
+    // model は「GC16 で読み取る」のときの型式(目標の供給圧力)。「マルチメータで読み取る」は null。
+    public AutoCalibrationDialog(AutoCalibrationKind kind, ProductModel? model, Func<IAutoCalibrationOperator, AutoCalibrationProcedure> createProcedure,
         CalibrationInProgressMarker marker, Action<string> log)
     {
+        if (kind == AutoCalibrationKind.Pressure) ArgumentNullException.ThrowIfNull(model);
+        _kind = kind;
         _model = model;
         _createProcedure = createProcedure;
         _marker = marker;
         _log = log;
-        Text = "GC16 で読み取る（校正の自動読み取り）";
+        string title = kind == AutoCalibrationKind.Current ? "マルチメータで読み取る" : "GC16 で読み取る";
+        Text = title + "（校正の自動読み取り）";
         Font = SystemFonts.MessageBoxFont;
         AutoScaleMode = AutoScaleMode.Font;
         FormBorderStyle = FormBorderStyle.FixedDialog;
@@ -51,13 +57,15 @@ internal sealed class AutoCalibrationDialog : Form, IAutoCalibrationOperator
         };
         root.Controls.Add(new Label
         {
-            AutoSize = true, Font = new Font(Font.FontFamily, 13, FontStyle.Bold), Text = "GC16 で読み取る", Margin = new Padding(0, 0, 0, 4)
+            AutoSize = true, Font = new Font(Font.FontFamily, 13, FontStyle.Bold), Text = title, Margin = new Padding(0, 0, 0, 4)
         });
         root.Controls.Add(new Label
         {
             AutoSize = true, MaximumSize = new Size(600, 0), Margin = new Padding(0, 0, 0, 8),
-            Text = $"型式 {model.Name} ／ 目標の供給圧力 {model.SupplyPressure} kPa\r\n" +
-                "① 0 mA → ② 30 mA → ③ 大気圧でゼロ調整 → ④ 供給圧力 の順に読み取ります。指示はこの画面に出ます。"
+            Text = kind == AutoCalibrationKind.Current
+                ? "① 0 mA → ② 30 mA の順に、NR-500 CH1 の電圧（LOGGER）とマルチメータ（7351E）の電流を読み取ります。指示はこの画面に出ます。"
+                : $"型式 {model!.Name} ／ 目標の供給圧力 {model.SupplyPressure} kPa\r\n" +
+                  "③ 大気圧でゼロ調整 → ④ 供給圧力 の順に、NR-500 CH2 の電圧（LOGGER）と GC16 の圧力を読み取ります。指示はこの画面に出ます。"
         });
         _statusLabel.AutoSize = true;
         _statusLabel.MaximumSize = new Size(600, 0);
@@ -67,6 +75,7 @@ internal sealed class AutoCalibrationDialog : Form, IAutoCalibrationOperator
         _pressureLabel.AutoSize = true;
         _pressureLabel.Font = new Font(Font.FontFamily, 16, FontStyle.Bold);
         _pressureLabel.Margin = new Padding(0, 0, 0, 8);
+        _pressureLabel.Visible = kind == AutoCalibrationKind.Pressure;
         ShowPressure(null);
         root.Controls.Add(_pressureLabel);
         var prompt = new FlowLayoutPanel
@@ -109,7 +118,9 @@ internal sealed class AutoCalibrationDialog : Form, IAutoCalibrationOperator
         ClearPrompt();
     }
 
-    public AutoCalibrationResult? Result { get; private set; }
+    public CurrentReadingResult? CurrentResult { get; private set; }
+    public PressureReadingResult? PressureResult { get; private set; }
+    private bool Succeeded => CurrentResult is not null || PressureResult is not null;
     // 後片付けで WF1973 の出力を止められなかった(呼び出し側で「出力状態不明」にする)。
     public bool OutputStopFailed { get; private set; }
     // 読み取りを始めたか(WF1973 を DC にしたので、呼び出し側で発振器の設定を戻す)。
@@ -122,15 +133,23 @@ internal sealed class AutoCalibrationDialog : Form, IAutoCalibrationOperator
         AutoCalibrationProcedure? procedure = null;
         try
         {
-            try { _marker.Begin(DateTimeOffset.Now, _model.Name); }
+            try { _marker.Begin(DateTimeOffset.Now, _model?.Name ?? "（電流の読み取り）"); }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
             {
                 ShowStatus("校正中の印を書けません（途中でアプリが落ちたとき、次の起動で後片付けの知らせが出ません）：" + ex.Message);
             }
             procedure = _createProcedure(this);
             Started = true;
-            Result = await procedure.RunAsync(_model, _cancel.Token);
-            ShowStatus("読み取りが終わりました：" + Result.Calibration.Summary);
+            if (_kind == AutoCalibrationKind.Current)
+            {
+                CurrentResult = await procedure.RunCurrentAsync(_cancel.Token);
+                ShowStatus("読み取りが終わりました：" + As110Calibration.DescribePoints(CurrentResult.Current, "mA"));
+            }
+            else
+            {
+                PressureResult = await procedure.RunPressureAsync(_model!, _cancel.Token);
+                ShowStatus("読み取りが終わりました：" + As110Calibration.DescribePoints(PressureResult.Pressure, "kPa"));
+            }
         }
         catch (OperationCanceledException ex)
         {
@@ -147,7 +166,7 @@ internal sealed class AutoCalibrationDialog : Form, IAutoCalibrationOperator
             _marker.Clear();
             _running = false;
         }
-        if (Result is not null)
+        if (Succeeded)
         {
             DialogResult = DialogResult.OK;
             Close();
@@ -163,7 +182,7 @@ internal sealed class AutoCalibrationDialog : Form, IAutoCalibrationOperator
     private void Finish(string message)
     {
         ShowStatus(message);
-        ShowStatus("校正画面に戻って、8 項目を手で入れて「適用」すれば測定へ進めます。");
+        ShowStatus("校正画面に戻って、値を手で入れて「適用」すれば測定へ進めます。");
         ShowPressure(null);
         ClearPrompt();
         _promptLabel.Text = message + "\r\n「閉じて手入力に戻る」を押してください。";
@@ -172,7 +191,7 @@ internal sealed class AutoCalibrationDialog : Form, IAutoCalibrationOperator
     }
 
     // 画面の外で起きた異常(M5Stack の通信切れ)で読み取りを中止する(2026-11-14、全体見直し・区切り 4)。
-    // 通信切れの処理は発振器の出力を止めるので、続けると 30 mA が出ていないまま ③④ を読み取った。後片付けは「中止」と同じ。
+    // 通信切れの処理は発振器の出力を止めるので、続けると 30 mA が出ていないまま読み取った。後片付けは「中止」と同じ。
     private string? _abortReason;
     public void Abort(string reason)
     {
@@ -192,7 +211,7 @@ internal sealed class AutoCalibrationDialog : Form, IAutoCalibrationOperator
             _cancel.Cancel();
             return;
         }
-        DialogResult = Result is null ? DialogResult.Cancel : DialogResult.OK;
+        DialogResult = Succeeded ? DialogResult.OK : DialogResult.Cancel;
         Close();
     }
 
@@ -225,7 +244,7 @@ internal sealed class AutoCalibrationDialog : Form, IAutoCalibrationOperator
 
     public void ShowPressure(double? kilopascals) =>
         _pressureLabel.Text = "GC16：" + (kilopascals is { } v ? v.ToString("0.00", CultureInfo.InvariantCulture) + " kPa" : "--- kPa") +
-            $"（目標 {_model.SupplyPressure} kPa）";
+            (_model is null ? "" : $"（目標 {_model.SupplyPressure} kPa）");
 
     public Task<bool> ConfirmAsync(string instruction, CancellationToken cancellationToken) =>
         PromptAsync(instruction, [("OK", true), ("中止", false)], cancellationToken);
@@ -233,21 +252,24 @@ internal sealed class AutoCalibrationDialog : Form, IAutoCalibrationOperator
     public Task NotifyAsync(string instruction) =>
         PromptAsync(instruction, [("OK", true)], CancellationToken.None);
 
-    public async Task<double?> AskActualCurrentAsync(CancellationToken cancellationToken)
+    // ①② マルチメータが見つからないとき、人が表示(mA)を入れる。① は 0 付近・負もありうるので数なら受け付ける。② は 0 より大きい数。
+    public async Task<double?> AskActualCurrentAsync(AutoCalibrationStage stage, CancellationToken cancellationToken)
     {
+        bool high = stage == AutoCalibrationStage.CurrentHigh;
         var completion = new TaskCompletionSource<double?>(TaskCreationOptions.RunContinuationsAsynchronously);
         ClearPrompt();
-        _promptLabel.Text = "② WF1973 から 30 mA の指令（5 V）を出しています。デジタルマルチメータの表示（mA）を入れて「OK」を押してください。\r\n小数点は . です（例 29.9）。";
+        _promptLabel.Text = (high ? "② WF1973 から 30 mA の指令（5 V）を出しています。" : "① WF1973 の出力を 0 mA にしています。") +
+            "デジタルマルチメータの表示（mA）を入れて「OK」を押してください。\r\n小数点は . です（例 " + (high ? "29.9" : "0.01") + "）。";
         _inputBox.Text = "";
         _inputPanel.Visible = true;
         AddChoice("OK", () =>
         {
             if (double.TryParse(_inputBox.Text.Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out double value) &&
-                double.IsFinite(value) && value > 0)
+                double.IsFinite(value) && (!high || value > 0))
                 completion.TrySetResult(value);
             else
             {
-                _promptError.Text = "0 より大きい数を入れてください（小数点は .）。";
+                _promptError.Text = (high ? "0 より大きい数" : "数") + "を入れてください（小数点は .）。";
                 _promptError.Visible = true;
             }
         });
@@ -260,6 +282,10 @@ internal sealed class AutoCalibrationDialog : Form, IAutoCalibrationOperator
         }
     }
 
+    public Task<CurrentMeterMissingChoice> AskCurrentMeterMissingAsync(string message, CancellationToken cancellationToken) =>
+        PromptAsync(message, [("もう一度探す", CurrentMeterMissingChoice.Retry), ("電流を手で入れる", CurrentMeterMissingChoice.Manual),
+            ("中止", CurrentMeterMissingChoice.Abort)], cancellationToken);
+
     public Task<bool> WaitRegulatorAdjustedAsync(double targetKilopascals, CancellationToken cancellationToken) =>
         PromptAsync($"④ レギュレーターを目標 {targetKilopascals:0.#} kPa に合わせてください。上の GC16 の値を見ながら回し、合わせたら「合わせた」を押してください。",
             [("合わせた", true), ("中止", false)], cancellationToken);
@@ -267,8 +293,8 @@ internal sealed class AutoCalibrationDialog : Form, IAutoCalibrationOperator
     public Task<WaitChoice> AskNotSettledAsync(string message, CancellationToken cancellationToken) =>
         PromptAsync(message, [("待ち続ける", WaitChoice.KeepWaiting), ("この段をやり直す", WaitChoice.RedoStage), ("中止", WaitChoice.Abort)], cancellationToken);
 
-    public Task<DeviationChoice> AskDeviationAsync(string message, CancellationToken cancellationToken) =>
-        PromptAsync(message, [("合わせ直す", DeviationChoice.Readjust), ("このまま使う", DeviationChoice.UseAsIs), ("中止", DeviationChoice.Abort)], cancellationToken);
+    public Task<DeviationChoice> AskDeviationAsync(string message, string readjustLabel, CancellationToken cancellationToken) =>
+        PromptAsync(message, [(readjustLabel, DeviationChoice.Readjust), ("このまま使う", DeviationChoice.UseAsIs), ("中止", DeviationChoice.Abort)], cancellationToken);
 
     public Task<bool> AskZeroRetryAsync(string message, CancellationToken cancellationToken) =>
         PromptAsync(message, [("もう一度", true), ("中止", false)], cancellationToken);
@@ -310,3 +336,6 @@ internal sealed class AutoCalibrationDialog : Form, IAutoCalibrationOperator
         }
     }
 }
+
+// 読み取りの種類(2026-11-18): 電流(①②、マルチメータ)と圧力(③④、GC16)。
+internal enum AutoCalibrationKind { Current, Pressure }

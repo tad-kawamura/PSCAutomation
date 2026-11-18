@@ -22,6 +22,8 @@
     <Compile Include="../../Production/SupplyPressure.cs" Link="App/SupplyPressure.cs" />
     <Compile Include="../../Calibration/AutoCalibration.cs" Link="App/AutoCalibration.cs" />
     <Compile Include="../../Calibration/CalibrationInProgressMarker.cs" Link="App/CalibrationInProgressMarker.cs" />
+    <Compile Include="../../Calibration/CalibrationLoggerReader.cs" Link="App/CalibrationLoggerReader.cs" />
+    <Compile Include="../../Calibration/TodayCalibration.cs" Link="App/TodayCalibration.cs" />
     <Compile Include="../../Excel/TransferSettings.cs" Link="App/TransferSettings.cs" />
     <Compile Include="../../Excel/WorkbookEdits.cs" Link="App/WorkbookEdits.cs" />
     <!-- 発振器の設定値の型だけを使う(Instruments は NI-VISA を要るので参照しない) -->

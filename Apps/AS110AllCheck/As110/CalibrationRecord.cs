@@ -7,8 +7,9 @@ namespace PSCAutomation.Apps.AS110AllCheck;
 // 校正はモードを選んだ直後(保存先を選ぶ前)に行うので、校正の適用と保存先の選択の両方がそろった時点で書く。
 // exe の隣や %LOCALAPPDATA% には置かない。
 // Reading は読み取り方など(2026-11-13 追加、SPEC「校正の自動読み取り」)。無ければ前と同じ中身。
+// ReadingLines は今日の校正値から写す行(校正した時刻・読み取り方など。2026-11-18)。Reading があればそちらを書く。
 internal sealed record CalibrationRecord(DateTimeOffset AppliedAt, As110Calibration Calibration,
-    string Mode, string Hardware, string TemplateFileName, CalibrationReading? Reading = null)
+    string Mode, string Hardware, string TemplateFileName, CalibrationReading? Reading = null, IReadOnlyList<string>? ReadingLines = null)
 {
     public void Validate()
     {
@@ -28,7 +29,9 @@ internal sealed record CalibrationRecord(DateTimeOffset AppliedAt, As110Calibrat
         text.AppendLine($"雛形: {TemplateFileName}");
         text.AppendLine("CH1 電流: " + Describe(Calibration.Current, "mA"));
         text.AppendLine("CH2 圧力: " + Describe(Calibration.Pressure, "kPa"));
-        Reading?.AppendTo(text);
+        if (Reading is not null) Reading.AppendTo(text);
+        else if (ReadingLines is not null)
+            foreach (string line in ReadingLines) text.AppendLine(line);
         return text.ToString();
     }
 
@@ -39,23 +42,38 @@ internal sealed record CalibrationRecord(DateTimeOffset AppliedAt, As110Calibrat
 
 // 校正値の読み取り方(2026-11-13、人が承認)。校正記録に、読み取り方・目標の供給圧力・GC16 との通信確認からの経過時間・0 点の確かめの結果を書く。
 // 手入力のときは経過時間・0 点の結果は書かない(GaugePort・SinceGaugeConfirmed・Zero が無い)。
-// EditedAfterRead: GC16 で読み取ったあと、適用の前に人が 8 欄のどれかを手で直した。
+// EditedAfterRead: GC16 で読み取ったあと、適用の前に人が圧力の 4 欄のどれかを手で直した。
+// CurrentMethod: 電流(①②)の読み取り方(2026-11-18、「マルチメータで読み取る」)。null は手入力。CurrentEditedAfterRead は電流の 4 欄を手で直した。
 internal sealed record CalibrationReading(bool ReadWithGauge, ProductModel? Model, string? GaugePort = null,
-    TimeSpan? SinceGaugeConfirmed = null, string? Zero = null, bool EditedAfterRead = false)
+    TimeSpan? SinceGaugeConfirmed = null, string? Zero = null, bool EditedAfterRead = false,
+    string? CurrentMethod = null, bool CurrentEditedAfterRead = false)
 {
     public static CalibrationReading Manual(ProductModel? model) => new(false, model);
 
-    public string MethodText => !ReadWithGauge ? "手入力" :
-        $"GC16 で読み取り（{GaugePort}）" + (EditedAfterRead ? "。そのあと手で直した" : "");
+    public string MethodText
+    {
+        get
+        {
+            if (!ReadWithGauge && CurrentMethod is null) return "手入力";
+            string current = CurrentMethod is null ? "手入力" : CurrentMethod + (CurrentEditedAfterRead ? "。そのあと手で直した" : "");
+            string pressure = !ReadWithGauge ? "手入力" : $"GC16 で読み取り（{GaugePort}）" + (EditedAfterRead ? "。そのあと手で直した" : "");
+            return $"電流 {current} ／ 圧力 {pressure}";
+        }
+    }
+
+    public IEnumerable<string> Lines()
+    {
+        yield return "読み取り方: " + MethodText;
+        yield return "目標の供給圧力: " + (Model is null ? "型式を選んでいない" : $"{Model.SupplyPressure} kPa（{Model.Name}）");
+        if (!ReadWithGauge) yield break;
+        yield return "GC16 との通信確認からゼロ調整までの経過時間: " +
+            (SinceGaugeConfirmed is { } elapsed ? $"{(int)elapsed.TotalMinutes} 分 {elapsed.Seconds} 秒" : "不明");
+        yield return "0 点の確かめ: " + (Zero ?? "不明");
+    }
 
     public void AppendTo(StringBuilder text)
     {
-        text.AppendLine("読み取り方: " + MethodText);
-        text.AppendLine("目標の供給圧力: " + (Model is null ? "型式を選んでいない" : $"{Model.SupplyPressure} kPa（{Model.Name}）"));
-        if (!ReadWithGauge) return;
-        text.AppendLine("GC16 との通信確認からゼロ調整までの経過時間: " +
-            (SinceGaugeConfirmed is { } elapsed ? $"{(int)elapsed.TotalMinutes} 分 {elapsed.Seconds} 秒" : "不明"));
-        text.AppendLine("0 点の確かめ: " + (Zero ?? "不明"));
+        foreach (string line in Lines()) text.AppendLine(line);
     }
 }
 

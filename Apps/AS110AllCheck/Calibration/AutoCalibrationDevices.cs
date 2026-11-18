@@ -59,29 +59,52 @@ internal sealed class GeneratorCurrentOutput(IFunctionGeneratorSession generator
     public void Stop() => generator.StopOutput();
 }
 
-// NR-500 の今の電圧(換算前の値)を LOGGER から読む。LOGGER にファイルが開いていなければ、そのモードの雛形を開く(校正は雛形を読み込む前に行うため)。
-// 未確認(SPEC「未確認」): GetCurrentRawValue が測定していないときも値を返すか、返す値が CH の電圧(V)そのものか。
-internal sealed class LoggerChannelVoltageMeter(WaveLoggerSession logger, Func<string> templatePath) : IChannelVoltageMeter
+internal sealed class WaveLoggerCalibrationSource(WaveLoggerSession logger) : ICalibrationLoggerSource
 {
     private const int Unit = 1;
-    // この読み取りのために雛形を開いたか(校正をやめたときに閉じるため)。
-    public bool OpenedTemplate { get; private set; }
+    public bool HasActiveFile() => logger.HasActiveFile();
+    public long OpenFile(string path) => logger.OpenFile(path);
+    public long CloseActiveFile() => logger.CloseActiveFile();
+    public long GetState() => logger.GetState();
+    public long Start() => logger.Start();
+    public void Stop() => logger.Stop();
+    public long GetDataCount() => logger.GetDataCount();
 
-    public double ReadVolts(int channel)
+    public float[] ReadRaw(int channelIndex, long start, int count)
     {
-        if (!logger.HasActiveFile())
-        {
-            string path = templatePath();
-            long result = logger.OpenFile(path);
-            if (result != 0)
-                throw new InvalidOperationException($"電圧を読むために LOGGER で雛形を開けませんでした（戻り値 {result}）。{Path.GetFileName(path)}");
-            OpenedTemplate = true;
-        }
-        // メーカー API のチャンネル番号は 0 始まり(xdt の CH 番号 − 1)。
-        float? value = logger.GetCurrentRawValue(Unit, channel - 1);
-        return value ?? throw new InvalidDataException(
-            $"LOGGER から CH{channel} の今の値を読めません（無効値）。NR-500 の接続と LOGGER の状態を確かめてください。");
+        var block = logger.ReadRawData(Unit, [channelIndex], start);
+        float[] values = block.Values[0];
+        return values.Length <= count ? values : values[..count];
     }
+}
+
+// マルチメータ ADCMT 7351E(USB)。全アプリ共通の部品をそのまま使う(AS110NoiseTest と同じ。2026-11-18)。
+// 設定は部品の既定(DC 電流・200 mA レンジ・バス トリガー・オートゼロ)。通信は待ちがあるので別のスレッドで行う。
+internal sealed class Adcmt7351ELocator : ICurrentMeterLocator
+{
+    public Task<ICurrentMeter> FindAsync(CancellationToken cancellationToken) => Task.Run<ICurrentMeter>(() =>
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        var session = Adcmt7351ESession.Connect();
+        try
+        {
+            session.ApplySettings(new Adcmt7351ESettings());
+            return new Adcmt7351ECurrentMeter(session);
+        }
+        catch
+        {
+            session.Dispose();
+            throw;
+        }
+    }, cancellationToken);
+}
+
+internal sealed class Adcmt7351ECurrentMeter(Adcmt7351ESession session) : ICurrentMeter
+{
+    public string Name => "7351E";
+    public Task<double> ReadMilliampsAsync(CancellationToken cancellationToken) => Task.Run(session.ReadMilliamps, cancellationToken);
+    // トリガーを IMMEDIATE に戻して閉じる(前面で読める状態。Adcmt7351ESession.Dispose)。
+    public void Dispose() => session.Dispose();
 }
 
 // 前回 GC16 を見つけた COM 番号(%LOCALAPPDATA%\AS110AllCheck\GC16のCOM番号.txt)。読めなければ null、書けなくても止めない。

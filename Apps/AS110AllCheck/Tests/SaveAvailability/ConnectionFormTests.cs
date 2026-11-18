@@ -19,6 +19,7 @@ internal static class ConnectionFormTests
         }, null, 60000, Timeout.Infinite);
         CaptureAndStart(assembly);
         ModalDialog(assembly);
+        TodayCalibrationFlow(assembly);
     }
 
     private sealed class Rig
@@ -56,6 +57,69 @@ internal static class ConnectionFormTests
         var closing = Stopwatch.StartNew();
         while (!form.IsDisposed && closing.Elapsed < TimeSpan.FromSeconds(10)) { Application.DoEvents(); Thread.Sleep(5); }
         if (!form.IsDisposed) throw new Exception("Connection test form did not close");
+    }
+
+    // 1 日 1 回の流れ(2026-11-18、SPEC「段階 1 の直しと 1 日 1 回の流れ」): 今日の校正値のファイルを読み、校正画面を出さずにモードの雛形に入れて読み込む。
+    // 前の日の値は使わない。校正欄のボタンは 今日の校正値なし →「校正値を入力」、あるが未読み込み →「雛形を読み込む」、読み込み済み →「校正し直す」。
+    // (M5Stack が無いので接続済みにはならず、接続確認のあとの自動の校正画面・モード欄の止め方はここでは通せない。実機で確かめる)
+    private static void TodayCalibrationFlow(Assembly assembly)
+    {
+        string template = Path.Combine(AppContext.BaseDirectory, "雛形", "AS110データ調整・データ取り用.xdt");
+        var rig = Create(assembly, template);
+        _ = rig.Form.Handle;
+        string folder = Path.Combine(Path.GetTempPath(), "AS110AllCheck-today-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            rig.Set("_hardwareDetected", true); rig.Set("_detectedHardwareName", "NR-500"); rig.Set("_modeSelected", true);
+            rig.Flow.GetType().GetProperty("Mode")!.SetValue(rig.Flow, Enum.Parse(assembly.GetType("PSCAutomation.Apps.AS110AllCheck.TestMode")!, "Adjustment"));
+            Type storeType = assembly.GetType("PSCAutomation.Apps.AS110AllCheck.TodayCalibrationStore")!;
+            Type todayType = assembly.GetType("PSCAutomation.Apps.AS110AllCheck.TodayCalibration")!;
+            Type calibrationType = assembly.GetType("PSCAutomation.Apps.AS110AllCheck.As110Calibration")!;
+            Type readingType = assembly.GetType("PSCAutomation.Apps.AS110AllCheck.CalibrationReading")!;
+            object store = Activator.CreateInstance(storeType, folder)!;
+            rig.Set("_todayCalibrationStore", store);
+            string Button() { rig.Call("UpdateCalibrationControls", true); return ((Button)rig.Field("_calibrationButton")!).Text; }
+
+            // 1. ファイルが無ければ今日の校正値は無い。
+            rig.Call("LoadTodayCalibrationIfNeeded");
+            if (rig.Field("_todayCalibration") is not null || Button() != "校正値を入力") throw new Exception("Without a file there must be no calibration of today: " + Button());
+
+            // 2. 今日のファイルを読む(同じ日に 1 回)。
+            var current = new PSCAutomation.Wrappers.LoggerFiles.ScalingPoints(-0.003f, 0.02f, 0.991f, 29.8f);
+            var pressure = new PSCAutomation.Wrappers.LoggerFiles.ScalingPoints(0.002f, 0.03f, 5.401f, 539.43f);
+            object calibration = Activator.CreateInstance(calibrationType, current, pressure)!;
+            object reading = readingType.GetMethod("Manual")!.Invoke(null, [null])!;
+            object Today(DateTimeOffset at) => todayType.GetMethod("Create")!.Invoke(null, [at, calibration, "NR-500", reading])!;
+            storeType.GetMethod("Write")!.Invoke(store, [Today(DateTimeOffset.Now)]);
+            rig.Set("_todayCalibrationLoadedFor", null);
+            rig.Call("LoadTodayCalibrationIfNeeded");
+            object? loaded = rig.Field("_todayCalibration");
+            if (loaded is null || !calibration.Equals(todayType.GetProperty("Calibration")!.GetValue(loaded)) || !rig.Log.Contains("今日の校正値を読みました"))
+                throw new Exception("Today's calibration file was not read");
+            if (Button() != "雛形を読み込む") throw new Exception("With today's values and the mode chosen the button must load the template: " + Button());
+
+            // 3. 校正画面を出さずに、今日の校正値でモードの雛形を作って読み込む。校正記録には校正した時刻と読み取り方が入る。
+            rig.Call("LoadTodayCalibrationIntoModeTemplate");
+            if (!(bool)rig.Field("_calibrationApplied")! || !calibration.Equals(rig.Field("_appliedCalibration")) || Button() != "校正し直す")
+                throw new Exception("Today's calibration was not loaded into the mode template: " + Button());
+            var editor = new PSCAutomation.Wrappers.LoggerFiles.XdtScalingEditor((string)rig.Field("_workingTemplatePath")!);
+            if (editor.GetScaling(1) != current || editor.GetScaling(2) != pressure) throw new Exception("The working template does not have today's values");
+            object record = rig.Field("_appliedCalibrationRecord")!;
+            string text = (string)record.GetType().GetMethod("ToText")!.Invoke(record, null)!;
+            if (!text.Contains("校正した時刻: ") || !text.Contains("読み取り方: 手入力")) throw new Exception("The calibration record lacks today's lines: " + text);
+            if (!rig.Log.Contains("校正値適用（今日の校正値。")) throw new Exception("Loading today's values must be logged");
+
+            // 4. 前の日の値は使わない(日付が変わったら今日の校正値は無いものとする)。
+            rig.Set("_todayCalibration", Today(DateTimeOffset.Now.AddDays(-1)));
+            if (rig.Type.GetProperty("ValidTodayCalibration", Private)!.GetValue(rig.Form) is not null)
+                throw new Exception("Yesterday's calibration must not be used today");
+            Console.WriteLine("PASS today's calibration: read once from the file, loaded into the mode template without the dialog, recorded with its time; yesterday's values are not used");
+        }
+        finally
+        {
+            Close(rig.Form);
+            if (Directory.Exists(folder)) Directory.Delete(folder, true);
+        }
     }
 
     // 指摘 1(一時保存に失敗した測定)・指摘 3(切断の処理)・指摘 8(測定開始の前の失敗)。
