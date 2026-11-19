@@ -34,6 +34,10 @@
 //     その前に、無線用チップ ESP32-C6 が前の状態のまま残ることを疑って、起動のたびに Wi-Fi を始める前に
 //     C6 の電源を入れ直す処理(wifiChipPowerCycle)を入れた。害はないので残している。
 //     あわせて、USB の確認に答えたあと切り分け用の DIAG_WIFI: を送る(PC は知らない行としてログに残すだけ)。
+//   - 2026-11-19 追記(やり取りは変えないので版 4 のまま): PC の子機がいきなり抜けると、切れたという知らせ(TCP の FIN / RST)が
+//     届かず、送った行は TCP の送信バッファに溜まるだけなので、「Wi-Fi でつながっています」を出し続けていた。
+//     受けた TCP 接続に keepalive を付け(PC から何も届かない時間が約 WIFI_KEEPALIVE_* 秒続いたら閉じる)、
+//     あわせて子機が親機から離れた知らせ(AP_STADISCONNECTED)で親機につながる子機が 0 台になったら、すぐ閉じる。
 //
 // PC とのやり取り(LF の行単位。USB-C の内蔵 USB シリアル、または Wi-Fi の TCP。どちらも同じ行):
 //   PC → パネル  AS100201_PANEL_PING           → パネルは AS100201_PANEL_READY:4 を返す(この道が今の道になる)
@@ -89,6 +93,13 @@ static const char* const WIFI_SSID = "AS100201_PANEL";
 static const char* const WIFI_PASSWORD = "as100201-panel";   // 8 文字以上
 const IPAddress PANEL_IP(192, 168, 4, 1);                    // 社内 LAN と同じ範囲なら PC 側と両方を変える
 const uint16_t PANEL_PORT = 50201;
+
+// PC の子機がいきなり抜けたときに気づくための TCP keepalive(2026-11-19、AI の仮決め)。PC は定期応答(250ms ごと)に
+// TCP の受け取り(ACK)を返すので、ふだんは何かが届き続ける。最後に届いてから IDLE 秒で問い合わせを始め、
+// INTERVAL 秒おきに COUNT 回答えがなければ閉じる(合わせて約 6 秒)。数秒の電波の途切れでは切らない。
+const int WIFI_KEEPALIVE_IDLE_S = 3;
+const int WIFI_KEEPALIVE_INTERVAL_S = 1;
+const int WIFI_KEEPALIVE_COUNT = 3;
 
 // 無線用チップ ESP32-C6 の電源(WLAN_PWR_EN)。I/O 拡張チップ 2 個目(PI4IOE5V6408、I2C 0x44 = M5Unified の
 // getIOExpander(1))の P0 で、High で電源が入る(M5GFX の Tab5 の電源投入手順で 0x44 の出力を 0x89 にしている)。
@@ -162,6 +173,8 @@ bool wifiPowerOffOk = false, wifiPowerOnOk = false, wifiPowerReadback = false;
 unsigned long wifiStartMs = 0;
 WiFiServer server(PANEL_PORT);
 WiFiClient wifiClient;        // PC からの TCP 接続(1 本だけ。新しい接続が来たら古い方を閉じる)
+// 子機が親機から離れた知らせ(Wi-Fi のイベント。別のタスクで呼ばれるので、印だけ付けて loop で見る)。
+volatile bool stationLeft = false;
 
 int batteryLevel = -1;        // 残量 %(電池なしは -1)
 int batteryMillivolts = 0;
@@ -416,15 +429,32 @@ void readUsb() {
   }
 }
 
+// 受けた TCP 接続に keepalive を付ける(WIFI_KEEPALIVE_* の説明)。付けられなくても接続は使う(今までの動きになるだけ)。
+void enableKeepAlive(WiFiClient& client) {
+  int fd = client.fd();
+  if (fd < 0) return;
+  int on = 1, idle = WIFI_KEEPALIVE_IDLE_S, interval = WIFI_KEEPALIVE_INTERVAL_S, count = WIFI_KEEPALIVE_COUNT;
+  setsockopt(fd, SOL_SOCKET, SO_KEEPALIVE, &on, sizeof(on));
+  setsockopt(fd, IPPROTO_TCP, TCP_KEEPIDLE, &idle, sizeof(idle));
+  setsockopt(fd, IPPROTO_TCP, TCP_KEEPINTVL, &interval, sizeof(interval));
+  setsockopt(fd, IPPROTO_TCP, TCP_KEEPCNT, &count, sizeof(count));
+}
+
 // 新しい TCP 接続を受け、届いた分を読む。新しい接続が来たら古い方を閉じる
 // (PC が Wi-Fi の途切れのあとにつなぎ直したとき、古い接続が残っていることがある)。
 void readWifi() {
   if (!wifiStarted) return;
+  // 子機が離れて、親機につながる子機が 1 台もなくなったら、TCP の知らせを待たずに閉じる。
+  if (stationLeft) {
+    stationLeft = false;
+    if (wifiClient && WiFi.softAPgetStationNum() == 0) dropWifiClient();
+  }
   WiFiClient incoming = server.accept();
   if (incoming) {
     dropWifiClient();
     wifiClient = incoming;
     wifiClient.setNoDelay(true);
+    enableKeepAlive(wifiClient);
     // 今の道が Wi-Fi なら、つなぎ直しの確認(PING)がすぐ来るまで今の道なしにする。
     if (currentPath == PATH_WIFI) {
       currentPath = PATH_NONE;
@@ -444,7 +474,7 @@ void pathLost(Path path) {
   lostShown = true;
   const char* detail = path == PATH_USB
       ? "USB ケーブルを確かめてください（Wi-Fi がつながっていれば、PC が自動で切り替えます）"
-      : "PC の Wi-Fi 子機と距離を確かめてください（USB ケーブルを挿せば USB でつながります）";
+      : "PC の Wi-Fi 子機が抜けていないか・距離を確かめてください（USB ケーブルを挿せば USB でつながります）";
   if (pendingLine.length()) {
     setMessage(MSG_WARN, "PC と切れました：" + describe(pendingLine), "記録されたか PC のアプリの画面で確かめてください");
     pendingLine = "";
@@ -844,6 +874,7 @@ void setup() {
   // ゲートウェイは 0.0.0.0 にして、PC へ「この先にインターネットがある」と知らせない(DHCP でルーターを渡さない)。
   // 渡すと、PC がふだんのインターネットの通信を Tab5 へ流してしまうことがある。DNS も渡さない。
   unsigned long wifiBeginAt = millis();
+  WiFi.onEvent([](arduino_event_id_t, arduino_event_info_t) { stationLeft = true; }, ARDUINO_EVENT_WIFI_AP_STADISCONNECTED);
   WiFi.mode(WIFI_AP);
   wifiStarted = WiFi.softAPConfig(PANEL_IP, IPAddress(0, 0, 0, 0), IPAddress(255, 255, 255, 0)) &&
                 WiFi.softAP(WIFI_SSID, WIFI_PASSWORD);
