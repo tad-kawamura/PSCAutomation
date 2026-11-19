@@ -7,7 +7,7 @@ namespace PSCAutomation.Apps.AS110AllCheck;
 // 流れ図「校正_変更」の ①〜④ を行い、8 項目(電流 2 点・圧力 2 点)を作る。最後に人が校正画面で「適用」を押す(ここでは適用しない)。
 //   「マルチメータで読み取る」(RunCurrentAsync):
 //   ① 電流の低点: WF1973 0 V(0 mA)→ NR-500 CH1 の電圧の 1 秒平均と、7351E の電流
-//   ② 電流の高点: WF1973 5 V 固定(30 mA の指令)→ CH1 の電圧の 1 秒平均と、7351E の電流
+//   ② 電流の高点: WF1973 5 V(30 mA の指令)から、7351E で 30 mA ±0.1 mA に入るよう微調整(2026-11-19)→ CH1 の電圧の 1 秒平均と、7351E の電流
 //      7351E が見つからなければ「もう一度探す / 電流を手で入れる / 中止」。手で入れるときも電圧は自動で読む
 //   「GC16 で読み取る」(RunPressureAsync):
 //   ③ 圧力の低点: 30 mA、弁を大気側(①閉・②開)→ GC16 が落ち着いたらゼロ調整 → 3 秒後の GC16 の値と CH2 の電圧
@@ -149,12 +149,14 @@ internal sealed class AutoCalibrationProcedure
         _operator.ShowStatus($"① 電流の低点：{F(volts)} V = {F((float)milliamps)} mA");
     }
 
-    // ② 5 V 固定(30 mA の指令)。実際の電流は 7351E で読む(見つからなければ人が入れる。決まったこと 23、2026-11-18)。
+    // ② 5 V(30 mA の指令)から始め、7351E で読みながら 30 mA ±0.1 mA に入るよう WF1973 を微調整する(2026-11-19、人の指示)。
+    // 実際の電流は 7351E で読む(見つからなければ人が入れる。決まったこと 23、2026-11-18)。人が入れるときは微調整しない(5 V のまま)。
     private async Task CurrentHighAsync(CancellationToken ct)
     {
         SetCurrent(_settings.CommandVolts);
         var meter = await EnsureCurrentMeterAsync(ct);
         await _clock.Delay(_settings.CurrentSettle, ct);
+        if (meter is not null) await TuneHighCurrentAsync(meter, ct);
         var (volts, milliamps) = await ReadCurrentPointAsync(AutoCalibrationStage.CurrentHigh, meter, ct);
         // 30 mA が出ていれば、低点からはっきり上がる(アンプの設定で約 1〜5 V)。「低点以下」だけを見ると、出力が止まっていても
         // ノイズで少し上なら通り、0 mA のままの電圧を高点にした(2026-11-14、全体見直し・区切り 4)。
@@ -168,6 +170,46 @@ internal sealed class AutoCalibrationProcedure
             throw new InvalidDataException($"電流の高点 {F(milliamps)} mA が低点 {F(lowPoint.Milliamps)} mA 以下です。配線を確かめてください。");
         _currentHigh = (volts, (float)milliamps);
         _operator.ShowStatus($"② 電流の高点：{F(volts)} V = {F((float)milliamps)} mA");
+    }
+
+    // ② の電流が 30 mA ±0.1 mA に入るまで、WF1973 の電圧を直す(最大 MaxCurrentAdjustments 回)。
+    // 次の電圧は、① の点(0 V の指令で読んだ電流)と今の点を結ぶ直線から求める(① が無ければ 0 V = 0 mA とみなす)。
+    // 25 mA 未満(アンプの電源・配線の異常)は直さず、今までの知らせ(② の外れ)に任せる。
+    // 上限の電圧でも届かない・回数を使い切ったときは「やり直す / このまま使う / 中止」(校正値は読んだ電流のままなので、このまま使ってもずれない)。
+    private async Task TuneHighCurrentAsync(ICurrentMeter meter, CancellationToken ct)
+    {
+        double target = _settings.TargetHighMilliamps, tolerance = _settings.HighCurrentToleranceMilliamps;
+        for (int adjustments = 0; ; adjustments++)
+        {
+            double volts = _currentVolts ?? _settings.CommandVolts;
+            double milliamps = await meter.ReadMilliampsAsync(ct);
+            if (!double.IsFinite(milliamps)) throw new InvalidDataException($"マルチメータ（{meter.Name}）の電流を読めません。");
+            if (Math.Abs(milliamps - target) <= tolerance + 1e-9)
+            {
+                if (adjustments > 0)
+                    _operator.ShowStatus($"② 発振器を {F4(volts)} V にして {F(milliamps)} mA に合わせました（{target} ±{tolerance} mA。{adjustments} 回直した）。");
+                return;
+            }
+            if (milliamps < _settings.MinHighCurrentMilliamps) return;
+            double zeroMilliamps = _currentLow?.Milliamps ?? 0;
+            double slope = (milliamps - zeroMilliamps) / volts;
+            if (!(slope > 0) || !double.IsFinite(slope)) return;
+            double next = Math.Round(volts + (target - milliamps) / slope, 4);
+            bool atLimit = next > _settings.MaxCommandVolts && volts >= _settings.MaxCommandVolts;
+            if (atLimit || adjustments >= _settings.MaxCurrentAdjustments)
+            {
+                string reason = atLimit
+                    ? $"発振器を上限の {F4(_settings.MaxCommandVolts)} V にしても {F(milliamps)} mA です"
+                    : $"発振器を {adjustments} 回直しても {F(milliamps)} mA です（今 {F4(volts)} V）";
+                await AskCurrentDeviationAsync($"② {reason}。{target} ±{tolerance} mA に入りません。\r\n" +
+                    "アンプ・配線・マルチメータを確かめてください。「このまま使う」を選んでも、校正値は読んだ電流で作るのでずれません。", ct);
+                return;
+            }
+            next = Math.Clamp(next, 0, _settings.MaxCommandVolts);
+            _operator.ShowStatus($"② {F4(volts)} V で {F(milliamps)} mA。発振器を {F4(next)} V に直します。");
+            SetCurrent(next);
+            await _clock.Delay(_settings.CurrentSettle, ct);
+        }
     }
 
     // 電圧(NR-500 の 1 秒平均)と電流を、同じ時間帯に読む。マルチメータが無いときは、人が入れた電流のあとで電圧を読む。
@@ -450,6 +492,7 @@ internal sealed class AutoCalibrationProcedure
     };
 
     private static string F(double value) => value.ToString("0.###", CultureInfo.InvariantCulture);
+    private static string F4(double value) => value.ToString("0.0000", CultureInfo.InvariantCulture);
 
     private enum ValvePosition { Measurement, Switching, Atmosphere }
     private sealed class RedoStageException : Exception;
@@ -473,6 +516,12 @@ internal sealed record AutoCalibrationSettings
     // 電流の外れの知らせ(2026-11-18、AI の案を人が承認): ① は 0 mA から ±1 mA、② は 25 mA 未満。
     public double LowCurrentToleranceMilliamps { get; init; } = 1.0;
     public double MinHighCurrentMilliamps { get; init; } = 25.0;
+    // ② の電流をこの範囲に入るよう WF1973 を微調整する(2026-11-19、人: 30 mA ±0.1 mA)。直す回数の上限と、電圧の上限
+    // (発振器の DC 出力の部品が 5 V まで。5 V で 30 mA に届かないときは部品に足す相談が要る)。
+    public double TargetHighMilliamps { get; init; } = 30.0;
+    public double HighCurrentToleranceMilliamps { get; init; } = 0.1;
+    public int MaxCurrentAdjustments { get; init; } = 5;
+    public double MaxCommandVolts { get; init; } = 5.0;
     // GC16 を読む間隔(表示の更新は 0.3 秒ごと)。
     public TimeSpan SampleInterval { get; init; } = TimeSpan.FromSeconds(0.3);
     // 落ち着いた: 直近 5 秒の値がすべて、最後の値から ±0.2 kPa 以内。
@@ -506,6 +555,9 @@ internal sealed record AutoCalibrationSettings
     {
         if (!double.IsFinite(CommandVolts) || CommandVolts <= 0 || CommandVolts > 5)
             throw new ArgumentOutOfRangeException(nameof(CommandVolts), "WF1973 に出す電圧は 0 より大きく 5 V 以下にしてください。");
+        if (!double.IsFinite(MaxCommandVolts) || MaxCommandVolts < CommandVolts || MaxCommandVolts > 5 ||
+            !(TargetHighMilliamps > 0) || !(HighCurrentToleranceMilliamps > 0) || MaxCurrentAdjustments < 0)
+            throw new ArgumentOutOfRangeException(nameof(TargetHighMilliamps), "② の電流の微調整の決まりを確かめてください。");
         if (SampleInterval <= TimeSpan.Zero || StableWindow <= TimeSpan.Zero || WaitLimit <= TimeSpan.Zero ||
             CurrentSettle < TimeSpan.Zero || ZeroSettle < TimeSpan.Zero)
             throw new ArgumentOutOfRangeException(nameof(WaitLimit), "待ち時間を確かめてください。");
