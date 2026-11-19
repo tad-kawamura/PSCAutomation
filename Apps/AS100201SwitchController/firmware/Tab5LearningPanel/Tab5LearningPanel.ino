@@ -63,7 +63,7 @@ static const char* const HELLO_REPLY = "AS100201_PANEL_READY:4";   // 版 4。PC
 
 // スペーサーの箱の表示(厚さ mm)。2026-11-13 に箱の写真 3 枚から読み取った(手書きの札は読み違いがありうる。実物で確かめる)。
 // 箱が増えたら、ここと PC 側 As100201SpacerCatalog(開発用の代わりのパネルの選択肢)の両方を直す。
-// 0.2・0.3 台 / 0.4 台 / 0.5 台以上 の 3 つのタブに分けて出す(1 タブ 7 列。21 個までなら 3 段に収まる)。
+// 0.2・0.3 台 / 0.4 台 / 0.5 台以上 の 3 つのタブに分けて出す(1 タブ 5 列。20 個までなら 4 段に収まる)。
 static const char* const SPACER_THICKNESSES[] = {
   "0.271", "0.298", "0.300", "0.310", "0.320", "0.325", "0.330", "0.340", "0.348", "0.350",
   "0.358", "0.360", "0.363", "0.370", "0.375", "0.380", "0.390", "0.394", "0.398",
@@ -75,7 +75,9 @@ static const char* const SPACER_THICKNESSES[] = {
 const int SPACER_COUNT = sizeof(SPACER_THICKNESSES) / sizeof(SPACER_THICKNESSES[0]);
 static const char* const SPACER_TAB_LABELS[] = {"0.2・0.3 台", "0.4 台", "0.5 台〜"};
 const int SPACER_TABS = 3;
-const int SPACER_COLUMNS = 7;   // 2026-11-19 に人の決定で 5 列から 7 列に(戻るボタンの大きさは変えずに、厚さのボタンを高くする)
+// 2026-11-19 に 7 列を Tab5 で試したら数字が窮屈で読みにくかった(人)。5 列に戻し、厚さのページの題名をなくして
+// 空いた高さでボタンを高くした(人の決定)。
+const int SPACER_COLUMNS = 5;
 
 // 表示との差(μm)の選択肢。だいたい ±3μm 違うとのこと(人の話)。広げるときはここだけ直す(PC は ±50 まで受け付ける)。
 static const char* const SPACER_DIFFS[] = {"-3", "-2", "-1", "0", "+1", "+2", "+3"};
@@ -509,16 +511,17 @@ void layoutButtons() {
     }
   } else if (screen == SPACER_PICK) {
     // 上段: タブ(0.2・0.3 台 / 0.4 台 / 0.5 台〜)。下段: そのタブの厚さ(選ぶと差のページへ)。前回選んだ厚さは色を変える。
+    // 題名は出さず(2026-11-19、人の決定)、タブを題名の位置から始めて厚さのボタンを高くする。
     const int tabH = 80;
     int tabW = (leftW - GAP * (SPACER_TABS - 1)) / SPACER_TABS;
     for (int t = 0; t < SPACER_TABS; ++t)
-      addButton(GAP + (tabW + GAP) * t, contentTop, tabW, tabH, B_TAB, SPACER_TAB_LABELS[t], C_UNSELECTED, t == spacerTab, t);
+      addButton(GAP + (tabW + GAP) * t, top, tabW, tabH, B_TAB, SPACER_TAB_LABELS[t], C_UNSELECTED, t == spacerTab, t);
     int count = 0;
     for (int i = 0; i < SPACER_COUNT; ++i) if (spacerTabOf(i) == spacerTab) ++count;
     const int gridGap = 12;
     int rows = (count + SPACER_COLUMNS - 1) / SPACER_COLUMNS;
     if (rows < 1) rows = 1;
-    int gridTop = contentTop + tabH + GAP;
+    int gridTop = top + tabH + GAP;
     int cellW = (leftW - gridGap * (SPACER_COLUMNS - 1)) / SPACER_COLUMNS;
     int cellH = (bottom - gridTop - gridGap * (rows - 1)) / rows;
     int n = 0;
@@ -650,9 +653,7 @@ void drawScreen() {
   if (screen == DEMAG) drawTitle("減磁：程度を押すと記録します");
   else if (screen == SPACER) drawTitle(String("スペーサー ") + side + " 側：向きを選んでください");
   else if (screen == NOZZLE) drawTitle(String("ノズル ") + side + " 側：方向を押すと記録します");
-  else if (screen == SPACER_PICK) {
-    drawTitle(String("スペーサー ") + side + " 側・" + (spacerUp ? "上げる" : "下げる") + "：厚さ（箱の表示）を選んでください");
-  } else if (screen == SPACER_DIFF) {
+  else if (screen == SPACER_DIFF) {   // SPACER_PICK は題名を出さない(2026-11-19、人の決定)
     drawTitle(String("スペーサー ") + side + " 側・" + (spacerUp ? "上げる" : "下げる") + "・" +
               (spacerIndex >= 0 ? SPACER_THICKNESSES[spacerIndex] : "?"));
     M5.Display.setFont(&fonts::lgfxJapanGothicP_32);
