@@ -63,7 +63,7 @@ static const char* const HELLO_REPLY = "AS100201_PANEL_READY:4";   // 版 4。PC
 
 // スペーサーの箱の表示(厚さ mm)。2026-11-13 に箱の写真 3 枚から読み取った(手書きの札は読み違いがありうる。実物で確かめる)。
 // 箱が増えたら、ここと PC 側 As100201SpacerCatalog(開発用の代わりのパネルの選択肢)の両方を直す。
-// 0.2・0.3 台 / 0.4 台 / 0.5 台以上 の 3 つのタブに分けて出す(1 タブ 20 個まで並ぶ)。
+// 0.2・0.3 台 / 0.4 台 / 0.5 台以上 の 3 つのタブに分けて出す(1 タブ 7 列。21 個までなら 3 段に収まる)。
 static const char* const SPACER_THICKNESSES[] = {
   "0.271", "0.298", "0.300", "0.310", "0.320", "0.325", "0.330", "0.340", "0.348", "0.350",
   "0.358", "0.360", "0.363", "0.370", "0.375", "0.380", "0.390", "0.394", "0.398",
@@ -75,7 +75,7 @@ static const char* const SPACER_THICKNESSES[] = {
 const int SPACER_COUNT = sizeof(SPACER_THICKNESSES) / sizeof(SPACER_THICKNESSES[0]);
 static const char* const SPACER_TAB_LABELS[] = {"0.2・0.3 台", "0.4 台", "0.5 台〜"};
 const int SPACER_TABS = 3;
-const int SPACER_COLUMNS = 5;
+const int SPACER_COLUMNS = 7;   // 2026-11-19 に人の決定で 5 列から 7 列に(戻るボタンの大きさは変えずに、厚さのボタンを高くする)
 
 // 表示との差(μm)の選択肢。だいたい ±3μm 違うとのこと(人の話)。広げるときはここだけ直す(PC は ±50 まで受け付ける)。
 static const char* const SPACER_DIFFS[] = {"-3", "-2", "-1", "0", "+1", "+2", "+3"};
