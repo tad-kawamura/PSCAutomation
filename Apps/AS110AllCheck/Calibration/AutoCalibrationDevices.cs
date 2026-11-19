@@ -53,9 +53,16 @@ internal sealed class Gc16PressureGauge(Gc16Session session) : IPressureGauge
 }
 
 // WF1973(または SDG1032X)の DC 出力で電流を指令する。接続確認でつないだ発振器をそのまま使う(1 台を 2 つのクラスで開かない)。
+// ② の微調整は、WF1973 なら出力を切らずに電圧だけ変える(部品の AdjustDcOutput。2026-11-19)。SDG1032X は SetDcOutput(5 V まで)で出し直す。
 internal sealed class GeneratorCurrentOutput(IFunctionGeneratorSession generator) : ICurrentCommandOutput
 {
     public void SetVolts(double volts) => generator.SetDcOutput(volts);
+    public bool CanAdjust => generator is IDcOutputAdjustable;
+    public void AdjustVolts(double volts)
+    {
+        if (generator is IDcOutputAdjustable adjustable) adjustable.AdjustDcOutput(volts);
+        else generator.SetDcOutput(volts);
+    }
     public void Stop() => generator.StopOutput();
 }
 

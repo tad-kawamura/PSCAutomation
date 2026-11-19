@@ -57,7 +57,8 @@
 
 使い方ごとにクラスが分かれている(判断 4、2026-11-04)。どれを使うかは `Wrappers/Instruments/README.md`。
 
-- バースト(`FunctionGeneratorConnection.Connect` → `Wf1973BurstSession` / `Sdg1032XSession`、元 AllCheck): USB の WF1973 か SDG1032X を自動で見分ける。三角波(対称 50%)、周波数・オフセット・振幅・周期数・開始位相を設定し、外部トリガで指定周期数だけ出す(WF1973 は `*TRG`、SDG1032X は `C1:BTWV MTRIG`)。設定完了を `*OPC?` で確認(SDG1032X は設定値を読み戻して照合)。同じ設定なら再送しない。DC 出力(`SetDcOutput`、±5V まで)、出力停止(`StopOutput`)
+- バースト(`FunctionGeneratorConnection.Connect` → `Wf1973BurstSession` / `Sdg1032XSession`、元 AllCheck): USB の WF1973 か SDG1032X を自動で見分ける。三角波(対称 50%)、周波数・オフセット・振幅・周期数・開始位相を設定し、外部トリガで指定周期数だけ出す(WF1973 は `*TRG`、SDG1032X は `C1:BTWV MTRIG`)。設定完了を `*OPC?` で確認(SDG1032X は設定値を読み戻して照合)。同じ設定なら再送しない。DC 出力(`SetDcOutput`、±5V まで。毎回 出力 OFF→ON)、出力停止(`StopOutput`)
+  - DC の微調整(`IDcOutputAdjustable.AdjustDcOutput`、2026-11-19 に足した。**WF1973 だけ**): `SetDcOutput` で DC を出している間、出力を切らずに電圧だけ変える(±10V、0.1mV 単位、本体エラーを確認)。DC を出していないときは例外。`SetDcOutput` の ±5V の上限は変えていない。アプリ固有の上限(AS110AllCheck の校正は 5.5V)はアプリ側で守る。負荷の設定が 50Ω だと 5V を超えられない(本体エラー)。実機は未確認
 - 連続(`Wf1973ContinuousSession`、元 SwitchController): 振幅・位相・周波数を設定して位相同期で再開始。出力中は OFF にしない。押下連打の途中で中断できる
   - 波形の形を指定して接続(`Connect(GeneratorWaveform)`、2026-11-04 追加): 接続時に出力 OFF のまま形(今は三角波・対称 50% だけ)を送り、`*OPC?` で確かめる。別のアプリが DC などにした WF1973 でも正しく出る。`Connect()` は元のまま形を送らない
   - 接続したまま形だけ送り直す(`SetWaveform(GeneratorWaveform)`、2026-11-04 追加): 出力・振幅・オフセット・位相は変えない。出力中に呼んだときの出力の乱れは確かめていない

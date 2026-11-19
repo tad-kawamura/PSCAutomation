@@ -7,11 +7,16 @@ namespace PSCAutomation.Wrappers.Instruments;
 // 元: AS110AllCheck Generator/Wf1973Session.cs(AS110BoltCheck 版に StopOutput・SetDcOutput・Dispose 時の出力OFFを足した版)。
 // モノレポで名前を Wf1973BurstSession にした(AS100201SwitchController の連続出力用 Wf1973Session と区別するため)。
 // 通信は IInstrumentSession 経由。送るコマンドと順番は元のまま。
-public sealed class Wf1973BurstSession : IFunctionGeneratorSession
+public sealed class Wf1973BurstSession : IFunctionGeneratorSession, IDcOutputAdjustable
 {
+    // DC 波形・負荷 High-Z の本体の範囲(Wf1973DcSource と同じ。2026-11-03 実機で ±10 V を確認)。
+    private const double InstrumentDcLimitVolts = 10.0;
+
     private IInstrumentSession? _instrument;
     private GeneratorBurstSettings? _preparedSettings;
     private bool _outputEnabled;
+    // SetDcOutput で DC を出している間 true(AdjustDcOutput を使える。2026-11-19)。
+    private bool _dcOutputOn;
 
     // 接続済みの機器を受け取る(通常は FunctionGeneratorConnection.Connect か Connect を使う。模擬の差し込みにも使う)。
     public Wf1973BurstSession(IInstrumentSession instrument)
@@ -47,6 +52,7 @@ public sealed class Wf1973BurstSession : IFunctionGeneratorSession
         if (_preparedSettings == settings) return;
         _preparedSettings = null;
         _outputEnabled = false;
+        _dcOutputOn = false;
 
         // 出力OFFの状態で設定する。
         io.Write(":OUTPut:STATe OFF");
@@ -97,6 +103,7 @@ public sealed class Wf1973BurstSession : IFunctionGeneratorSession
         var io = Instrument;
         io.Write(":OUTPut:STATe OFF");
         _outputEnabled = false;
+        _dcOutputOn = false;
     }
 
     public void SetDcOutput(double volts)
@@ -110,6 +117,23 @@ public sealed class Wf1973BurstSession : IFunctionGeneratorSession
         io.Write(":SOURce:VOLTage:OFFSet " + GeneratorBurstSettings.Number(volts) + "V");
         io.Write(":OUTPut:STATe ON");
         _outputEnabled = true;
+        _dcOutputOn = true;
+    }
+
+    public double DcAdjustLimitVolts => InstrumentDcLimitVolts;
+
+    // 出力を切らずにオフセット(DC の電圧)だけ変える。0.1 mV に丸めて送り、本体のエラーを問い合わせて確かめる(Wf1973DcSource.SetOffsetVolts と同じ送り方)。
+    public void AdjustDcOutput(double volts)
+    {
+        if (!double.IsFinite(volts) || Math.Abs(volts) > InstrumentDcLimitVolts)
+            throw new ArgumentOutOfRangeException(nameof(volts), volts, "WF1973 の DC の範囲外です。");
+        var io = Instrument;
+        if (!_dcOutputOn) throw new InvalidOperationException("WF1973 が DC を出していません。先に SetDcOutput で DC を出してください。");
+        string text = volts.ToString("0.0000", System.Globalization.CultureInfo.InvariantCulture);
+        io.Write(":SOURce:VOLTage:OFFSet " + text + "V");
+        string response = io.Query(":SYSTem:ERRor?");
+        if (!response.StartsWith("0,", StringComparison.Ordinal) && !response.StartsWith("+0,", StringComparison.Ordinal))
+            throw new InvalidOperationException($"WF1973 が DC {text} V の設定でエラーを返しました(応答:{response})。負荷の設定が High-Z か確かめてください。");
     }
 
     public void Dispose()

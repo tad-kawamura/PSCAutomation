@@ -247,8 +247,8 @@ internal static class AutoCalibrationTests
             var rig = new Rig();
             rig.CurrentMeters.Meter.MilliampsPerVolt = 6.1;
             var current = await rig.Procedure().RunCurrentAsync(CancellationToken.None);
-            double set = double.Parse(rig.Output.Commands[2], System.Globalization.CultureInfo.InvariantCulture);
-            Check(rig.Output.Commands.Count == 4 && rig.Output.Commands[1] == "5" && set < 5 && Math.Abs(0.01 + set * 6.1 - 30) <= 0.1 &&
+            double set = double.Parse(rig.Output.Commands[2]["adj:".Length..], System.Globalization.CultureInfo.InvariantCulture);
+            Check(rig.Output.Commands.Count == 4 && rig.Output.Commands[1] == "5" && rig.Output.Commands[2].StartsWith("adj:") && set < 5 && Math.Abs(0.01 + set * 6.1 - 30) <= 0.1 &&
                 Math.Abs(current.Current.Output2 - 30) <= 0.1 && Near(current.Current.Input2, Rig.Ch1Volts(set)) && rig.Operator.DeviationAsked == 0 &&
                 rig.Operator.Statuses.Any(s => s.Contains("合わせました")),
                 "② 30.5 mA at 5 V: the generator is lowered once to 30 ±0.1 mA and the point is read there");
@@ -260,14 +260,34 @@ internal static class AutoCalibrationTests
             Check(rig.Output.Commands.SequenceEqual(["0", "5", "stop"]), "② 29.9 mA at 5 V is within ±0.1 mA: no adjustment");
         }
         {
-            // 5 V で 29.5 mA(5.9 mA/V)→ 上限 5 V なので上げられない。「このまま使う」で 5 V の値を使う。
+            // 5 V で 29.5 mA(5.9 mA/V)→ WF1973 は出力を切らずに 5 V より上げて合わせる(上限 5.5 V。2026-11-19、人)。
             var rig = new Rig();
+            rig.CurrentMeters.Meter.MilliampsPerVolt = 5.9;
+            var current = await rig.Procedure().RunCurrentAsync(CancellationToken.None);
+            double set = double.Parse(rig.Output.Commands[2]["adj:".Length..], System.Globalization.CultureInfo.InvariantCulture);
+            Check(rig.Output.Commands.Count == 4 && set > 5 && set <= 5.5 && Math.Abs(current.Current.Output2 - 30) <= 0.1 && rig.Operator.DeviationAsked == 0,
+                "② 29.5 mA at 5 V: WF1973 is raised above 5 V without switching the output off");
+        }
+        {
+            // 出し直ししかできない発振器(SDG1032X)は 5 V で止まる。「このまま使う」で 5 V の値を使う。
+            var rig = new Rig();
+            rig.Output.CanAdjust = false;
             rig.CurrentMeters.Meter.MilliampsPerVolt = 5.9;
             rig.Operator.DeviationAnswers.Enqueue(DeviationChoice.UseAsIs);
             var current = await rig.Procedure().RunCurrentAsync(CancellationToken.None);
             Check(rig.Output.Commands.SequenceEqual(["0", "5", "stop"]) && rig.Operator.DeviationAsked == 1 &&
                 rig.Operator.DeviationMessages[0].Contains("上限の 5.0000 V") && Near(current.Current.Output2, 0.01 + 5 * 5.9),
-                "② 29.5 mA at the 5 V limit: asks, このまま使う keeps the 5 V reading");
+                "② 29.5 mA at 5 V without adjusting: stops at 5 V, asks, このまま使う keeps the 5 V reading");
+        }
+        {
+            // 5.5 V でも届かない(5 mA/V)→ 上限 5.5 V で知らせる。
+            var rig = new Rig();
+            rig.CurrentMeters.Meter.MilliampsPerVolt = 5.0;
+            rig.Operator.DeviationAnswers.Enqueue(DeviationChoice.UseAsIs);
+            var current = await rig.Procedure().RunCurrentAsync(CancellationToken.None);
+            Check(rig.Output.Commands.SequenceEqual(["0", "5", "adj:5.5", "stop"]) && rig.Operator.DeviationAsked == 1 &&
+                rig.Operator.DeviationMessages[0].Contains("上限の 5.5000 V") && Near(current.Current.Output2, 0.01 + 5.5 * 5),
+                "② 27.5 mA at the 5.5 V limit: asks, このまま使う keeps the 5.5 V reading");
         }
         {
             // 30 mA より下から始めたときは上げて合わせる(既定は 5 V から始めるので、始めの電圧を 4.5 V にして確かめる)。
@@ -292,8 +312,9 @@ internal static class AutoCalibrationTests
         }
         {
             bool rejected = false;
-            try { (AutoCalibrationSettings.Default with { MaxCommandVolts = 5.5 }).Validate(); } catch (ArgumentOutOfRangeException) { rejected = true; }
-            Check(rejected, "settings: the tuning limit above 5 V is rejected (the generator part allows 5 V)");
+            try { (AutoCalibrationSettings.Default with { MaxCommandVolts = 6.5 }).Validate(); } catch (ArgumentOutOfRangeException) { rejected = true; }
+            Check(rejected && AutoCalibrationSettings.Default.MaxCommandVolts == 5.5 && AutoCalibrationSettings.Default.TargetHighMilliamps == 30 &&
+                AutoCalibrationSettings.Default.HighCurrentToleranceMilliamps == 0.1, "settings: tuning to 30 ±0.1 mA up to 5.5 V; above 6 V is rejected");
         }
 
         // 7. 画面の中止(キャンセル)・出力停止の失敗。
@@ -451,7 +472,16 @@ internal static class AutoCalibrationTests
         public readonly List<string> Commands = new();
         public double? Volts;
         public bool FailStop;
+        // WF1973 なら true(出力を切らずに電圧を変える。2026-11-19)。微調整は "adj:電圧" と記録する。
+        public bool CanAdjust { get; set; } = true;
         public void SetVolts(double volts) { Commands.Add(volts.ToString(System.Globalization.CultureInfo.InvariantCulture)); Volts = volts; }
+        public void AdjustVolts(double volts)
+        {
+            if (!CanAdjust) { SetVolts(volts); return; }
+            if (Volts is null) throw new InvalidOperationException("DC を出していません");
+            Commands.Add("adj:" + volts.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            Volts = volts;
+        }
         public void Stop()
         {
             Commands.Add("stop");

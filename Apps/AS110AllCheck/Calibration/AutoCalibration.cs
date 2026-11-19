@@ -179,6 +179,8 @@ internal sealed class AutoCalibrationProcedure
     private async Task TuneHighCurrentAsync(ICurrentMeter meter, CancellationToken ct)
     {
         double target = _settings.TargetHighMilliamps, tolerance = _settings.HighCurrentToleranceMilliamps;
+        // WF1973 は出力を切らずに MaxCommandVolts(5.5 V)まで。出し直ししかできない発振器は SetVolts の上限 5 V まで。
+        double limit = _current.CanAdjust ? _settings.MaxCommandVolts : Math.Min(_settings.MaxCommandVolts, AutoCalibrationSettings.SetVoltsLimit);
         for (int adjustments = 0; ; adjustments++)
         {
             double volts = _currentVolts ?? _settings.CommandVolts;
@@ -195,19 +197,19 @@ internal sealed class AutoCalibrationProcedure
             double slope = (milliamps - zeroMilliamps) / volts;
             if (!(slope > 0) || !double.IsFinite(slope)) return;
             double next = Math.Round(volts + (target - milliamps) / slope, 4);
-            bool atLimit = next > _settings.MaxCommandVolts && volts >= _settings.MaxCommandVolts;
+            bool atLimit = next > limit && volts >= limit;
             if (atLimit || adjustments >= _settings.MaxCurrentAdjustments)
             {
                 string reason = atLimit
-                    ? $"発振器を上限の {F4(_settings.MaxCommandVolts)} V にしても {F(milliamps)} mA です"
+                    ? $"発振器を上限の {F4(limit)} V にしても {F(milliamps)} mA です"
                     : $"発振器を {adjustments} 回直しても {F(milliamps)} mA です（今 {F4(volts)} V）";
                 await AskCurrentDeviationAsync($"② {reason}。{target} ±{tolerance} mA に入りません。\r\n" +
                     "アンプ・配線・マルチメータを確かめてください。「このまま使う」を選んでも、校正値は読んだ電流で作るのでずれません。", ct);
                 return;
             }
-            next = Math.Clamp(next, 0, _settings.MaxCommandVolts);
+            next = Math.Clamp(next, 0, limit);
             _operator.ShowStatus($"② {F4(volts)} V で {F(milliamps)} mA。発振器を {F4(next)} V に直します。");
-            SetCurrent(next);
+            AdjustCurrent(next);
             await _clock.Delay(_settings.CurrentSettle, ct);
         }
     }
@@ -425,6 +427,15 @@ internal sealed class AutoCalibrationProcedure
         _currentVolts = volts;
     }
 
+    // ② の微調整(出力を切らずに電圧だけ変える。できない発振器は出し直し)。
+    private void AdjustCurrent(double volts)
+    {
+        if (_currentVolts == volts) return;
+        _currentVolts = null;
+        _current.AdjustVolts(volts);
+        _currentVolts = volts;
+    }
+
     private async Task<float> ReadVoltsAsync(int channel, string name, CancellationToken ct)
     {
         double volts = await _meter.ReadVoltsAsync(channel, ct);
@@ -517,11 +528,13 @@ internal sealed record AutoCalibrationSettings
     public double LowCurrentToleranceMilliamps { get; init; } = 1.0;
     public double MinHighCurrentMilliamps { get; init; } = 25.0;
     // ② の電流をこの範囲に入るよう WF1973 を微調整する(2026-11-19、人: 30 mA ±0.1 mA)。直す回数の上限と、電圧の上限
-    // (発振器の DC 出力の部品が 5 V まで。5 V で 30 mA に届かないときは部品に足す相談が要る)。
+    // (人: 5.5 V あれば十分。WF1973 は部品の AdjustDcOutput で出力を切らずに変える。出し直ししかできない発振器は SetVoltsLimit まで)。
     public double TargetHighMilliamps { get; init; } = 30.0;
     public double HighCurrentToleranceMilliamps { get; init; } = 0.1;
     public int MaxCurrentAdjustments { get; init; } = 5;
-    public double MaxCommandVolts { get; init; } = 5.0;
+    public double MaxCommandVolts { get; init; } = 5.5;
+    // 部品の SetDcOutput の上限(出力 OFF→ON で出す。変えない)。
+    public const double SetVoltsLimit = 5.0;
     // GC16 を読む間隔(表示の更新は 0.3 秒ごと)。
     public TimeSpan SampleInterval { get; init; } = TimeSpan.FromSeconds(0.3);
     // 落ち着いた: 直近 5 秒の値がすべて、最後の値から ±0.2 kPa 以内。
@@ -555,7 +568,7 @@ internal sealed record AutoCalibrationSettings
     {
         if (!double.IsFinite(CommandVolts) || CommandVolts <= 0 || CommandVolts > 5)
             throw new ArgumentOutOfRangeException(nameof(CommandVolts), "WF1973 に出す電圧は 0 より大きく 5 V 以下にしてください。");
-        if (!double.IsFinite(MaxCommandVolts) || MaxCommandVolts < CommandVolts || MaxCommandVolts > 5 ||
+        if (!double.IsFinite(MaxCommandVolts) || MaxCommandVolts < CommandVolts || MaxCommandVolts > 6 ||
             !(TargetHighMilliamps > 0) || !(HighCurrentToleranceMilliamps > 0) || MaxCurrentAdjustments < 0)
             throw new ArgumentOutOfRangeException(nameof(TargetHighMilliamps), "② の電流の微調整の決まりを確かめてください。");
         if (SampleInterval <= TimeSpan.Zero || StableWindow <= TimeSpan.Zero || WaitLimit <= TimeSpan.Zero ||
@@ -623,7 +636,11 @@ internal interface ICurrentMeterLocator
 // 電流の指令(WF1973 の DC 出力)。
 internal interface ICurrentCommandOutput
 {
+    // DC を出す(出力 OFF→ON。5 V まで)。
     void SetVolts(double volts);
+    // SetVolts のあと、出力を切らずに電圧だけ変えられるか(WF1973。2026-11-19)。できなければ AdjustVolts は SetVolts と同じ(5 V まで)。
+    bool CanAdjust { get; }
+    void AdjustVolts(double volts);
     void Stop();
 }
 

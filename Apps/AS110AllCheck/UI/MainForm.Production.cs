@@ -9,6 +9,8 @@ internal sealed partial class MainForm : Form
     private const string ModeUnsetText="未設定";
     private static readonly Color ModeUnsetColor=Color.Red;
     private bool _modeSelected;
+    // モード欄(最初の画面では出さない。「測定」を押すと出す。2026-11-19、MainForm.Home.cs)。
+    private Control _modeSelectionPanel=null!;
 
     private Control BuildModeSelectionPanel()
     {
@@ -43,6 +45,7 @@ internal sealed partial class MainForm : Form
             Text="モードを選択", AutoSize=true, Font=modeFont,
             ForeColor=Color.MidnightBlue, Margin=new Padding(0, 5, 18, 0)
         }, _modeBox]);
+        _modeSelectionPanel=panel;
         return panel;
     }
     // 型式は参照波形(.xyb)のファイル名から決める(2026-11-06 に「型式」の行と「型式を適用」を廃止。人の判断)。MainForm.Files.cs の FindModelForReference。
@@ -406,7 +409,7 @@ internal sealed partial class MainForm : Form
         bool idle=!_operationInProgress && !_leakRunning && !_flow.Measuring;
         bool ready=idle && ConnectionsReady && _calibrationApplied && _templateLoaded && LoggerReadyToStart && _arduino.MeasurementInputReady;
         // NR-500 で今日の校正がまだなら、モードを選ぶ前に校正する(2026-11-18、1 日 1 回の流れ)。
-        _modeBox.Enabled=idle && !_flow.SaveFailed && !_flow.CaptureFailed && !_flow.HasSaved && !CalibrationBlocksModeSelection;
+        _modeBox.Enabled=idle && MeasurementScreen && !_flow.SaveFailed && !_flow.CaptureFailed && !_flow.HasSaved && !CalibrationBlocksModeSelection;
 
         bool production=_flow.Mode==TestMode.Production;
         bool excelMode=_modeSelected && _flow.Mode!=TestMode.Motion;
@@ -470,6 +473,8 @@ internal sealed partial class MainForm : Form
     // 「次にすること」の表示。データ調整(測定開始)ボタンが押せないときはその理由と次の操作を赤字で、押せるときは次の操作を緑字で出す。
     private void UpdateNextStepGuide(string saveBlockReason)
     {
+        // 最初の画面(「校正」「測定」)は、そこで押すボタンを案内する(2026-11-19)。
+        if(UpdateHomeNextStep())return;
         string blocked=GetStartBlockReason();
         if(blocked.Length>0)
         {
@@ -510,6 +515,8 @@ internal sealed partial class MainForm : Form
             if(!_logger.IsInitialized || !_hardwareDetected)missing.Add("LOGGER／NR本体");
             return $"{string.Join("・",missing)} が未接続です。機器をつないで「確認」を押してください";
         }
+        if(!MeasurementScreen)return CalibrationSupported && ValidTodayCalibration is null
+            ? "「校正」を押して今日の校正をしてください（済むと「測定」を押せます）" : "「測定」を押してください";
         if(CalibrationBlocksModeSelection)return "今日の校正をしてください（「校正値を入力」）。済むとモードを選べます";
         if(!_modeSelected)return "モードを選んでください";
         if(_excelPreparing)return "Excel を準備中です。終わるまで待ってください";

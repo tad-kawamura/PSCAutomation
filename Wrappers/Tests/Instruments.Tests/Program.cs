@@ -131,6 +131,30 @@ void Same(IEnumerable<string> actual, string[] expected, string name)
     Same(fake.Commands, new[] { ":OUTPut:STATe OFF", ":SOURce:BURSt:STATe OFF", ":SOURce:FUNCtion:SHAPe DC",
         ":SOURce:VOLTage:OFFSet 5V", ":OUTPut:STATe ON" }, "WF1973 の DC 出力");
     Fails<ArgumentOutOfRangeException>(() => wf.SetDcOutput(5.1), "DC 出力の範囲");
+    // AdjustDcOutput(2026-11-19): DC を出している間だけ、出力を切らずにオフセットだけ変える。
+    {
+        string error = "+0,\"No error\"";
+        var dcFake = new FakeInstrument("NF,WF1973,1,1") { Responder = c => c == ":SYSTem:ERRor?" ? error : c == "*OPC?" ? "1" : "" };
+        using var dc = new Wf1973BurstSession(dcFake);
+        IDcOutputAdjustable adjustable = dc;
+        Fails<InvalidOperationException>(() => adjustable.AdjustDcOutput(5), "DC を出す前の DC の微調整");
+        dc.SetDcOutput(5);
+        dcFake.Commands.Clear();
+        adjustable.AdjustDcOutput(5.48765);
+        Same(dcFake.Commands, new[] { ":SOURce:VOLTage:OFFSet 5.4877V", ":SYSTem:ERRor?" }, "WF1973 の DC の微調整(出力を切らない・0.1 mV に丸める)");
+        Check(adjustable.DcAdjustLimitVolts == 10, "WF1973 の DC の範囲は ±10 V");
+        Fails<ArgumentOutOfRangeException>(() => adjustable.AdjustDcOutput(10.1), "DC の微調整の範囲");
+        error = "-222,\"Data out of range\"";
+        Fails<InvalidOperationException>(() => adjustable.AdjustDcOutput(9), "本体がエラーを返した DC の微調整");
+        error = "+0,\"No error\"";
+        dc.StopOutput();
+        Fails<InvalidOperationException>(() => adjustable.AdjustDcOutput(5), "出力停止後の DC の微調整");
+        dc.SetDcOutput(5);
+        dc.PrepareBurst(settings);
+        Fails<InvalidOperationException>(() => adjustable.AdjustDcOutput(5), "バースト準備後の DC の微調整");
+        Check(FunctionGeneratorConnection.Create(sdgInit) is not IDcOutputAdjustable, "SDG1032X は DC の微調整を持たない(実機未確認のため)");
+        Console.WriteLine("PASS Wf1973BurstSession.AdjustDcOutput: DC を出している間だけ、出力を切らずに電圧を変える");
+    }
     fake.Commands.Clear();
     wf.Dispose();
     wf.Dispose();

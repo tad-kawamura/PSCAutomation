@@ -52,6 +52,14 @@ internal static class Program
         if(LocalVisible(productionPanel))throw new Exception("Operation panel appeared before mode selection");
         // 保存先は起動のたびに空から始める(転送設定に残っている前回の保存先は入れない。2026-11-06、人の指摘)。
         if(((TextBox)Field("_rootBox")).Text.Length!=0)throw new Exception("Save root must start empty instead of the previous save root");
+        // 最初の画面(2026-11-19): 「校正」「測定」の 2 つのボタンだけを出し、モード欄は出さない。接続確認の前はどちらも押せない。
+        // (M5Stack が無いので接続済みにはできない。接続確認のあとの「測定」の押せる・押せないは実機で確かめる)
+        Call("UpdateHomeControls");
+        var homePanel=(Control)Field("_homePanel");var modePanel=(Control)Field("_modeSelectionPanel");
+        if(!LocalVisible(homePanel) || LocalVisible(modePanel))throw new Exception("Startup must show the 校正 / 測定 buttons instead of the mode box");
+        if(((Button)Field("_homeCalibrateButton")).Enabled || ((Button)Field("_homeMeasureButton")).Enabled)throw new Exception("校正 / 測定 must wait for the connection check");
+        if(((Label)Field("_homeMeasureLabel")).Text!="接続確認が済むと押せます")throw new Exception("The home labels must say the connection check comes first");
+        Console.WriteLine("PASS startup shows the 校正 / 測定 buttons (not the mode box); both wait for the connection check");
         foreach(int mode in new[]{0,1,2})
         {
             modeBox.SelectedIndex=mode;
@@ -60,6 +68,8 @@ internal static class Program
             if(!(bool)Field("_modeSelected") || !StandVisible())
                 throw new Exception("Calibration panel did not appear after mode selection: "+mode);
             if(!LocalVisible(productionPanel))throw new Exception("Operation panel did not appear after mode selection: "+mode);
+            Call("UpdateHomeControls");
+            if(LocalVisible(homePanel) || !LocalVisible(modePanel))throw new Exception("After a mode is chosen the home buttons must be gone: "+mode);
             // 保存先・S/N はデータ取り(2)だけに表示する。
             if(LocalVisible(rootBox)!=(mode==2) || LocalVisible((Control)Field("_serialBox"))!=(mode==2))
                 throw new Exception("Save root / serial visibility did not follow mode: "+mode);

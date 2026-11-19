@@ -212,24 +212,22 @@ internal sealed partial class MainForm : Form
         _referenceSelectionPanel.Controls.Add(_referenceStatusLabel);
 
         BuildCalibrationPanel();
-        // モードを選ぶと校正画面が開き、適用後に参照波形(型式)を選択する。
+        // 最初の画面は「校正」「測定」の 2 つのボタン(2026-11-19)。「測定」を押すとモード欄が出て、モードを選ぶと今日の校正値で雛形を読み込み、参照波形(型式)を選択する。
         var connectionOrReferencePanel = new TableLayoutPanel
         {
             AutoSize = true,
             AutoSizeMode = AutoSizeMode.GrowAndShrink,
             Dock = DockStyle.Fill,
             ColumnCount = 1,
-            RowCount = 4,
+            RowCount = 5,
             Margin = Padding.Empty
         };
-        connectionOrReferencePanel.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        connectionOrReferencePanel.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        for (int i = 0; i < 5; i++) connectionOrReferencePanel.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         connectionOrReferencePanel.Controls.Add(statusPanel, 0, 0);
-        connectionOrReferencePanel.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        connectionOrReferencePanel.Controls.Add(BuildModeSelectionPanel(), 0, 1);
-        connectionOrReferencePanel.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        connectionOrReferencePanel.Controls.Add(_calibrationPanel, 0, 2);
-        connectionOrReferencePanel.Controls.Add(_referenceSelectionPanel, 0, 3);
+        connectionOrReferencePanel.Controls.Add(BuildHomePanel(), 0, 1);
+        connectionOrReferencePanel.Controls.Add(BuildModeSelectionPanel(), 0, 2);
+        connectionOrReferencePanel.Controls.Add(_calibrationPanel, 0, 3);
+        connectionOrReferencePanel.Controls.Add(_referenceSelectionPanel, 0, 4);
 
         _logTextBox.Dock = DockStyle.Fill;
         _logTextBox.Multiline = true;
@@ -339,6 +337,7 @@ internal sealed partial class MainForm : Form
         bool nfOk = _arduino.MeasurementInputReady && _arduino.NfEnergized;
         bool showReferenceSelection = ConnectionsReady && !_checkingConnections && !_measurementState.ErrorLogged;
         _connectionStatusPanel.Visible = !showReferenceSelection;
+        UpdateHomeControls();
         UpdateCalibrationControls(showReferenceSelection);
         _referenceSelectionPanel.Visible = showReferenceSelection && _calibrationApplied && _templateLoaded;
         _referenceComboBox.Enabled = !_operationInProgress && ConnectionsReady &&

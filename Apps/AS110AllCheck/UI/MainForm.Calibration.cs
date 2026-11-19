@@ -2,7 +2,9 @@ namespace PSCAutomation.Apps.AS110AllCheck;
 
 // 校正値の入力と適用を担当する(2026-11-06 にスタンド選択を廃止。人の判断)。
 // 2026-11-18 から 1 日 1 回の流れ(SPEC「段階 1 の直しと 1 日 1 回の流れ」): 校正はモードを選ぶ前に、その日の最初に 1 回。
-//   接続確認のあと、今日の校正値が無ければ校正画面を自動で開く(NR-500 のとき)。「適用」で今日の校正値を exe の隣の「校正値」フォルダーに残す。
+//   接続確認のあとは最初の画面(「校正」「測定」。2026-11-19、MainForm.Home.cs)。校正画面は「校正」を押して開く(自動では開かない)。
+//   今日の校正値が無いあいだ「測定」は押せない(NR-500 のとき)。「適用」で今日の校正値を exe の隣の「校正値」フォルダーに残す。
+//   測定の画面に入ったあとで日付が変わったときは、今までどおり校正画面を開く。
 //   その日はアプリを立ち上げ直しても校正画面を出さない。モードを選んだら(データ取りは保存先も)、今日の校正値でそのモードの作業用ファイルを作って LOGGER に読み込む。
 //   「校正し直す」でいつでも(測定結果が残っていないとき)校正し直せる。前の日の値は呼び出さない。
 // 校正画面の初期値は今日の校正値、無ければデータ調整の雛形の値。
@@ -71,6 +73,8 @@ internal sealed partial class MainForm : Form
     private void OpenCalibrationIfPending()
     {
         if (_closeRequested || !ConnectionsReady || _checkingConnections || _operationInProgress) return;
+        // 最初の画面(「校正」「測定」)では校正画面を自動で開かない。人が「校正」を押す(2026-11-19、人の指示)。
+        if (!MeasurementScreen) return;
         if (CalibrationSupported)
         {
             LoadTodayCalibrationIfNeeded();
@@ -210,7 +214,9 @@ internal sealed partial class MainForm : Form
                 {
                     // 読み取りのために作業用ファイルを閉じていたら、前の作業用ファイルを開き直す(前の校正値のまま)。
                     if (readerWasOpen && wasApplied && previousWorking is not null) ReopenWorkingTemplate(previousWorking);
-                    return previous is null ? "校正をキャンセルしました。「校正値を入力」から校正してください。" : "校正し直しをキャンセルしました（前の校正値のまま）。";
+                    return previous is null
+                        ? (MeasurementScreen ? "校正をキャンセルしました。「校正値を入力」から校正してください。" : "校正をキャンセルしました。「校正」から校正してください。")
+                        : "校正し直しをキャンセルしました（前の校正値のまま）。";
                 }
                 calibration = dialog.Calibration;
                 reading = dialog.Reading;
@@ -246,7 +252,8 @@ internal sealed partial class MainForm : Form
                 LoadTodayCalibrationIntoModeTemplate();
                 return "成功 / 型式（参照波形）を選択してください。";
             }
-            return !_modeSelected ? "成功 / モードを選択してください。" : "成功 / 「保存先選択」で保存先を選んでください。";
+            return !MeasurementScreen ? "成功 / 「測定」を押してください。"
+                : !_modeSelected ? "成功 / モードを選択してください。" : "成功 / 「保存先選択」で保存先を選んでください。";
         });
     }
 
@@ -369,7 +376,8 @@ internal sealed partial class MainForm : Form
     {
         bool supported = CalibrationSupported;
         var today = ValidTodayCalibration;
-        _calibrationPanel.Visible = connectionsVisible && (_modeSelected || supported);
+        // 最初の画面(「校正」「測定」)では出さない(2026-11-19)。
+        _calibrationPanel.Visible = connectionsVisible && MeasurementScreen && (_modeSelected || supported);
         if (supported)
         {
             if (today is null)
