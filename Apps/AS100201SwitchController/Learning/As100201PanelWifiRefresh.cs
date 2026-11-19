@@ -9,7 +9,8 @@ namespace PSCAutomation.Apps.AS100201SwitchController;
 
 // 子機のつなぎ直しの結果。Ok なら Message は子機の名前、そうでなければ人に見せる理由。
 // つながらないのはよくあること(Tab5 の電源が切れている等)なので、例外にしない(デバッガーが止まらないように)。
-internal readonly record struct As100201WifiRefreshResult(bool Ok, string Message);
+// Detail: 中の段ごとの秒(2026-11-18)。ログにだけ出す。
+internal readonly record struct As100201WifiRefreshResult(bool Ok, string Message, string? Detail = null);
 
 // 子機を切ってつなぎ直す(模擬に差し替えるための薄い interface)。
 internal interface IAs100201WifiAdapterControl
@@ -122,12 +123,13 @@ internal sealed class As100201WifiRefreshLink : IAs100201SerialLink
         double seconds = (_nowMs() - started) / 1000.0;
         Report(result.Ok
             ? $"{reason}、子機（{result.Message}）を {_profileName} につなぎ直しました（{seconds:F1} 秒）。"
-            : $"Wi-Fi の子機を {_profileName} につなぎ直せませんでした：{result.Message}");
+            : $"Wi-Fi の子機を {_profileName} につなぎ直せませんでした：{result.Message}", result.Detail);
     }
 
-    private void Report(string message)
+    private void Report(string message, string? detail)
     {
-        PSCAutomation.Wrappers.Arduino.ArduinoDiagnosticLog.Write("PANEL_WIFI_REFRESH", message);
+        PSCAutomation.Wrappers.Arduino.ArduinoDiagnosticLog.Write("PANEL_WIFI_REFRESH",
+            detail is null ? message : message + " / 内訳(秒)：" + detail);
         Notice?.Invoke(message);
     }
 }
@@ -139,8 +141,11 @@ internal sealed class As100201WlanAdapterControl : IAs100201WifiAdapterControl
 {
     // つながるまで待つ長さと、接続を頼み直す間隔。Tab5 が再起動している最中(親機が数秒消える)に頼むと
     // Windows がすぐ諦め、自動接続の次の機会(実機で約 30 秒後)まで切れたままになったため、数秒おきに頼み直す(2026-11-17 実機)。
+    // 2026-11-18(人の決定 ④): 頼み直しの間隔を 4 秒から、切れた状態なら 1.5 秒に。つなごうとしている最中は今までどおり 4 秒待つ。
+    // 実機で 1 回、つなぎ直しが 5.7 秒かかり、4 秒の頼み直しを待ったと推定したため(未確認。内訳をログに出して確かめる)。
     private static readonly TimeSpan ConnectTimeout = TimeSpan.FromSeconds(20);
-    private static readonly TimeSpan RetryInterval = TimeSpan.FromSeconds(4);
+    internal static readonly TimeSpan RetryInterval = TimeSpan.FromSeconds(1.5);
+    internal static readonly TimeSpan RetryWhileBusy = TimeSpan.FromSeconds(4);
     // つながってから IP が配られて Tab5 に届くまで。固定で待たず、Tab5 に ping が通ったらすぐ戻る(2026-11-17 人の決定 D)。
     // 通らないまま過ぎても「つながった」として戻す(TCP の確認で分かる)。
     private static readonly TimeSpan AddressWait = TimeSpan.FromSeconds(3);
@@ -160,10 +165,10 @@ internal sealed class As100201WlanAdapterControl : IAs100201WifiAdapterControl
             catch (Exception ex) when (ex is not OperationCanceledException) { return new As100201WifiRefreshResult(false, ex.Message); }
         }, cancellationToken);
 
-    // 子機がつながったあと、Tab5 に ping が通るまで待つ(最大 AddressWait)。
-    private static void WaitUntilReachable(string? host, CancellationToken cancellationToken)
+    // 子機がつながったあと、Tab5 に ping が通るまで待つ(最大 AddressWait)。通れば true。
+    private static bool WaitUntilReachable(string? host, CancellationToken cancellationToken)
     {
-        if (host is null) return;
+        if (host is null) return true;
         using var ping = new System.Net.NetworkInformation.Ping();
         var deadline = DateTime.UtcNow + AddressWait;
         while (DateTime.UtcNow < deadline)
@@ -171,11 +176,12 @@ internal sealed class As100201WlanAdapterControl : IAs100201WifiAdapterControl
             cancellationToken.ThrowIfCancellationRequested();
             try
             {
-                if (ping.Send(host, 300).Status == System.Net.NetworkInformation.IPStatus.Success) return;
+                if (ping.Send(host, 300).Status == System.Net.NetworkInformation.IPStatus.Success) return true;
             }
             catch (System.Net.NetworkInformation.PingException) { }
             Thread.Sleep(PollInterval);
         }
+        return false;
     }
 
     private static As100201WifiRefreshResult ReconnectCore(string profileName, string? probeHost, CancellationToken cancellationToken)
@@ -193,10 +199,17 @@ internal sealed class As100201WlanAdapterControl : IAs100201WifiAdapterControl
                     "内蔵の Wi-Fi まで切らないよう、つなぎ直しません。子機以外の登録を消してください。");
             var (guid, description) = matches[0];
 
+            // 中の段ごとの時刻(2026-11-18 人の決定 ④。つなぎ直しが 0.8 秒の回と 5.7 秒の回があり、どこで待ったか分からなかったため)。
+            var watch = System.Diagnostics.Stopwatch.StartNew();
+            var steps = new List<string>();
+            var states = new List<int>();
+            void Note(int state) { if (states.Count == 0 || states[^1] != state) states.Add(state); }
+
             // 切断の結果は問わない(もともと切れていることもある)。切れたのを見てから(最大 DisconnectWait)接続を頼む。
             WlanDisconnect(handle, ref guid, IntPtr.Zero);
             var disconnectDeadline = DateTime.UtcNow + DisconnectWait;
             while (DateTime.UtcNow < disconnectDeadline && QueryState(handle, guid) == 1) Thread.Sleep(PollInterval);
+            steps.Add($"切断 {watch.Elapsed.TotalSeconds:F1}");
             var parameters = new WlanConnectionParameters
             {
                 ConnectionMode = 0,        // wlan_connection_mode_profile
@@ -207,31 +220,58 @@ internal sealed class As100201WlanAdapterControl : IAs100201WifiAdapterControl
                 Flags = 0
             };
             var deadline = DateTime.UtcNow + ConnectTimeout;
-            var nextRequest = DateTime.MinValue;
+            var lastRequest = DateTime.MinValue;
             uint lastError = 0;
+            int requests = 0;
+            int state = -1;
             while (DateTime.UtcNow < deadline)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                if (DateTime.UtcNow >= nextRequest)
+                if (ShouldRequest(state, DateTime.UtcNow - lastRequest))
                 {
                     lastError = WlanConnect(handle, ref guid, ref parameters, IntPtr.Zero);
-                    nextRequest = DateTime.UtcNow + RetryInterval;
+                    lastRequest = DateTime.UtcNow;
+                    requests++;
+                    steps.Add($"頼み{requests} {watch.Elapsed.TotalSeconds:F1}" + (lastError == 0 ? "" : $"(エラー {lastError})"));
                 }
                 Thread.Sleep(PollInterval);
-                if (QueryState(handle, guid) == 1)   // wlan_interface_state_connected
+                state = QueryState(handle, guid);
+                Note(state);
+                if (state == StateConnected)
                 {
-                    WaitUntilReachable(probeHost, cancellationToken);
-                    return new(true, description);
+                    steps.Add($"接続 {watch.Elapsed.TotalSeconds:F1}");
+                    bool reached = WaitUntilReachable(probeHost, cancellationToken);
+                    steps.Add((reached ? "ping " : "ping 通らず ") + watch.Elapsed.TotalSeconds.ToString("F1"));
+                    return new(true, description, Breakdown(steps, states));
                 }
             }
             string detail = lastError == 0 ? "" : $"、最後の接続の頼みは Windows のエラー {lastError}";
-            return new(false, $"子機（{description}）が {ConnectTimeout.TotalSeconds:0} 秒以内に {profileName} につながりません（Tab5 の電源が切れている・離れすぎている{detail}）。");
+            return new(false, $"子機（{description}）が {ConnectTimeout.TotalSeconds:0} 秒以内に {profileName} につながりません（Tab5 の電源が切れている・離れすぎている{detail}）。",
+                Breakdown(steps, states));
         }
         finally
         {
             WlanCloseHandle(handle, IntPtr.Zero);
         }
     }
+
+    // wlan_interface_state の値。
+    private const int StateConnected = 1, StateDisconnected = 4;
+
+    // 接続を頼むか。最初は必ず頼む。Windows が諦めて「切れている」に戻ったら RetryInterval で頼み直す。
+    // つなごうとしている最中(探している・認証中など)は邪魔しないよう、RetryWhileBusy まで待つ(2026-11-18 人の決定 ④。前は一律 4 秒)。
+    internal static bool ShouldRequest(int state, TimeSpan sinceLastRequest) =>
+        sinceLastRequest >= (state == StateDisconnected ? RetryInterval : RetryWhileBusy);
+
+    // 人に見せる内訳。例:「切断 0.1・頼み1 0.1・接続 0.7・ping 0.8 / 状態 切断→探索→認証→接続」
+    private static string Breakdown(List<string> steps, List<int> states) =>
+        string.Join("・", steps) + " / 状態 " + string.Join("→", states.Select(StateName));
+
+    private static string StateName(int state) => state switch
+    {
+        0 => "準備中", 1 => "接続", 2 => "アドホック", 3 => "切断中", 4 => "切断",
+        5 => "関連付け", 6 => "探索", 7 => "認証", -1 => "不明", _ => state.ToString()
+    };
 
     private static As100201WifiRefreshResult Failed(string what, uint error) => new(false, $"{what}（Windows のエラー {error}）。");
 

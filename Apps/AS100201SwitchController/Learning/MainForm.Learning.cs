@@ -12,6 +12,7 @@ internal sealed partial class MainForm : Form
     private As100201PanelPathLink? _panelPaths;
     private As100201WifiRefreshLink? _panelWifi;
     private As100201PanelPath _lastPanelPath;
+    private readonly As100201UsbReturnWatch _usbReturnWatch = new();
     private As100201PanelBattery? _panelBattery;
     private readonly As100201BatteryWatch _batteryWatch = new();
     private As100201LearningSession? _learning;
@@ -173,6 +174,44 @@ internal sealed partial class MainForm : Form
     private void PanelPathLost(As100201PanelPath path)
     {
         if (path == As100201PanelPath.Usb) _panelWifi?.RefreshNow("使っていた USB が切れたため");
+    }
+
+    // Wi-Fi で使っている最中に Tab5 の USB が挿されたら、空いているときに USB へ戻す(2026-11-18 人の決定)。
+    // 決まりは As100201UsbReturnWatch。見張りの周期(0.5 秒)ごとに呼ぶ。
+    private async Task ReturnPanelToUsbIfIdleAsync()
+    {
+        if (_panel is null || _panelPaths is null || _closing) return;
+        As100201PanelPath path = _panelPaths.ActivePath;
+        As100201UsbState usb = path == As100201PanelPath.Wifi
+            ? await Task.Run(As100201SerialLink.PanelUsbState)
+            : As100201UsbState.Unknown;
+        if (_closing || IsDisposed) return;
+        bool idle = _panel.InputReady && !_measurementStarted && !_panelSelecting &&
+            !_operationInProgress && !_waveformRestartInProgress;
+        if (!_usbReturnWatch.Update(path, usb, idle, Environment.TickCount64)) return;
+        // 選び直しは数秒かかるので待たない(見張りの周期を止めると Arduino の見張りも止まるため)。
+        // 見張り(MaintainAsync)とは同じ鍵で順番になる。
+        _ = ReselectPanelForUsbAsync();
+    }
+
+    private async Task ReselectPanelForUsbAsync()
+    {
+        if (_panel is null || _panelPaths is null) return;
+        AppendLog("タッチパネルの USB が挿されたので、USB に戻します（数秒、パネルの操作と測定の開始を受け付けません）。");
+        // 選び直す間はパネルの画面がどこにあるか分からなくなる。つながったらパネルが SELECT / HOME を送り直す。
+        _panelBattery = null;
+        _panelSelecting = false;
+        RefreshReadyLed();
+        UpdateControls();
+        bool connected = await _panel.ReselectAsync();
+        if (_closing || IsDisposed) return;
+        As100201PanelPath now = _panelPaths.ActivePath;
+        if (!connected)
+            AppendLog("タッチパネルを選び直せませんでした。自動で再接続を確認します（USB を先に、なければ Wi-Fi）。");
+        else if (now == As100201PanelPath.Wifi)
+            AppendLog("タッチパネルの USB では確認できず、Wi-Fi のままです。USB に戻すには、USB を挿し直すか「確認」を押してください。");
+        RefreshReadyLed();
+        UpdateControls();
     }
 
     private void PanelPathChanged(As100201PanelPath path)

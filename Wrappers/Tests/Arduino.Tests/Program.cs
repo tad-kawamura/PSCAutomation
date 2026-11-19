@@ -104,12 +104,25 @@ try
     await FailsAsync<ArgumentNullException>(() => connection.ConnectAsync("HELLO", null!), "応答判定なし");
     await connection.DisconnectAsync();
     Check(!connection.IsConnected, "切断後に IsConnected");
+    // SelectPorts(2026-11-18 追加): 既定は null(全部試す)。空を返せばどのポートも開かずに失敗する
+    Check(connection.SelectPorts is null, "SelectPorts の既定が null でない");
+    string[]? offered = null;
+    connection.SelectPorts = names => { offered = names; return Array.Empty<string>(); };
+    bool anyPort = System.IO.Ports.SerialPort.GetPortNames().Length > 0;
+    string selectMessage = "";
+    try { await connection.ConnectAsync("HELLO", _ => true); }
+    catch (InvalidOperationException ex) { selectMessage = ex.Message; }
+    Check(!connection.IsConnected, "選ばれなかったのにつながった");
+    Check(anyPort
+        ? offered is not null && selectMessage.Contains("試す COM ポートがありません")
+        : offered is null && selectMessage.Contains("COM ポートが見つかりません"), "SelectPorts の空の扱い: " + selectMessage);
+    connection.SelectPorts = null;
     connection.Dispose();
     Check(!connection.IsConnected && disconnected == 0, "Dispose 後の状態・切断通知");
     Fails<ObjectDisposedException>(() => connection.SendLine("HELLO"), "Dispose 後の送信");
     await FailsAsync<ObjectDisposedException>(() => connection.ConnectAsync("HELLO", _ => true), "Dispose 後の接続");
     await FailsAsync<ObjectDisposedException>(() => connection.VerifyAsync("HELLO", _ => true), "Dispose 後の確認");
-    Console.WriteLine("PASS ArduinoConnection: 接続前の送信・空の確認文字列・Dispose 後の操作を止め、ポートなしで切断通知を出さない");
+    Console.WriteLine("PASS ArduinoConnection: 接続前の送信・空の確認文字列・Dispose 後の操作を止め、ポートなしで切断通知を出さない。SelectPorts は既定 null、空を返せばポートを開かずに失敗");
 
     // ArduinoConnection は起動・切断・終了を異常ログへ書く(次の異常ファイルの先頭に入る)
     ArduinoDiagnosticLog.Write("CONNECT_FAILED", "after-connection-marker");

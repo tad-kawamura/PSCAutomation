@@ -169,6 +169,11 @@ public sealed class ArduinoConnection : IDisposable
     }
     public event Action<string>? LineReceived;
     public event Action? Disconnected;
+
+    // 接続のときに試す COM ポートを選ぶ(2026-11-18 追加)。null(既定)なら今までどおり、見つかったポートを全部順に試す。
+    // 受け取るのは見つかったポート名(SerialPort.GetPortNames())、返すのは試す順のポート名。
+    // 同じ名前を 2 回入れれば、1 回目が失敗したときに開き直して 2 回試す(開くと再起動する機器のため)。
+    public Func<string[], IReadOnlyList<string>>? SelectPorts { get; set; }
     public bool IsConnected
     {
         get { try { return !_disposed && _port?.IsOpen == true; } catch (ObjectDisposedException) { return false; } }
@@ -269,7 +274,15 @@ public sealed class ArduinoConnection : IDisposable
             throw new InvalidOperationException("COM ポートが見つかりません。USB 接続を確認してください。");
         }
 
-        foreach (string name in names)
+        IReadOnlyList<string> targets = names;
+        if (SelectPorts is { } select)
+        {
+            targets = select(names) ?? Array.Empty<string>();
+            ArduinoDiagnosticLog.Write("CONNECT_TARGETS", targets.Count == 0 ? "（なし）" : string.Join(",", targets));
+            if (targets.Count == 0) failures.Add("試す COM ポートがありません（" + string.Join(", ", names) + " から選ばれませんでした）。");
+        }
+
+        foreach (string name in targets)
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
             SerialPort? candidate = null;

@@ -114,6 +114,7 @@
   - 確認(`VerifyAsync`): 接続済みなら同じやり取りで生存確認、未接続なら接続する。失敗したらポートを閉じる
   - 受信は `LineReceived` イベント(専用スレッドから呼ばれる)、切断は `Disconnected` イベント。再接続の方針はアプリ側
   - つないでいる COM ポートの名前(`PortName`、つないでいなければ null。2026-11-13 追加): ほかの機器(GC16 など)を探すときに、このポートを除くため
+  - 試す COM ポートを選ぶ(`SelectPorts`、2026-11-18 追加。AS100201SwitchController のタッチパネルで、ほかの USB シリアル機器を 1 台約 3.7 秒ずつ試していたため): 見つかったポート名を受け取り、試す順の名前を返す関数。既定(null)は今までどおり全部を試す。同じ名前を 2 回返せば、1 回目が失敗したとき開き直してもう 1 回試す(開くと再起動する機器向け)。空を返せばポートを開かずに失敗する。1.7 秒・2 秒の待ちは変えられない
 - 異常ログ(`ArduinoDiagnosticLog`): 正常時は直近 1 分をメモリに持つだけ。異常種別(`COM_DISAPPEARED` `PORT_CLOSED` `RX_STALE` `WRITE_ERROR` `READER_ERROR` `SHUTDOWN_ERROR` 等)を書くと、直近 1 分の記録ごとファイルに保存し始める。復旧(`CompleteIfActive`)後 30 秒は同じファイルにまとめる
   - アプリ名と固有の異常種別は起動時に `ArduinoDiagnosticLog.Configure("アプリ名", "NF_STALE", ...)` で注入する(通信を始める前に 1 回)
   - 保存先は実行ファイルの隣の `Logs\ArduinoIncident_*.log`。書けないときは `%LOCALAPPDATA%\<アプリ名>\Logs`(`PrimaryDirectory` / `FallbackDirectory`)

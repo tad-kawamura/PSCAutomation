@@ -20,6 +20,8 @@ internal sealed partial class MainForm : Form
             await _arduino.MaintainAsync();
             if (_panel is not null) await _panel.MaintainAsync();
             if (_closing || IsDisposed || _operationInProgress) return;
+            await ReturnPanelToUsbIfIdleAsync();
+            if (_closing || IsDisposed || _operationInProgress) return;
 
             if (_logger.IsInitialized && _templateLoaded)
             {

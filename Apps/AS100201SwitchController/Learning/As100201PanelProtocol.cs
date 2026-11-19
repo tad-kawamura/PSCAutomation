@@ -156,6 +156,43 @@ internal sealed class As100201PanelProtocol : IDisposable
         }
     }
 
+    // 今の道を閉じて、USB → Wi-Fi の順に選び直す(2026-11-18 人の決定: Wi-Fi 中に USB が挿されたら、空いているときに USB へ戻す)。
+    // 見張りの再接続と同じ手順。つながれば true。つながらなければ false で、見張り(MaintainAsync)が 2 秒おきに再接続する。
+    // 見張りや接続確認が動いている間は何もせず false。
+    public async Task<bool> ReselectAsync()
+    {
+        if (_disposed || !await _maintenanceGate.WaitAsync(0).ConfigureAwait(false)) return false;
+        try
+        {
+            await Task.Run(async () =>
+            {
+                Reset();
+                await _link.DisconnectAsync().ConfigureAwait(false);
+                ObjectDisposedException.ThrowIf(_disposed, this);
+                await VerifyCoreAsync().ConfigureAwait(false);
+            }).ConfigureAwait(false);
+            if (!_disposed) StatusChanged?.Invoke("タッチパネルを再接続しました。定期応答の安定を確認しています。");
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Reset();
+            if (!_disposed)
+            {
+                ArduinoDiagnosticLog.Write("PANEL_RECONNECT_WAIT", ex.Message);
+                StatusChanged?.Invoke(ex is As100201PanelVersionException
+                    ? ex.Message
+                    : "タッチパネルの接続を待っています。USB か Wi-Fi でつながれば自動で再確認します。");
+            }
+            return false;
+        }
+        finally
+        {
+            _nextAttempt = Environment.TickCount64 + 2000;
+            _maintenanceGate.Release();
+        }
+    }
+
     // 記録できた(ACK:<受け取った行>)・できなかった(NAK:<理由>)をパネルへ返す。パネルは短く表示する。
     // 送れなくても呼び出し側の記録は済んでいるので、例外は異常ログに残して次の再接続に任せる。
     public bool TrySend(string line)

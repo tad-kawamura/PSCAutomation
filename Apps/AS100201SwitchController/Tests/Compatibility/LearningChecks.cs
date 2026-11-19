@@ -18,6 +18,7 @@ internal static class LearningChecks
         PressedRowChecks();
         await PanelOutageChecks();
         await PanelPathAndBatteryChecks();
+        await UsbReturnChecks();
         await WifiRefreshChecks();
         await VirtualPanelChecks();
         // 画面(MainForm)を作るとこのスレッドに WinForms の SynchronizationContext が入り、以後の await が戻らなくなる。
@@ -610,6 +611,68 @@ internal static class LearningChecks
         Check(charging.Update(new(10, 6600, true)) is null && charging.Update(new(-1, 0, false)) is null, "warned while charging / without battery");
         Check(charging.Update(new(10, 6600, false))?.Contains("10%") == true, "charging consumed the warning");
         Pass("panel paths: USB preferred, inactive path ignored, failover to Wi-Fi on drop (also via protocol reconnect), stays on Wi-Fi until re-verify then back to USB, both-missing reasons, USB not-found message says panel; BATT lines (below 4000 mV = no battery); low battery log once at 20% (rearm above 30%, not while charging)");
+    }
+
+    // 8b. Wi-Fi 中に Tab5 の USB が挿されたら、空いているときに USB へ戻す(2026-11-18 人の決定)
+    private static async Task UsbReturnChecks()
+    {
+        const As100201PanelPath wifi = As100201PanelPath.Wifi;
+        const As100201UsbState absent = As100201UsbState.Absent, present = As100201UsbState.Present, ready = As100201UsbState.PortReady;
+        var watch = new As100201UsbReturnWatch();
+        // 挿さっていない・分からないときは戻さない
+        Check(!watch.Update(wifi, absent, true, 0) && !watch.Update(wifi, As100201UsbState.Unknown, true, 100), "returned without USB");
+        // COM ポートができたらすぐ戻す(②)。空いていなければ待つ
+        Check(!watch.Update(wifi, present, true, 1000) && !watch.Update(wifi, ready, false, 1100), "returned before port / while busy");
+        Check(watch.Update(wifi, ready, true, 1200), "not returned as soon as port is ready");
+        // 試すのは挿すたびに 1 回。選び直しの途中(道なし)でも覚えたまま
+        Check(!watch.Update(wifi, ready, true, 1500) && !watch.Update(As100201PanelPath.None, ready, true, 2000) &&
+            !watch.Update(wifi, ready, true, 9000), "retried without replug");
+        // 抜いて挿し直せばまた試す
+        Check(!watch.Update(wifi, absent, true, 10000) && watch.Update(wifi, ready, true, 10500), "not rearmed by replug");
+        // USB でつながったら、次に Wi-Fi に移ったときにまた試せる
+        Check(!watch.Update(As100201PanelPath.Usb, ready, true, 14000) && watch.Update(wifi, ready, true, 15000), "not rearmed after USB connected");
+        // COM ポートが分からないときだけ、挿されてから 2 秒待つ
+        var fallback = new As100201UsbReturnWatch();
+        Check(!fallback.Update(wifi, present, true, 0) && !fallback.Update(wifi, present, true, 1999) &&
+            fallback.Update(wifi, present, true, 2000), "port-unknown fallback not after settle time");
+
+        // ①: USB では Tab5 の COM ポートだけを、今あるものを 2 回ずつ試す。分からないときは全部
+        string[] names = { "COM9", "COM4", "COM8", "COM8" };
+        Check(As100201SerialLink.SelectPanelPorts(names, new[] { "COM8" }).SequenceEqual(new[] { "COM8", "COM8" }), "panel port not selected twice");
+        Check(As100201SerialLink.SelectPanelPorts(names, new[] { "com8", "COM12" }).SequenceEqual(new[] { "com8", "com8" }), "missing panel port not skipped");
+        Check(As100201SerialLink.SelectPanelPorts(names, Array.Empty<string>()).Count == 0, "non-panel ports tried");
+        Check(As100201SerialLink.SelectPanelPorts(names, null).SequenceEqual(names), "unknown panel port did not fall back to all");
+        // Windows に聞ける(機器は開かない)。無い ID は空
+        Check(As100201UsbDevices.FindPortNames(@"USB\VID_FFFF&PID_FFFE&NOSUCH") is { Count: 0 }, "port name query failed");
+
+        // ④: 子機のつなぎ直しで頼み直す間隔。切れた状態なら 1.5 秒、つなごうとしている最中は 4 秒
+        Check(As100201WlanAdapterControl.ShouldRequest(-1, TimeSpan.MaxValue), "first request not sent");
+        Check(!As100201WlanAdapterControl.ShouldRequest(4, TimeSpan.FromSeconds(1.4)) && As100201WlanAdapterControl.ShouldRequest(4, TimeSpan.FromSeconds(1.5)),
+            "disconnected retry not 1.5 s");
+        Check(!As100201WlanAdapterControl.ShouldRequest(6, TimeSpan.FromSeconds(3.9)) && As100201WlanAdapterControl.ShouldRequest(6, TimeSpan.FromSeconds(4)),
+            "busy retry not 4 s");
+
+        // 見張りと組み合わせ: Wi-Fi で使っている最中に USB が戻ったら、選び直しで USB に移り Wi-Fi を閉じる
+        const string ping = As100201PanelProtocol.HelloRequest;
+        var usb = new FakePanelLink { Fail = true };
+        var wifiLink = new FakePanelLink();
+        var paths = new As100201PanelPathLink(usb, wifiLink);
+        using (var panel = new As100201PanelProtocol(paths))
+        {
+            await panel.VerifyAsync();
+            Check(paths.ActivePath == wifi && panel.IsConnected, "not on Wi-Fi before return");
+            usb.Fail = false;
+            Check(await panel.ReselectAsync() && paths.ActivePath == As100201PanelPath.Usb && panel.IsConnected &&
+                !wifiLink.IsConnected && usb.Requests.Count == 2 && usb.Requests[^1] == ping, "reselect did not move to USB");
+            // USB でも Wi-Fi でも確かめられなければ false で、見張りの再接続に任せる
+            usb.Fail = wifiLink.Fail = true;
+            Check(!await panel.ReselectAsync() && paths.ActivePath == As100201PanelPath.None && !panel.IsConnected, "failed reselect reported as connected");
+            usb.Fail = wifiLink.Fail = false;
+            await Task.Delay(2100);
+            await panel.MaintainAsync();
+            Check(paths.ActivePath == As100201PanelPath.Usb && panel.IsConnected, "maintain did not reconnect after failed reselect");
+        }
+        Pass("USB return: as soon as the panel COM port exists and idle (2 s only when the port is unknown), tries once per plug-in (rearmed by replug or USB connection); only the panel COM port, twice; Wi-Fi adapter retry 1.5 s when disconnected / 4 s while connecting; reselect moves Wi-Fi to USB and closes Wi-Fi, failure left to maintain");
     }
 
     // 9. Wi-Fi の子機のつなぎ直し(2026-11-17 人の決定 B)。2 回続けて失敗したら裏でつなぎ直し、終わったあとの確認で Wi-Fi に移る。30 秒に 1 回まで

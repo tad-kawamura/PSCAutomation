@@ -22,6 +22,30 @@ internal sealed class As100201SerialLink : IAs100201SerialLink
     {
         _connection.LineReceived += line => LineReceived?.Invoke(line);
         _connection.Disconnected += () => Disconnected?.Invoke();
+        // Tab5 の COM ポートだけを試す(2026-11-18 人の決定 ①)。ほかの USB シリアル機器(FTDI など)を 1 台約 3.7 秒ずつ試していた。
+        _connection.SelectPorts = names => SelectPanelPorts(names, As100201UsbDevices.FindPortNames(PanelUsbIdPrefix));
+    }
+
+    // 試すポート: Tab5 の COM ポートのうち今ある分を、それぞれ 2 回(開いた瞬間に Tab5 が再起動して 1 回目は返事が来ないため。
+    // 2026-11-18 の実機では、再起動から返事まで約 6.2 秒)。Tab5 の COM ポートが分からないとき(null)は今までどおり全部。
+    public static IReadOnlyList<string> SelectPanelPorts(string[] names, IReadOnlyList<string>? panelPorts)
+    {
+        if (panelPorts is null) return names;
+        var targets = new List<string>();
+        foreach (string port in panelPorts.Distinct(StringComparer.OrdinalIgnoreCase))
+            if (names.Contains(port, StringComparer.OrdinalIgnoreCase)) targets.AddRange(new[] { port, port });
+        return targets;
+    }
+
+    // Tab5 の COM ポートができているか(2026-11-18 人の決定 ②: 挿してからの 2 秒待ちをやめ、できたらすぐ USB へ戻す)。
+    public static As100201UsbState PanelUsbState()
+    {
+        if (As100201UsbDevices.IsPresent(PanelUsbIdPrefix) is not bool present) return As100201UsbState.Unknown;
+        if (!present) return As100201UsbState.Absent;
+        var ports = As100201UsbDevices.FindPortNames(PanelUsbIdPrefix);
+        if (ports is null) return As100201UsbState.Present;
+        string[] names = System.IO.Ports.SerialPort.GetPortNames();
+        return SelectPanelPorts(names, ports).Count > 0 ? As100201UsbState.PortReady : As100201UsbState.Present;
     }
 
     public event Action<string>? LineReceived;
@@ -59,6 +83,10 @@ internal sealed class As100201SerialLink : IAs100201SerialLink
     public void Dispose() => _connection.Dispose();
 }
 
+// Tab5 の USB の様子。Unknown: Windows に聞けない、Absent: 挿さっていない、
+// Present: 挿さっているが COM ポートがまだ無い(または分からない)、PortReady: COM ポートがある。
+internal enum As100201UsbState { Unknown, Absent, Present, PortReady }
+
 // いま挿さっている USB 機器の ID を Windows(cfgmgr32)に聞く。機器は開かない。
 internal static class As100201UsbDevices
 {
@@ -79,6 +107,31 @@ internal static class As100201UsbDevices
             return false;
         }
         catch (Exception ex) when (ex is DllNotFoundException or EntryPointNotFoundException)
+        {
+            return null;
+        }
+    }
+
+    // idPrefix で始まる、いま挿さっている機器の COM ポート名(機器のレジストリの Device Parameters\PortName)。
+    // 挿さっていなければ空、聞けなければ null。Tab5 は USB\VID_303A&PID_1001&MI_00\... が COM ポートを持つ。
+    public static IReadOnlyList<string>? FindPortNames(string idPrefix)
+    {
+        try
+        {
+            const int flags = FilterEnumerator | FilterPresent;
+            if (CM_Get_Device_ID_List_Size(out int length, "USB", flags) != 0 || length <= 0) return null;
+            var buffer = new char[length];
+            if (CM_Get_Device_ID_List("USB", buffer, length, flags) != 0) return null;
+            var ports = new List<string>();
+            foreach (string id in new string(buffer).Split('\0', StringSplitOptions.RemoveEmptyEntries))
+            {
+                if (!id.StartsWith(idPrefix, StringComparison.OrdinalIgnoreCase)) continue;
+                using var key = Microsoft.Win32.Registry.LocalMachine.OpenSubKey($@"SYSTEM\CurrentControlSet\Enum\{id}\Device Parameters");
+                if (key?.GetValue("PortName") is string port && port.StartsWith("COM", StringComparison.OrdinalIgnoreCase)) ports.Add(port);
+            }
+            return ports;
+        }
+        catch (Exception ex) when (ex is DllNotFoundException or EntryPointNotFoundException or System.Security.SecurityException or UnauthorizedAccessException or IOException)
         {
             return null;
         }
