@@ -6,7 +6,7 @@ namespace PSCAutomation.Apps.AS110AllCheck;
 // 校正の自動読み取り(段階 1。2026-11-13 承認、SPEC「校正の自動読み取り」)。2026-11-18 に 2 つの読み取りに分けた(SPEC「段階 1 の直しと 1 日 1 回の流れ」)。
 // 流れ図「校正_変更」の ①〜④ を行い、8 項目(電流 2 点・圧力 2 点)を作る。最後に人が校正画面で「適用」を押す(ここでは適用しない)。
 //   「マルチメータで読み取る」(RunCurrentAsync):
-//   ① 電流の低点: WF1973 0 V(0 mA)→ NR-500 CH1 の電圧の 1 秒平均と、7351E の電流
+//   ① 電流の低点: WF1973 0 V(0 mA の指令)から、7351E で 0 mA ±0.1 mA に入るよう微調整(2026-11-19)→ NR-500 CH1 の電圧の 1 秒平均と、7351E の電流
 //   ② 電流の高点: WF1973 5 V(30 mA の指令)から、7351E で 30 mA ±0.1 mA に入るよう微調整(2026-11-19)→ CH1 の電圧の 1 秒平均と、7351E の電流
 //      7351E が見つからなければ「もう一度探す / 電流を手で入れる / 中止」。手で入れるときも電圧は自動で読む
 //   「GC16 で読み取る」(RunPressureAsync):
@@ -35,6 +35,8 @@ internal sealed class AutoCalibrationProcedure
     private ValvePosition _valvePosition = ValvePosition.Measurement;
     // 段ごとの結果(済んだ段は再開しても残す)。
     private (float Volts, float Milliamps)? _currentLow, _currentHigh;
+    // ① で合わせた WF1973 の電圧(② の最初の直線に使う)。
+    private double _currentLowCommandVolts;
     private (float Volts, float Kilopascals)? _pressureLow, _pressureHigh;
     private CalibrationZeroCheck? _zero;
     private TimeSpan? _sinceGaugeConfirmed;
@@ -135,12 +137,15 @@ internal sealed class AutoCalibrationProcedure
         });
     }
 
-    // ① 0 mA の CH1 の電圧と、そのときの実際の電流(0 mA 固定にはしない。2026-11-18、人)。
+    // ① 0 V(0 mA の指令)から始め、7351E で読みながら 0 mA ±0.1 mA に入るよう WF1973 を微調整して(2026-11-19、人の指示。② と同じ要領)、
+    // CH1 の電圧と、そのときの実際の電流を読む(0 mA 固定にはしない。2026-11-18、人)。人が電流を入れるときは微調整しない(0 V のまま)。
     private async Task CurrentLowAsync(CancellationToken ct)
     {
         SetCurrent(0);
         var meter = await EnsureCurrentMeterAsync(ct);
         await _clock.Delay(_settings.CurrentSettle, ct);
+        if (meter is not null) await TuneCurrentAsync(meter, AutoCalibrationStage.CurrentLow, ct);
+        _currentLowCommandVolts = _currentVolts ?? 0;
         var (volts, milliamps) = await ReadCurrentPointAsync(AutoCalibrationStage.CurrentLow, meter, ct);
         if (Math.Abs(milliamps) > _settings.LowCurrentToleranceMilliamps)
             await AskCurrentDeviationAsync($"① 0 mA の指令で {F(milliamps)} mA 流れています（±{F(_settings.LowCurrentToleranceMilliamps)} mA を超えています）。\r\n" +
@@ -156,7 +161,7 @@ internal sealed class AutoCalibrationProcedure
         SetCurrent(_settings.CommandVolts);
         var meter = await EnsureCurrentMeterAsync(ct);
         await _clock.Delay(_settings.CurrentSettle, ct);
-        if (meter is not null) await TuneHighCurrentAsync(meter, ct);
+        if (meter is not null) await TuneCurrentAsync(meter, AutoCalibrationStage.CurrentHigh, ct);
         var (volts, milliamps) = await ReadCurrentPointAsync(AutoCalibrationStage.CurrentHigh, meter, ct);
         // 30 mA が出ていれば、低点からはっきり上がる(アンプの設定で約 1〜5 V)。「低点以下」だけを見ると、出力が止まっていても
         // ノイズで少し上なら通り、0 mA のままの電圧を高点にした(2026-11-14、全体見直し・区切り 4)。
@@ -172,43 +177,48 @@ internal sealed class AutoCalibrationProcedure
         _operator.ShowStatus($"② 電流の高点：{F(volts)} V = {F((float)milliamps)} mA");
     }
 
-    // ② の電流が 30 mA ±0.1 mA に入るまで、WF1973 の電圧を直す(最大 MaxCurrentAdjustments 回)。
-    // 次の電圧は、① の点(0 V の指令で読んだ電流)と今の点を結ぶ直線から求める(① が無ければ 0 V = 0 mA とみなす)。
-    // 25 mA 未満(アンプの電源・配線の異常)は直さず、今までの知らせ(② の外れ)に任せる。
-    // 上限の電圧でも届かない・回数を使い切ったときは「やり直す / このまま使う / 中止」(校正値は読んだ電流のままなので、このまま使ってもずれない)。
-    private async Task TuneHighCurrentAsync(ICurrentMeter meter, CancellationToken ct)
+    // ① は 0 mA ±0.1 mA、② は 30 mA ±0.1 mA に入るまで、WF1973 の電圧を直す(最大 MaxCurrentAdjustments 回。2026-11-19、人の指示)。
+    // 次の電圧は、前の点と今の点を結ぶ直線から求める(② の最初は ① の点から。① の最初は 1 V = 6 mA とみなす。直線が求まらないときも 6 mA/V)。
+    // 外れが大きいとき(① は ±1 mA を超える、② は 25 mA 未満 = 配線・アンプの電源の異常)は直さず、今までの知らせに任せる。
+    // 電圧の範囲は MinCommandVolts(-0.5 V)〜 上限(WF1973 は出力を切らずに MaxCommandVolts の 5.5 V まで、出し直ししかできない発振器は 5 V まで)。
+    // 範囲の端でも届かない・回数を使い切ったときは「やり直す / このまま使う / 中止」(校正値は読んだ電流のままなので、このまま使ってもずれない)。
+    private async Task TuneCurrentAsync(ICurrentMeter meter, AutoCalibrationStage stage, CancellationToken ct)
     {
-        double target = _settings.TargetHighMilliamps, tolerance = _settings.HighCurrentToleranceMilliamps;
-        // WF1973 は出力を切らずに MaxCommandVolts(5.5 V)まで。出し直ししかできない発振器は SetVolts の上限 5 V まで。
-        double limit = _current.CanAdjust ? _settings.MaxCommandVolts : Math.Min(_settings.MaxCommandVolts, AutoCalibrationSettings.SetVoltsLimit);
+        bool high = stage == AutoCalibrationStage.CurrentHigh;
+        string name = high ? "②" : "①";
+        double target = high ? _settings.TargetHighMilliamps : _settings.TargetLowMilliamps;
+        double tolerance = high ? _settings.HighCurrentToleranceMilliamps : _settings.LowCurrentTuneToleranceMilliamps;
+        double upper = _current.CanAdjust ? _settings.MaxCommandVolts : Math.Min(_settings.MaxCommandVolts, AutoCalibrationSettings.SetVoltsLimit);
+        double lower = _settings.MinCommandVolts;
+        (double Volts, double Milliamps)? previous = high && _currentLow is { } low ? (_currentLowCommandVolts, low.Milliamps) : null;
         for (int adjustments = 0; ; adjustments++)
         {
-            double volts = _currentVolts ?? _settings.CommandVolts;
+            double volts = _currentVolts ?? (high ? _settings.CommandVolts : 0);
             double milliamps = await meter.ReadMilliampsAsync(ct);
             if (!double.IsFinite(milliamps)) throw new InvalidDataException($"マルチメータ（{meter.Name}）の電流を読めません。");
             if (Math.Abs(milliamps - target) <= tolerance + 1e-9)
             {
                 if (adjustments > 0)
-                    _operator.ShowStatus($"② 発振器を {F4(volts)} V にして {F(milliamps)} mA に合わせました（{target} ±{tolerance} mA。{adjustments} 回直した）。");
+                    _operator.ShowStatus($"{name} 発振器を {F4(volts)} V にして {F(milliamps)} mA に合わせました（{target} ±{tolerance} mA。{adjustments} 回直した）。");
                 return;
             }
-            if (milliamps < _settings.MinHighCurrentMilliamps) return;
-            double zeroMilliamps = _currentLow?.Milliamps ?? 0;
-            double slope = (milliamps - zeroMilliamps) / volts;
-            if (!(slope > 0) || !double.IsFinite(slope)) return;
+            if (high ? milliamps < _settings.MinHighCurrentMilliamps : Math.Abs(milliamps) > _settings.LowCurrentToleranceMilliamps) return;
+            double slope = previous is { } p && Math.Abs(volts - p.Volts) > 1e-6 ? (milliamps - p.Milliamps) / (volts - p.Volts) : double.NaN;
+            if (!(slope > 0) || !double.IsFinite(slope)) slope = _settings.NominalMilliampsPerVolt;
+            previous = (volts, milliamps);
             double next = Math.Round(volts + (target - milliamps) / slope, 4);
-            bool atLimit = next > limit && volts >= limit;
+            bool atLimit = (next > upper && volts >= upper) || (next < lower && volts <= lower);
             if (atLimit || adjustments >= _settings.MaxCurrentAdjustments)
             {
                 string reason = atLimit
-                    ? $"発振器を上限の {F4(limit)} V にしても {F(milliamps)} mA です"
+                    ? $"発振器を{(next > upper ? "上限" : "下限")}の {F4(next > upper ? upper : lower)} V にしても {F(milliamps)} mA です"
                     : $"発振器を {adjustments} 回直しても {F(milliamps)} mA です（今 {F4(volts)} V）";
-                await AskCurrentDeviationAsync($"② {reason}。{target} ±{tolerance} mA に入りません。\r\n" +
+                await AskCurrentDeviationAsync($"{name} {reason}。{target} ±{tolerance} mA に入りません。\r\n" +
                     "アンプ・配線・マルチメータを確かめてください。「このまま使う」を選んでも、校正値は読んだ電流で作るのでずれません。", ct);
                 return;
             }
-            next = Math.Clamp(next, 0, limit);
-            _operator.ShowStatus($"② {F4(volts)} V で {F(milliamps)} mA。発振器を {F4(next)} V に直します。");
+            next = Math.Clamp(next, lower, upper);
+            _operator.ShowStatus($"{name} {F4(volts)} V で {F(milliamps)} mA。発振器を {F4(next)} V に直します。");
             AdjustCurrent(next);
             await _clock.Delay(_settings.CurrentSettle, ct);
         }
@@ -533,6 +543,12 @@ internal sealed record AutoCalibrationSettings
     public double HighCurrentToleranceMilliamps { get; init; } = 0.1;
     public int MaxCurrentAdjustments { get; init; } = 5;
     public double MaxCommandVolts { get; init; } = 5.5;
+    // ① を 0 mA ±0.1 mA に合わせる(2026-11-19、人: ② と同じ要領)。アンプのずれで 0 mA に負の電圧が要ることがあるので、下限は -0.5 V(約 -3 mA)。
+    public double TargetLowMilliamps { get; init; } = 0.0;
+    public double LowCurrentTuneToleranceMilliamps { get; init; } = 0.1;
+    public double MinCommandVolts { get; init; } = -0.5;
+    // 前の点が無いときの直線の傾き(AS110 は 1 V = 6 mA)。
+    public double NominalMilliampsPerVolt { get; init; } = 6.0;
     // 部品の SetDcOutput の上限(出力 OFF→ON で出す。変えない)。
     public const double SetVoltsLimit = 5.0;
     // GC16 を読む間隔(表示の更新は 0.3 秒ごと)。
@@ -569,7 +585,9 @@ internal sealed record AutoCalibrationSettings
         if (!double.IsFinite(CommandVolts) || CommandVolts <= 0 || CommandVolts > 5)
             throw new ArgumentOutOfRangeException(nameof(CommandVolts), "WF1973 に出す電圧は 0 より大きく 5 V 以下にしてください。");
         if (!double.IsFinite(MaxCommandVolts) || MaxCommandVolts < CommandVolts || MaxCommandVolts > 6 ||
-            !(TargetHighMilliamps > 0) || !(HighCurrentToleranceMilliamps > 0) || MaxCurrentAdjustments < 0)
+            !(TargetHighMilliamps > 0) || !(HighCurrentToleranceMilliamps > 0) || MaxCurrentAdjustments < 0 ||
+            !double.IsFinite(MinCommandVolts) || MinCommandVolts > 0 || MinCommandVolts < -AutoCalibrationSettings.SetVoltsLimit ||
+            !double.IsFinite(TargetLowMilliamps) || !(LowCurrentTuneToleranceMilliamps > 0) || !(NominalMilliampsPerVolt > 0))
             throw new ArgumentOutOfRangeException(nameof(TargetHighMilliamps), "② の電流の微調整の決まりを確かめてください。");
         if (SampleInterval <= TimeSpan.Zero || StableWindow <= TimeSpan.Zero || WaitLimit <= TimeSpan.Zero ||
             CurrentSettle < TimeSpan.Zero || ZeroSettle < TimeSpan.Zero)

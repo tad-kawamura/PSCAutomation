@@ -23,8 +23,8 @@ internal static class AutoCalibrationTests
             Check(Near(c.Current.Output1, 0.01) && c.Current.Output2 == 29.9f && Near(c.Current.Input1, Rig.Ch1Volts(0)) && Near(c.Current.Input2, Rig.Ch1Volts(5)),
                 "auto calibration: current points are CH1 at 0 V and at 5 V with the 7351E mA (① too)");
             Check(current.MeterName == "7351E" && current.MethodText == "マルチメータで読み取り（7351E）" && rig.CurrentMeters.Finds == 1 &&
-                rig.CurrentMeters.Meter.Reads == 3 && rig.CurrentMeters.Meter.Disposals == 1 && rig.Operator.CurrentAsked == 0,
-                "auto calibration: 7351E found once, read for ①, ② (the tuning check and the point), released; nobody types the current");
+                rig.CurrentMeters.Meter.Reads == 4 && rig.CurrentMeters.Meter.Disposals == 1 && rig.Operator.CurrentAsked == 0,
+                "auto calibration: 7351E found once, read for ① and ② (the tuning check and the point each), released; nobody types the current");
             Check(Near(c.Pressure.Output1, 0.03) && Near(c.Pressure.Input1, Rig.Ch2Volts(0)) && Near(c.Pressure.Output2, 539.43) && Near(c.Pressure.Input2, Rig.Ch2Volts(539.4)),
                 "auto calibration: pressure points are the zero-checked GC16 value and the settled high value with CH2");
             Check(rig.Output.Commands.SequenceEqual(["0", "5", "stop", "5", "stop"]),
@@ -119,7 +119,7 @@ internal static class AutoCalibrationTests
             var (c, _, _) = await rig.RunBothAsync(model, CancellationToken.None);
             Check(rig.Operator.ResumeAsked == 1 && rig.Operator.ResumeMessages[0].Contains("③") && rig.Operator.ResumeMessages[0].Contains("WF1973 の出力を止めました"),
                 "communication lost: stop output and ask 再開 for the stopped stage");
-            Check(rig.Locator.Finds == 2 && rig.CurrentMeters.Meter.Reads == 3 && rig.Output.Commands.SequenceEqual(["0", "5", "stop", "5", "stop", "5", "stop"]) &&
+            Check(rig.Locator.Finds == 2 && rig.CurrentMeters.Meter.Reads == 4 && rig.Output.Commands.SequenceEqual(["0", "5", "stop", "5", "stop", "5", "stop"]) &&
                 rig.Operator.Instructions.Count(i => i == ManualBallValveSwitcher.AtmosphereInstruction) == 2 && c.Pressure.Output2 > 500,
                 "communication lost: 再開 searches GC16 again and restarts ③ only: " + string.Join(",", rig.Output.Commands));
         }
@@ -158,7 +158,7 @@ internal static class AutoCalibrationTests
             var (c, _, _) = await rig.RunBothAsync(model, CancellationToken.None);
             Check(rig.Operator.ResumeAsked == 1 && rig.Operator.ResumeMessages[0].Contains("②") && rig.Operator.ResumeMessages[0].Contains("上がっていません") &&
                 rig.Operator.ResumeMessages[0].Contains("アンプの電源"), "② no current: stopped although the voltage is slightly above the low point");
-            Check(rig.CurrentMeters.Meter.Reads == 5 && rig.CurrentMeters.Finds == 2 && Near(c.Current.Input2, Rig.Ch1Volts(5)),
+            Check(rig.CurrentMeters.Meter.Reads == 6 && rig.CurrentMeters.Finds == 2 && Near(c.Current.Input2, Rig.Ch1Volts(5)),
                 "② no current: 再開 finds the 7351E again and reads ② again (① kept)");
         }
 
@@ -171,7 +171,7 @@ internal static class AutoCalibrationTests
             var (c, _, _) = await rig.RunBothAsync(model, CancellationToken.None);
             Check(rig.Operator.ResumeAsked == 1 && rig.Operator.ResumeMessages[0].Contains("④") && rig.Operator.ResumeMessages[0].Contains("CH2（圧力）の配線"),
                 "④ pressure voltage not above the low point: stopped inside ④ with the wiring hint");
-            Check(rig.CurrentMeters.Meter.Reads == 3 && rig.Gauge.ZeroAdjusts == 1 &&
+            Check(rig.CurrentMeters.Meter.Reads == 4 && rig.Gauge.ZeroAdjusts == 1 &&
                 rig.Operator.Instructions.Count(i => i == ManualBallValveSwitcher.AtmosphereInstruction) == 1 &&
                 rig.Operator.Instructions.Count(i => i == ManualBallValveSwitcher.SupplyInstruction) == 2 &&
                 Near(c.Pressure.Input2, Rig.Ch2Volts(539.4)), "④ pressure voltage: 再開 restarts ④ only (③ kept)");
@@ -230,7 +230,7 @@ internal static class AutoCalibrationTests
             rig.Operator.OnDeviation = () => rig.CurrentMeters.Meter.LowOffsetMilliamps = 0;
             var current = await rig.Procedure().RunCurrentAsync(CancellationToken.None);
             Check(rig.Operator.DeviationAsked == 1 && rig.Operator.DeviationMessages[0].Contains("①") && rig.Operator.DeviationLabels[0] == "やり直す" &&
-                rig.CurrentMeters.Meter.Reads == 4 && Near(current.Current.Output1, 0.01), "① current over ±1 mA: やり直す reads ① again");
+                rig.CurrentMeters.Meter.Reads == 6 && Near(current.Current.Output1, 0.01), "① current over ±1 mA: やり直す reads ① again");
         }
         {
             var rig = new Rig();
@@ -309,6 +309,35 @@ internal static class AutoCalibrationTests
             int fives = rig.Output.Commands.Count(c => c == "5");
             Check(rig.Operator.DeviationAsked == 2 && rig.Operator.DeviationMessages[0].Contains("5 回直しても") && fives == 2 &&
                 rig.Output.Commands.Count == 1 + 2 * 6 + 1, "② not converging: asks after 5 adjustments, やり直す starts again from 5 V");
+        }
+        // 6g. ① の微調整(2026-11-19、人: ② と同じ要領で 0 mA に)。
+        {
+            // 0 V で 0.4 mA → 負の電圧にして 0 mA ±0.1 mA に合わせる。② は ① の点からの直線で合わせる。
+            var rig = new Rig();
+            rig.CurrentMeters.Meter.MilliampsPerVolt = 6.0;
+            rig.CurrentMeters.Meter.ZeroMilliamps = 0.4;
+            var current = await rig.Procedure().RunCurrentAsync(CancellationToken.None);
+            double lowSet = double.Parse(rig.Output.Commands[1]["adj:".Length..], System.Globalization.CultureInfo.InvariantCulture);
+            Check(rig.Output.Commands[0] == "0" && rig.Output.Commands[1].StartsWith("adj:") && lowSet < 0 && Math.Abs(current.Current.Output1) <= 0.1 &&
+                Near(current.Current.Input1, Rig.Ch1Volts(lowSet)) && Math.Abs(current.Current.Output2 - 30) <= 0.1 && rig.Operator.DeviationAsked == 0 &&
+                rig.Operator.Statuses.Any(s => s.StartsWith("① 発振器を") && s.Contains("合わせました")),
+                "① 0.4 mA at 0 V: the generator goes slightly negative to 0 ±0.1 mA; ② is tuned from the ① point: " + string.Join(",", rig.Output.Commands));
+        }
+        {
+            // 0 V で 0.9 mA・1 mA/V → 下限 -0.5 V でも届かない。知らせて「このまま使う」。
+            var rig = new Rig();
+            rig.CurrentMeters.Meter.MilliampsPerVolt = 1.0;
+            rig.CurrentMeters.Meter.ZeroMilliamps = 0.9;
+            rig.Operator.DeviationAnswers.Enqueue(DeviationChoice.UseAsIs);
+            rig.Operator.DeviationAnswers.Enqueue(DeviationChoice.UseAsIs);
+            await rig.Procedure().RunCurrentAsync(CancellationToken.None);
+            Check(rig.Operator.DeviationMessages[0].Contains("① 発振器を下限の -0.5000 V にしても"), "① not reachable within -0.5 V: asks at the lower limit");
+        }
+        {
+            bool rejected = false;
+            try { (AutoCalibrationSettings.Default with { MinCommandVolts = 0.1 }).Validate(); } catch (ArgumentOutOfRangeException) { rejected = true; }
+            Check(rejected && AutoCalibrationSettings.Default.MinCommandVolts == -0.5 && AutoCalibrationSettings.Default.LowCurrentTuneToleranceMilliamps == 0.1,
+                "settings: ① tuned to 0 ±0.1 mA down to -0.5 V; a positive lower limit is rejected");
         }
         {
             bool rejected = false;
@@ -521,14 +550,17 @@ internal static class AutoCalibrationTests
         public double HighMilliamps = 29.9;
         // 指定すると、0 V より上の電流を「0.01 mA + 電圧 × この値」にする(② の微調整の確かめ。2026-11-19)。
         public double? MilliampsPerVolt;
+        public double ZeroMilliamps = 0.01;
         public string Name => "7351E";
 
         public Task<double> ReadMilliampsAsync(CancellationToken cancellationToken)
         {
             Reads++;
             double volts = rig.Output.Volts ?? 0;
-            double high = MilliampsPerVolt is { } perVolt ? 0.01 + volts * perVolt : HighMilliamps;
-            double milliamps = rig.AmplifierOff ? 0 : volts > 0 ? high : 0.01 + LowOffsetMilliamps;
+            // MilliampsPerVolt を指定したときは、0 V 付近も含めて直線(ZeroMilliamps + LowOffsetMilliamps + 電圧 × 傾き。① の微調整の確かめ)。
+            double milliamps = rig.AmplifierOff ? 0
+                : MilliampsPerVolt is { } perVolt ? ZeroMilliamps + LowOffsetMilliamps + volts * perVolt
+                : volts > 0 ? HighMilliamps : ZeroMilliamps + LowOffsetMilliamps;
             return Task.FromResult(milliamps);
         }
 

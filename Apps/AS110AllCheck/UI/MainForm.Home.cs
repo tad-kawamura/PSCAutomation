@@ -68,6 +68,7 @@ internal sealed partial class MainForm : Form
     private void HomeMeasureClicked()
     {
         if (MeasurementScreen) return;
+        if (CalibrationSupported && ConnectionsReady) LoadTodayCalibrationIfNeeded();
         if (!CanEnterMeasurement)
         {
             // 日付が変わった(押せる表示のまま夜を越えた)など。

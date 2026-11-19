@@ -74,7 +74,16 @@ internal sealed partial class MainForm : Form
     {
         if (_closeRequested || !ConnectionsReady || _checkingConnections || _operationInProgress) return;
         // 最初の画面(「校正」「測定」)では校正画面を自動で開かない。人が「校正」を押す(2026-11-19、人の指示)。
-        if (!MeasurementScreen) return;
+        // ただし今日の校正値のファイルはここで読む(読まないと、校正済みでも「今日の校正がまだ」と出て「測定」が押せない。2026-11-19 の現場で見つかった)。
+        if (!MeasurementScreen)
+        {
+            if (CalibrationSupported)
+            {
+                LoadTodayCalibrationIfNeeded();
+                UpdateControls();
+            }
+            return;
+        }
         if (CalibrationSupported)
         {
             LoadTodayCalibrationIfNeeded();
