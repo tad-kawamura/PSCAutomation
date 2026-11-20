@@ -91,7 +91,15 @@ internal static class DialogForegroundTests
                     var dialog = owner.OwnedForms.SingleOrDefault(f => f.Modal);
                     if (dialog is null)
                     {
-                        if (++ticks > 30) { Console.WriteLine("FAIL Dialog did not open: " + method); Environment.Exit(1); }
+                        if (++ticks > 30)
+                        {
+                            Console.WriteLine("FAIL Dialog did not open: " + method);
+                            // ここで終わると finally が動かないので、先に実 MainForm を終了処理を通して閉じ、一時の保存先も消す(2026-11-20)。
+                            // 閉じずに終わると、窓なしの WAVE LOGGER(NRWL.exe)が 1 つ残った。
+                            new MainFormCloser(owner).Dispose();
+                            try { Directory.Delete(saveRoot, true); } catch (IOException) { }
+                            Environment.Exit(1);
+                        }
                         return;
                     }
                     try
