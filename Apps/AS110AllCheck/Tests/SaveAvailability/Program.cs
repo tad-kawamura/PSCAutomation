@@ -5,7 +5,15 @@ internal static class Program
 {
     private const BindingFlags Private = BindingFlags.Instance | BindingFlags.NonPublic;
     [STAThread]
-    private static void Main(string[] args)
+    private static int Main(string[] args)
+    {
+        // 検査が起動した Excel を、終わるとき(成功・失敗のどちらでも)に残さない(Tests/Shared/ExcelLeftovers.cs)。
+        // 例外を Main で受けるのは、finally(Excel を閉じる・一時ファイルを消す)を必ず走らせてから終わるため。出す文と「失敗」の終了コードは今までどおり。
+        ExcelLeftovers.Install();
+        try { Run(args); return 0; }
+        catch (Exception ex) { Console.Error.WriteLine("Unhandled exception. " + ex); return 1; }
+    }
+    private static void Run(string[] args)
     {
         if (args.Contains("--foreground-target")) { ForegroundProbe.RunTarget(); return; }
         if (args.Contains("--calibration-foreground")) { DialogForegroundTests.RunCalibrationOnly(); return; }
@@ -344,9 +352,13 @@ internal static class Program
             object model=assembly.GetType("PSCAutomation.Apps.AS110AllCheck.ProductModel")!.GetField("All")!.GetValue(null) is Array models?models.GetValue(0)!:throw new Exception();
             string output=Path.Combine(Path.GetTempPath(),"as110-save-ui-"+Guid.NewGuid()+".xlsx");
             object? session=null;
-            try
+            // 検査の本体。別の関数にしているのは、セルを直接見た参照を返してから Excel を閉じるため(ExcelLeftovers.ReleaseComReferences)。
+            void RealExcelChecks()
             {
                 session=excelType.GetMethod("Open")!.Invoke(null,[Path.GetFullPath(fileArgs[0]),output,Path.GetFullPath(fileArgs[1]),settings,model,"123",DateTime.Now,null,null])!;
+                ExcelLeftovers.Track(session);
+                // 画面が自分で事前準備した Excel があれば、差し替える前に閉じる(差し替えると誰も閉じなくなる)。
+                if(type.GetField("_excel",Private)!.GetValue(form) is IDisposable prepared && !ReferenceEquals(prepared,session)){ ExcelLeftovers.Track(prepared);prepared.Dispose(); }
                 type.GetField("_excel",Private)!.SetValue(form,session);
                 // ExcelWorkSession はブックを Wrappers/Excel の ExcelWorkbook で持つ。セルは中の COM で直接書く。
                 object RawBook(){object workbook=excelType.GetField("_book",Private)!.GetValue(session)!;return workbook.GetType().GetField("_book",Private)!.GetValue(workbook)!;}
@@ -384,8 +396,10 @@ internal static class Program
                 Console.WriteLine("PASS invalidated transfer does not bring stale Excel forward");
                 Console.WriteLine("PASS real Excel -> actual MainForm -> M5Stack mask, including busy and invalidated transfer");
             }
+            try { RealExcelChecks(); }
             finally
             {
+                ExcelLeftovers.ReleaseComReferences();
                 (Field("_saveNotice") as Form)?.Close();
                 (session as IDisposable)?.Dispose();
                 if(File.Exists(output))File.Delete(output);

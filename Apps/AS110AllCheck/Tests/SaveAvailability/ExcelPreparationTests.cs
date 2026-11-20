@@ -33,6 +33,7 @@ internal static class ExcelPreparationTests
             if (Excel() is not null) throw new Exception("Excel preparation started during another operation");
             type.GetField("_operationInProgress", Private)!.SetValue(form, false);
             Prepare();
+            ExcelLeftovers.Track(Excel());
             if (Book() is not { } book) throw new Exception("Idle MainForm did not prepare a work book");
             dynamic app = excelType.GetField("_app", Private)!.GetValue(Excel())!; // Wrappers/Excel の ExcelApplication(Visible を持つ)
             if ((bool)app.Visible || (bool)Field("_operationInProgress") || (bool)Field("_excelPreparing"))

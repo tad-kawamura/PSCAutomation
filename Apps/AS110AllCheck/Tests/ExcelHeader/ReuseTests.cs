@@ -5,11 +5,25 @@ using System.Reflection;
 internal static class ReuseTests
 {
     private const BindingFlags Private=BindingFlags.Instance|BindingFlags.NonPublic;
+    // 後始末(Run の finally)から見えるよう、検査の本体(RunCore)の外に置く。
+    private static object? session;
+
+    // 本体を RunCore に分けているのは、本体がセルを直接見た参照を返してから Excel を閉じるため(ExcelLeftovers.ReleaseComReferences)。
     public static void Run(Assembly assembly,Type type,Type modelType,string template,string captured)
     {
         string folder=Path.Combine(Path.GetTempPath(),"as110-reuse-"+Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(folder);
-        object? session=null;
+        try { RunCore(assembly,type,modelType,template,captured,folder); }
+        finally
+        {
+            ExcelLeftovers.ReleaseComReferences();
+            (session as IDisposable)?.Dispose();
+            Directory.Delete(folder,true);
+        }
+    }
+
+    private static void RunCore(Assembly assembly,Type type,Type modelType,string template,string captured,string folder)
+    {
         object settings=Activator.CreateInstance(assembly.GetType("PSCAutomation.Apps.AS110AllCheck.TransferSettings")!)!;
         object model=Activator.CreateInstance(modelType,"AS110-035",539)!;
         string serial="-";
@@ -31,6 +45,7 @@ internal static class ReuseTests
             }
             session=type.GetMethod("Open")!.Invoke(null,[template,Path.Combine(folder,"work.xlsx"),input,settings,model,serial,date,session,
                 (Action<string>)(line=>{logs.Add(line);Console.WriteLine(line);})])!;
+            ExcelLeftovers.Track(session);
             // 再計算はアプリと同じ既存処理を使う。
             bool pass=((Task<bool>)type.GetMethod("IsPassAsync")!.Invoke(session,null)!).GetAwaiter().GetResult();
             lastPass=pass;
@@ -48,7 +63,6 @@ internal static class ReuseTests
             dynamic book=RawBook()!;
             return (string)book.Worksheets["圧縮5"].Shapes.Item("テキスト ボックス 3").TextFrame2.TextRange.Text;
         }
-        try
         {
             // 実際に異なる波形を作り、2回目が古い値のままにならないことを検証。
             // xdt の読み取りはアプリの隣にある Wrappers/LoggerFiles の DLL(移植前はアプリの中の XdtConversion.XdtReader)。
@@ -152,11 +166,6 @@ internal static class ReuseTests
             try { Transfer(captured); }
             catch(TargetInvocationException ex) when(ex.InnerException is InvalidDataException) { rejected=true; }
             Check(rejected,"formula in measurement range rejected");
-        }
-        finally
-        {
-            (session as IDisposable)?.Dispose();
-            Directory.Delete(folder,true);
         }
     }
 }

@@ -13,6 +13,7 @@ internal static class ExcelJudgmentFocusTests
         {
             // テスト専用のExcelインスタンスと未保存ブックだけを操作する。
             app = Activator.CreateInstance(Type.GetTypeFromProgID("Excel.Application", true)!);
+            ExcelLeftovers.Track(app);
             ((dynamic)app!).Visible = true;
             ((dynamic)app).DisplayAlerts = false;
             books = ((dynamic)app).Workbooks;

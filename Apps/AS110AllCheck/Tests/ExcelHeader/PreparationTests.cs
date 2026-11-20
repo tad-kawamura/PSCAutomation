@@ -5,17 +5,31 @@ using System.Reflection;
 internal static class PreparationTests
 {
     private const BindingFlags Private=BindingFlags.Instance|BindingFlags.NonPublic;
+    // 後始末(RunAsync の finally)から見えるよう、検査の本体(RunCoreAsync)の外に置く。
+    private static object? session;
+
+    // 本体を RunCoreAsync に分けているのは、本体がセルを直接見た参照を返してから Excel を閉じるため(ExcelLeftovers.ReleaseComReferences)。
     public static async Task RunAsync(Assembly assembly,Type type,Type modelType,string template,string captured)
     {
         string folder=Path.Combine(Path.GetTempPath(),"as110-prepare-"+Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(folder);
+        try { await RunCoreAsync(assembly,type,modelType,template,captured,folder); }
+        finally
+        {
+            ExcelLeftovers.ReleaseComReferences();
+            (session as IDisposable)?.Dispose();
+            Directory.Delete(folder,true);
+        }
+    }
+
+    private static async Task RunCoreAsync(Assembly assembly,Type type,Type modelType,string template,string captured,string folder)
+    {
         object settings=Activator.CreateInstance(assembly.GetType("PSCAutomation.Apps.AS110AllCheck.TransferSettings")!)!;
         object model=Activator.CreateInstance(modelType,"AS110-035",539)!;
         string serial="123";
         var date=DateTime.Today;
         var logs=new List<string>();
         Action<string> log=line=>{logs.Add(line);Console.WriteLine(line);};
-        object? session=null;
         object? Book()=>SessionAccess.Workbook(session);
         dynamic App()=>SessionAccess.Application(session)!; // ExcelApplication の Visible を見る
         void Check(bool value,string message)
@@ -27,13 +41,16 @@ internal static class PreparationTests
         {
             var task=(Task)type.GetMethod("PrepareAsync")!.Invoke(null,[template,Path.Combine(folder,"work.xlsx"),settings,model,serial,reusable,log])!;
             await task;
-            return task.GetType().GetProperty("Result")!.GetValue(task)!;
+            object prepared=task.GetType().GetProperty("Result")!.GetValue(task)!;
+            ExcelLeftovers.Track(prepared);
+            return prepared;
         }
         async Task<(double Ms,bool Pass,string Judgment,string Cells,string Header)> Transfer()
         {
             logs.Clear();
             var timer=Stopwatch.StartNew();
             session=type.GetMethod("Open")!.Invoke(null,[template,Path.Combine(folder,"work.xlsx"),captured,settings,model,serial,date,session,log])!;
+            ExcelLeftovers.Track(session);
             bool pass=await (Task<bool>)type.GetMethod("IsPassAsync")!.Invoke(session,null)!;
             double ms=timer.Elapsed.TotalMilliseconds;
             dynamic book=SessionAccess.RawBook(session)!;
@@ -44,7 +61,6 @@ internal static class PreparationTests
             string header=(string)book.Worksheets["圧縮5"].Shapes.Item("テキスト ボックス 3").TextFrame2.TextRange.Text;
             return (ms,pass,(string)type.GetProperty("JudgmentDescription")!.GetValue(session)!,text.ToString(),header);
         }
-        try
         {
             var plain=await Transfer();
             Console.WriteLine($"TRANSFER without preparation={plain.Ms:F0}ms pass={plain.Pass}");
@@ -68,11 +84,6 @@ internal static class PreparationTests
             session=await Prepare(session);
             Check(ReferenceEquals(book,Book()) && logs.Any(x=>x.Contains("準備済み")),"repeated preparation keeps existing work book");
             Console.WriteLine($"TIMING withoutPreparation={plain.Ms:F0}ms preparation={prepared:F0}ms afterPreparation={after.Ms:F0}ms");
-        }
-        finally
-        {
-            (session as IDisposable)?.Dispose();
-            Directory.Delete(folder,true);
         }
     }
 }

@@ -3,15 +3,23 @@ using System.Reflection;
 
 internal static class TransferTests
 {
+    // 後始末(RunAsync の finally)から見えるよう、検査の本体(RunCoreAsync)の外に置く。
+    private static object? session;
+
+    // 本体を RunCoreAsync に分けているのは、本体がセルを直接見た参照を返してから Excel を閉じるため(ExcelLeftovers.ReleaseComReferences)。
     public static async Task RunAsync(Assembly assembly, Type type, Type modelType, string template, string captured)
+    {
+        string output = Path.Combine(Path.GetTempPath(), "as110-transfer-" + Guid.NewGuid() + ".xlsx");
+        try { await RunCoreAsync(assembly, type, modelType, template, captured, output); }
+        finally { ExcelLeftovers.ReleaseComReferences(); (session as IDisposable)?.Dispose(); if (File.Exists(output)) File.Delete(output); }
+    }
+
+    private static async Task RunCoreAsync(Assembly assembly, Type type, Type modelType, string template, string captured, string output)
     {
         var settingsType = assembly.GetType("PSCAutomation.Apps.AS110AllCheck.TransferSettings")!;
         object settings = Activator.CreateInstance(settingsType)!;
         object model = Activator.CreateInstance(modelType, "AS110-035", 539)!;
-        string output = Path.Combine(Path.GetTempPath(), "as110-transfer-" + Guid.NewGuid() + ".xlsx");
-        object? session = null;
         object? app = null;
-        try
         {
             for (int run = 1; run <= 2; run++)
             {
@@ -21,6 +29,7 @@ internal static class TransferTests
                 if (File.Exists(output)) File.Delete(output);
                 session = type.GetMethod("Open")!.Invoke(null, new object?[] {
                     template, output, captured, settings, model, "-", DateTime.Now, session, (Action<string>)Console.WriteLine });
+                ExcelLeftovers.Track(session);
                 object currentApp = SessionAccess.Application(session)!;
                 if (app is not null && !ReferenceEquals(app, currentApp)) throw new Exception("Excel instance was restarted");
                 app = currentApp;
@@ -60,6 +69,5 @@ internal static class TransferTests
                 Console.WriteLine("PASS transfer monitor follows OK -> NG -> blank -> OK without retransfer");
             }
         }
-        finally { (session as IDisposable)?.Dispose(); if (File.Exists(output)) File.Delete(output); }
     }
 }

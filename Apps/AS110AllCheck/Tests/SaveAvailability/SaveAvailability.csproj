@@ -7,6 +7,9 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Include="../Shared/ExcelLeftovers.cs" Link="ExcelLeftovers.cs" />
+  </ItemGroup>
+  <ItemGroup>
     <ProjectReference Include="../../AS110AllCheck.csproj" />
   </ItemGroup>
 </Project>

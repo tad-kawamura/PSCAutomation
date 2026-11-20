@@ -2,6 +2,11 @@ using System.Reflection;
 using System.Runtime.InteropServices;
 
 // ExcelをインストールしたPCで実行。原本は読み取り専用で開き、保存しない。
+// 検査が起動した Excel を、終わるとき(成功・失敗のどちらでも)に残さない(Tests/Shared/ExcelLeftovers.cs)。
+// 例外をここで受けるのは、finally(Excel を閉じる・一時ファイルを消す)を必ず走らせてから終わるため(字下げは元のまま)。
+ExcelLeftovers.Install();
+try
+{
 if (args.Length < 2) throw new ArgumentException("検査アプリDLLとExcel雛形の絶対パスを指定してください。");
 var assembly = Assembly.LoadFrom(Path.GetFullPath(args[0]));
 var type = assembly.GetType("PSCAutomation.Apps.AS110AllCheck.ExcelWorkSession")!;
@@ -33,11 +38,18 @@ if (args.Length == 4 && args[2] == "--transfer")
 }
 object session = Activator.CreateInstance(type, nonPublic: true)!;
 dynamic excel = Activator.CreateInstance(Type.GetTypeFromProgID("Excel.Application")!)!;
-excel.Visible = true;
-dynamic books = excel.Workbooks;
-dynamic book = books.Open(Path.GetFullPath(args[1]), UpdateLinks: 0, ReadOnly: true);
+ExcelLeftovers.Track((object)excel);
+// ブックを開けなかったとき(ファイルが無い・Excel が応答しない)も、起動した Excel を finally で終了する。
+dynamic? books = null, book = null;
 try
 {
+    excel.Visible = true;
+    books = excel.Workbooks;
+    book = books.Open(Path.GetFullPath(args[1]), UpdateLinks: 0, ReadOnly: true);
+    HeaderChecks();
+    // 検査の本体。別の関数にしているのは、図形・文字を直接見た参照を返してから Excel を閉じるため(ExcelLeftovers.ReleaseComReferences。字下げは元のまま)。
+    void HeaderChecks()
+    {
     SessionAccess.Attach(session, (object)excel, (object)books, (object)book);
     foreach(string judgmentSheet in new[]{"sheet1","圧縮5"})
     for (int attempt=0; attempt<2; attempt++)
@@ -80,9 +92,26 @@ try
     sheet = book.Worksheets["圧縮5"];
     sheet.Activate(); excel.ActiveWindow.Zoom = 80;
     if (args.Length > 2) { Console.WriteLine("READY FOR VISUAL CHECK; press Enter to close"); Console.ReadLine(); }
+    }
 }
 finally
 {
-    book.Close(false); excel.Quit();
-    Marshal.FinalReleaseComObject(book); Marshal.FinalReleaseComObject(books); Marshal.FinalReleaseComObject(excel);
+    ExcelLeftovers.ReleaseComReferences();
+    try { if (book is not null) book.Close(false); }
+    finally
+    {
+        try { excel.Quit(); }
+        finally
+        {
+            if (book is not null) Marshal.FinalReleaseComObject(book);
+            if (books is not null) Marshal.FinalReleaseComObject(books);
+            Marshal.FinalReleaseComObject(excel);
+        }
+    }
+}
+}
+catch (Exception ex)
+{
+    Console.Error.WriteLine("Unhandled exception. " + ex);
+    Environment.ExitCode = 1;
 }
