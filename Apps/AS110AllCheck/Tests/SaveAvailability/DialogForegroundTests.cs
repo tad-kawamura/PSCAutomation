@@ -14,6 +14,45 @@ internal static class DialogForegroundTests
         return false;
     }
 
+    private delegate bool EnumWindowProc(IntPtr hWnd, IntPtr lParam);
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern bool EnumThreadWindows(uint threadId, EnumWindowProc callback, IntPtr lParam);
+    [System.Runtime.InteropServices.DllImport("kernel32.dll")]
+    private static extern uint GetCurrentThreadId();
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern bool IsWindowVisible(IntPtr hWnd);
+    [System.Runtime.InteropServices.DllImport("user32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode)]
+    private static extern int GetClassName(IntPtr hWnd, System.Text.StringBuilder name, int max);
+    [System.Runtime.InteropServices.DllImport("user32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode)]
+    private static extern int GetWindowText(IntPtr hWnd, System.Text.StringBuilder text, int max);
+    [System.Runtime.InteropServices.DllImport("user32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode)]
+    private static extern uint GetDlgItemText(IntPtr hWnd, int id, System.Text.StringBuilder text, int max);
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern bool EndDialog(IntPtr hWnd, IntPtr result);
+
+    // 知らせ(Windows のメッセージボックス。ErrorNotification もこれ)が出ていたら閉じて、題と文を返す(無ければ null。2026-11-20)。
+    // 知らせはフォームではないので OwnedForms に出ない。ダイアログの上に出たまま残ると、ダイアログを閉じられず、
+    // 人が押すまで検査が待った。この検査は知らせが出ない流れを確かめるものなので、出たら失敗にする。
+    private static string? CloseMessageBox()
+    {
+        IntPtr found = IntPtr.Zero;
+        EnumThreadWindows(GetCurrentThreadId(), (window, _) =>
+        {
+            var name = new System.Text.StringBuilder(16);
+            GetClassName(window, name, name.Capacity);
+            if (!IsWindowVisible(window) || name.ToString() != "#32770") return true; // #32770: メッセージボックスの窓の種類
+            found = window;
+            return false;
+        }, IntPtr.Zero);
+        if (found == IntPtr.Zero) return null;
+        var caption = new System.Text.StringBuilder(200);
+        var text = new System.Text.StringBuilder(500);
+        GetWindowText(found, caption, caption.Capacity);
+        GetDlgItemText(found, 0xFFFF, text, text.Capacity); // 0xFFFF: メッセージボックスの本文
+        EndDialog(found, (IntPtr)2); // 2: キャンセル。「はい・いいえ」の知らせも閉じる
+        return $"A message box is open: [{caption}] {text.ToString().ReplaceLineEndings(" ")}";
+    }
+
     // 所有者のモーダルの画面を 1 つ返す(無ければ null)。2 つ以上あるときは、理由を tooMany に入れて全部を閉じさせる(2026-11-20)。
     // 以前は SingleOrDefault で、2 つあるとタイマーの中で例外になり、例外の画面(続行ボタン)が出て人を待って止まった。
     private static Form? FindModal(Form owner, out string? tooMany)
@@ -47,25 +86,29 @@ internal static class DialogForegroundTests
         Application.DoEvents();
         string? failure = null;
         int ticks = 0;
-        bool dialogSeen = false;
+        bool dialogSeen = false, closing = false;
         using var timer = new System.Windows.Forms.Timer { Interval = 100 };
         timer.Tick += (_, _) =>
         {
+            // 知らせは閉じて失敗を覚える。タイマーは最後まで止めず、確かめが済んだあと(closing)も、
+            // あとから出た知らせと残った校正画面を毎回閉じる。
+            if (CloseMessageBox() is { } notice) { failure ??= notice; return; }
             var dialog = FindModal(owner, out string? tooMany);
-            if (tooMany is not null) { dialogSeen = true; failure = tooMany; timer.Stop(); return; }
-            if (dialog is null) { if (++ticks > 30) { Console.WriteLine("FAIL calibration dialog did not open"); Environment.Exit(1); } return; }
+            if (tooMany is not null) { dialogSeen = closing = true; failure ??= tooMany; return; }
+            if (dialog is null) { if (!dialogSeen && ++ticks > 30) { Console.WriteLine("FAIL calibration dialog did not open"); Environment.Exit(1); } return; }
+            if (closing) { dialog.DialogResult = DialogResult.Cancel; return; }
             dialogSeen = true;
             bool above = IsAbove(dialog.Handle, owner.Handle);
             Console.WriteLine($"INFO calibration dialog TopMost={dialog.TopMost} aboveOwner={above}");
-            if (!dialog.TopMost) failure = "Calibration dialog is not topmost";
-            else if (!above) failure = "Calibration dialog is behind its topmost owner";
-            timer.Stop();
+            if (!dialog.TopMost) failure ??= "Calibration dialog is not topmost";
+            else if (!above) failure ??= "Calibration dialog is behind its topmost owner";
+            closing = true;
             dialog.DialogResult = DialogResult.Cancel;
         };
         timer.Start();
         ShowCalibration(owner);
         // 画面を 1 度も見ないまま戻ったら、何も確かめていないので失敗にする(2026-11-20)。
-        if (!dialogSeen) failure = "Calibration dialog returned without opening";
+        if (!dialogSeen) failure ??= "Calibration dialog returned without opening";
         if (failure is not null) { Console.WriteLine("FAIL " + failure); Environment.Exit(1); }
         Console.WriteLine("PASS calibration dialog opens topmost above the topmost preparation screen");
     }
@@ -105,12 +148,16 @@ internal static class DialogForegroundTests
                 // 1 つの変数で数えていたときは、最初の確認にダイアログが間に合わないと「最初の 1 回だけの確かめ」
                 // (S/N の一覧・入力欄)を飛ばし、前面要求も 3 回より減ったまま PASS と出る形だった。
                 int waited = 0, checks = 0;
-                bool dialogSeen = false;
+                bool dialogSeen = false, closing = false;
                 using var timer = new System.Windows.Forms.Timer { Interval = 100 };
                 timer.Tick += (_, _) =>
                 {
+                    // 知らせは閉じて失敗を覚える。タイマーは呼び出しが戻るまで止めず、確かめが済んだあと(closing)も、
+                    // あとから出た知らせと残ったダイアログを毎回閉じる。
+                    if (CloseMessageBox() is { } notice) { failure ??= new Exception(notice); return; }
                     var dialog = FindModal(owner, out string? tooMany);
-                    if (tooMany is not null) { dialogSeen = true; failure = new Exception(tooMany); timer.Stop(); return; }
+                    if (tooMany is not null) { dialogSeen = closing = true; failure ??= new Exception(tooMany); return; }
+                    if (dialog is not null && closing) { dialog.DialogResult = DialogResult.Cancel; return; }
                     // 見つけたダイアログが閉じたあとは数えない(閉じてから呼び出しが戻るまでの間に「開かなかった」と数えないため)。
                     if (dialog is null && dialogSeen) return;
                     if (dialog is null)
@@ -152,10 +199,10 @@ internal static class DialogForegroundTests
                         if (owner.TopMost != ownerWasTopMost || Form.ActiveForm != activeBefore || dialog.ContainsFocus != focusedBefore)
                             throw new Exception("MainForm changed modal foreground/focus");
                     }
-                    catch (Exception ex) { failure = ex; }
+                    catch (Exception ex) { failure ??= ex; }
                     if (++checks >= 3 || failure is not null)
                     {
-                        timer.Stop();
+                        closing = true;
                         dialog.DialogResult = DialogResult.Cancel;
                     }
                 };
@@ -165,8 +212,9 @@ internal static class DialogForegroundTests
                 else Call(method);
                 // 呼び出しがダイアログを出さずにすぐ戻ると(処理中の印などで何もせず戻る)、タイマーが 1 度も確かめないまま
                 // ここへ来て PASS と出ていた。ダイアログを 1 度も見ていなければ失敗にする(2026-11-20)。
-                if (!dialogSeen) throw new Exception("Dialog did not open (the call returned without showing it): " + method);
+                // 先に覚えた失敗(知らせが出た、など)を出す。知らせが出てダイアログを出さずに戻ったときに、知らせの文が分かるようにする。
                 if (failure is not null) throw new Exception(method + " foreground regression", failure);
+                if (!dialogSeen) throw new Exception("Dialog did not open (the call returned without showing it): " + method);
                 if (owner.TopMost != topMost || !owner.Enabled) throw new Exception("Owner state changed after cancel");
                 Console.WriteLine($"PASS {method}: owner TopMost={topMost}, dialog retains focus across foreground requests and cancels");
             }
