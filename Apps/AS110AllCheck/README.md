@@ -216,6 +216,7 @@ dotnet $e $d "<dir>/雛形/AS110-035雛形.xlsx" --optimization
 - 原因: 検査はセルや図形を Excel の COM で直接確かめます。その参照（sheet・Range など）を持ったまま Excel に終了を頼むと、Excel は終了の途中で固まるか異常終了しました（Windows のイベントログに EXCEL.EXE のエラーが残る）。アプリ本体は `Wrappers/Excel` の部品だけを使うので、この残り方はしません
 - 直し（`Tests/Shared/ExcelLeftovers.cs`）: 検査の本体を別のメソッド（`…Core` など）に分け、それが終わってから参照を返し（`ReleaseComReferences`）、そのあとで Excel を閉じる。例外は Main で受け、finally を走らせてから終わる。それでも残った Excel は、検査が起動したと分かっているもの（`Track` で覚えたもの）で画面に出ていないものだけ、検査の終わりに終了する（人が開いた Excel と、画面に出ている Excel には触らない）
 - 検査で Excel の COM を直接触る所を足すときは、同じ形にする（本体を別メソッドにして、起動した Excel を `ExcelLeftovers.Track` で覚える）
+- `Tests/SaveAvailability` が途中で失敗して終わると、窓の無い WAVE LOGGER（NRWL.exe）も 1 つ残りました。失敗して抜けるときも実 MainForm を終了処理を通して閉じるようにしました（`Tests/SaveAvailability/MainFormCloser.cs`、2026-11-20）。わざと失敗させた 2 回と成功の 6 回で、前後に NRWL・EXCEL は増えませんでした（`--no-dialogs` を付けない検査は確かめていません）
 - 確かめた範囲: この PC で ExcelHeader の 6 モードと SaveAvailability（`--no-dialogs --with-excel`。55 件のあと既知の所で失敗して終わる）を 2 巡。どれも前後で EXCEL のプロセスは増えず、EXCEL.EXE のエラーの記録も 0 件。直す前は、モードなし・`--reuse`・SaveAvailability で 1 つずつ残った
 
 移植前の確認結果は [整理・検証記録](docs/reorganization.md)、元の2026-10-19時点の検証記録は [ver3_検証結果.txt](docs/legacy/ver3_検証結果.txt) です。

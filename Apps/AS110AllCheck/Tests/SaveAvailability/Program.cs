@@ -26,6 +26,8 @@ internal static class Program
         ConnectionFormTests.Run(assembly);
         var type=assembly.GetType("PSCAutomation.Apps.AS110AllCheck.MainForm")!;
         using var form=(Form)Activator.CreateInstance(type)!;
+        // 途中で失敗して抜けるときも、終了処理を通して閉じる(窓の無い WAVE LOGGER を残さない。MainFormCloser.cs)。
+        using var closer=new MainFormCloser(form);
         object Field(string name)=>type.GetField(name,Private)!.GetValue(form)!;
         void Call(string name)=>type.GetMethod(name,Private)!.Invoke(form,null);
         var modeBox=(ComboBox)Field("_modeBox");
