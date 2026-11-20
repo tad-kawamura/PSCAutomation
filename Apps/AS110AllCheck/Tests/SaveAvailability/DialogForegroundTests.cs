@@ -35,11 +35,13 @@ internal static class DialogForegroundTests
         Application.DoEvents();
         string? failure = null;
         int ticks = 0;
+        bool dialogSeen = false;
         using var timer = new System.Windows.Forms.Timer { Interval = 100 };
         timer.Tick += (_, _) =>
         {
             var dialog = owner.OwnedForms.SingleOrDefault(f => f.Modal);
             if (dialog is null) { if (++ticks > 30) { Console.WriteLine("FAIL calibration dialog did not open"); Environment.Exit(1); } return; }
+            dialogSeen = true;
             bool above = IsAbove(dialog.Handle, owner.Handle);
             Console.WriteLine($"INFO calibration dialog TopMost={dialog.TopMost} aboveOwner={above}");
             if (!dialog.TopMost) failure = "Calibration dialog is not topmost";
@@ -49,6 +51,8 @@ internal static class DialogForegroundTests
         };
         timer.Start();
         ShowCalibration(owner);
+        // 画面を 1 度も見ないまま戻ったら、何も確かめていないので失敗にする(2026-11-20)。
+        if (!dialogSeen) failure = "Calibration dialog returned without opening";
         if (failure is not null) { Console.WriteLine("FAIL " + failure); Environment.Exit(1); }
         Console.WriteLine("PASS calibration dialog opens topmost above the topmost preparation screen");
     }
@@ -85,10 +89,13 @@ internal static class DialogForegroundTests
                 owner.TopMost = topMost;
                 Exception? failure = null;
                 int ticks = 0;
+                bool dialogSeen = false;
                 using var timer = new System.Windows.Forms.Timer { Interval = 100 };
                 timer.Tick += (_, _) =>
                 {
                     var dialog = owner.OwnedForms.SingleOrDefault(f => f.Modal);
+                    // 見つけたダイアログが閉じたあとは数えない(閉じてから呼び出しが戻るまでの間に「開かなかった」と数えないため)。
+                    if (dialog is null && dialogSeen) return;
                     if (dialog is null)
                     {
                         if (++ticks > 30)
@@ -102,6 +109,7 @@ internal static class DialogForegroundTests
                         }
                         return;
                     }
+                    dialogSeen = true;
                     try
                     {
                         if (!dialog.TopMost) throw new Exception("Dialog is not topmost");
@@ -138,6 +146,9 @@ internal static class DialogForegroundTests
                 // 校正の適用時と同じく、MainFormを所有者として校正画面をモーダル表示する。
                 if (method == "CalibrationDialog") ShowCalibration(owner);
                 else Call(method);
+                // 呼び出しがダイアログを出さずにすぐ戻ると(処理中の印などで何もせず戻る)、タイマーが 1 度も確かめないまま
+                // ここへ来て PASS と出ていた。ダイアログを 1 度も見ていなければ失敗にする(2026-11-20)。
+                if (!dialogSeen) throw new Exception("Dialog did not open (the call returned without showing it): " + method);
                 if (failure is not null) throw new Exception(method + " foreground regression", failure);
                 if (owner.TopMost != topMost || !owner.Enabled) throw new Exception("Owner state changed after cancel");
                 Console.WriteLine($"PASS {method}: owner TopMost={topMost}, dialog retains focus across foreground requests and cancels");
