@@ -15,12 +15,19 @@ internal static class ConnectionFormTests
         using var guard = new System.Threading.Timer(_ =>
         {
             Console.WriteLine("FAIL connection form tests: blocked (a message box is probably open)");
+            // ここで終わると finally が動かない。画面のスレッドは止まっていて Close も通せないので、
+            // 開いている実 MainForm の LOGGER の事前起動だけを破棄してから終わる(2026-11-20。残すと窓なしの NRWL.exe が 1 つ残った)。
+            Form? form = _live;
+            if (form is not null) MainFormCloser.AbandonLoggerStartup(form);
             Environment.Exit(1);
         }, null, 60000, Timeout.Infinite);
         CaptureAndStart(assembly);
         ModalDialog(assembly);
         TodayCalibrationFlow(assembly);
     }
+
+    // 今開いている実 MainForm(検査は 1 つずつ作って閉じる)。見張りが終わらせるときの後始末に使う。
+    private static volatile Form? _live;
 
     private sealed class Rig
     {
@@ -39,6 +46,7 @@ internal static class ConnectionFormTests
     {
         var type = assembly.GetType("PSCAutomation.Apps.AS110AllCheck.MainForm")!;
         var form = (Form)Activator.CreateInstance(type)!;
+        _live = form;
         var rig = new Rig { Form = form, Type = type, Flow = type.GetField("_flow", Private)!.GetValue(form)!,
             Logger = new ConnectionFakeLogger(template), Generator = new ConnectionFakeGenerator() };
         ((System.Windows.Forms.Timer)rig.Field("_statusHeartbeat")!).Stop();

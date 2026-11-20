@@ -10,6 +10,29 @@ internal sealed class MainFormCloser(Form form) : IDisposable
 {
     private const BindingFlags Private = BindingFlags.Instance | BindingFlags.NonPublic;
 
+    // 画面のスレッドが止まっていて Close を通せないとき(見張りタイマーが別のスレッドから Environment.Exit で終わらせるとき)用(2026-11-20)。
+    // new MainForm() が始めた LOGGER 本体ソフトの事前起動だけを破棄する。部品(WaveLoggerSession)の事前起動の破棄は、ほかのスレッドから呼べる作り。
+    // 起動の途中で終わると参照を手放す前にプロセスが終わるので、起動が終わるのを待ってから破棄し、手放すのを少し待つ。
+    // これを呼ばずに終わると、窓なしの WAVE LOGGER(NRWL.exe)が 1 つ残った。
+    public static void AbandonLoggerStartup(Form form)
+    {
+        try
+        {
+            object? session = form.GetType().GetField("_logger", Private)?.GetValue(form);
+            if (session is null) return;
+            var type = session.GetType();
+            if (!(bool)type.GetProperty("HasPendingServerStartup")!.GetValue(session)!) return;
+            var started = (Task)type.GetMethod("WaitForServerStartupAsync")!.Invoke(session, null)!;
+            started.Wait(TimeSpan.FromSeconds(20));
+            type.GetMethod("CancelServerStartup")!.Invoke(session, null);
+            Thread.Sleep(1000);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine("CLEANUP LOGGER 本体ソフトの事前起動を破棄できませんでした(窓の無い WAVE LOGGER が残ることがあります): " + ex.Message);
+        }
+    }
+
     public void Dispose()
     {
         if (form.IsDisposed) return;
