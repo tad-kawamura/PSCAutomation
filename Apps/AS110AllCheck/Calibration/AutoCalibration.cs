@@ -125,6 +125,7 @@ internal sealed class AutoCalibrationProcedure
 
     private async Task RunStageAsync(AutoCalibrationStage stage, ProductModel? model, CancellationToken ct)
     {
+        _operator.ShowStage(stage);
         _operator.ShowStatus(StageName(stage) + "を始めます。");
         // 電圧を読むため、LOGGER に校正用の雛形で測定させる(済んでいれば何もしない)。
         await _meter.PrepareAsync(ct);
@@ -294,7 +295,7 @@ internal sealed class AutoCalibrationProcedure
             // 外れているあいだはゼロ調整しない。
             var choice = await _operator.AskDeviationAsync(
                 $"③ 大気圧のはずが {F(settled)} kPa で落ち着きました（±{F(_settings.LowDeviationKpa)} kPa を超えています）。\r\n" +
-                "ボールバルブ①が閉じ、②が開いているか確かめてください。", "合わせ直す", ct);
+                "GC16 が大気圧になっているか（配管・バルブの状態）を確かめて下さい。", "合わせ直す", ct);
             if (choice == DeviationChoice.UseAsIs) break;
             if (choice == DeviationChoice.Abort) throw new OperationCanceledException("校正の自動読み取りを中止しました。");
         }
@@ -349,13 +350,13 @@ internal sealed class AutoCalibrationProcedure
             {
                 var choice = await _operator.AskDeviationAsync(
                     $"④ {F(settled)} kPa で落ち着きました。目標 {target} kPa から ±{F(limit)} kPa（{_settings.HighDeviationRatio:P0}）を超えています。\r\n" +
-                    "ボールバルブ①が開き、②が閉じているか、レギュレーターを確かめてください。", "合わせ直す", ct);
+                    "供給圧力がかかっているか（配管・バルブの状態）と、レギュレータを確かめて下さい。", "合わせ直す", ct);
                 if (choice == DeviationChoice.Readjust) continue;
                 if (choice == DeviationChoice.Abort) throw new OperationCanceledException("校正の自動読み取りを中止しました。");
             }
             // 「このまま使う」を選んでも、低点以下の圧力は高点にできない。
             if (_pressureLow is { } lowPoint && (float)settled <= lowPoint.Kilopascals)
-                throw new InvalidDataException($"圧力の高点 {F(settled)} kPa が低点 {F(lowPoint.Kilopascals)} kPa 以下です。供給圧力とボールバルブの向きを確かめてください。");
+                throw new InvalidDataException($"圧力の高点 {F(settled)} kPa が低点 {F(lowPoint.Kilopascals)} kPa 以下です。供給圧力がかかっているか（配管・バルブの状態）を確かめて下さい。");
             _pressureHigh = (volts, (float)settled);
             _operator.ShowStatus($"④ 圧力の高点：{F(volts)} V = {F((float)settled)} kPa（目標 {target} kPa）");
             return;
@@ -406,7 +407,7 @@ internal sealed class AutoCalibrationProcedure
             {
                 var choice = await _operator.AskNotSettledAsync(
                     $"{stageName}：{_settings.WaitLimit.TotalSeconds:0} 秒待っても GC16 の値が落ち着きません（今 {F(value)} kPa）。\r\n" +
-                    "ボールバルブ①②の向きを確かめてください。", ct);
+                    "配管・バルブの状態を確かめて下さい。", ct);
                 if (choice == WaitChoice.Abort) throw new OperationCanceledException("校正の自動読み取りを中止しました。");
                 if (choice == WaitChoice.RedoStage) throw new RedoStageException();
                 // 待ち続ける: 知らせのあいだの空きをまたがないよう、見始めからやり直す。
@@ -688,6 +689,8 @@ internal interface IAutoCalibrationOperator
 {
     void ShowStatus(string text);
     void ShowPressure(double? kilopascals);
+    // いま行っている段(①〜④)。画面の「いまどこか」の表示用(2026-11-20)。表示しない実装は何もしなくてよい。
+    void ShowStage(AutoCalibrationStage stage) { }
     // 指示を出して OK を待つ。false = 中止。
     Task<bool> ConfirmAsync(string instruction, CancellationToken cancellationToken);
     // 指示を出して OK を待つ(中止は選べない。後片付け用)。
@@ -719,12 +722,15 @@ internal sealed class SystemCalibrationClock : ICalibrationClock
     public Task DelayAsync(TimeSpan delay, CancellationToken cancellationToken) => Task.Delay(delay, cancellationToken);
 }
 
-// 段階 1 の弁: 人にボールバルブを切り替えてもらい、OK を待つ(電磁弁①②は未選定。決まったこと 15)。
+// 段階 1 の弁: 人に切り替えてもらい、OK を待つ(電磁弁①②は未選定。決まったこと 15)。
+// 2026-11-20(人の指示): 指示は「ボールバルブ①を閉じ②を開け」のような、そのスタンドだけの言い方をやめ、してほしい結果で書く
+// (「GC16 が大気圧になるようにして下さい」)。供給側へ戻す指示は出さない: すぐあとの「レギュレータを回して目標圧力に設定して下さい」
+// (IAutoCalibrationOperator.WaitRegulatorAdjustedAsync)の 1 画面にまとめた。OK を押したあとにもう 1 つ画面が出て、
+// まだ人の作業が要ることが分かりにくかったため。
 internal sealed class ManualBallValveSwitcher(IAutoCalibrationOperator calibrationOperator) : IValveSwitcher
 {
-    public const string AtmosphereInstruction = "ボールバルブを大気側にしてください：先に①（供給側）を閉じ、そのあと②（大気側）を開けてください。\r\n切り替えたら「OK」を押してください。";
-    public const string SupplyInstruction = "ボールバルブを供給側にしてください：先に②（大気側）を閉じ、そのあと①（供給側）を開けてください。\r\n切り替えたら「OK」を押してください。";
-    public const string RestoreInstruction = "ボールバルブを測定の向きに戻してください：先に②（大気側）を閉じ、そのあと①（供給側）を開けてください。";
+    public const string AtmosphereInstruction = "GC16 が大気圧になるようにして下さい。\r\n\r\nできたら、下の「OK」を押す\r\n「OK」を押すまで、先へは進みません。";
+    public const string RestoreInstruction = "供給圧力がかかる状態（測定のときの状態）に戻して下さい。";
 
     public async Task SetAtmosphereAsync(CancellationToken cancellationToken)
     {
@@ -732,11 +738,8 @@ internal sealed class ManualBallValveSwitcher(IAutoCalibrationOperator calibrati
             throw new OperationCanceledException("校正の自動読み取りを中止しました。");
     }
 
-    public async Task SetSupplyAsync(CancellationToken cancellationToken)
-    {
-        if (!await calibrationOperator.ConfirmAsync(SupplyInstruction, cancellationToken))
-            throw new OperationCanceledException("校正の自動読み取りを中止しました。");
-    }
+    // 指示は出さない(すぐあとの「レギュレータを回して目標圧力に設定して下さい」にまとめた)。
+    public Task SetSupplyAsync(CancellationToken cancellationToken) => Task.CompletedTask;
 
     public Task RestoreForMeasurementAsync() => calibrationOperator.NotifyAsync(RestoreInstruction);
 }

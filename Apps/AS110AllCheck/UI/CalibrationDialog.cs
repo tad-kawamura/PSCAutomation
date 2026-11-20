@@ -3,18 +3,33 @@ using System.Globalization;
 namespace PSCAutomation.Apps.AS110AllCheck;
 
 // 入力した電流・圧力の2点校正値を、今日の校正値として残すための画面。
-// 並びは現場の校正記録用紙と同じ縦型(2026-11-06、人の指示): 「電流」「圧力」の枠ごとに、
+// 値の欄の並びは現場の校正記録用紙と同じ縦型(2026-11-06、人の指示): 「電流」「圧力」の枠ごとに、
 // 1 行目が低点・2 行目が高点、左の列が計測値(V)・右の列が表示値(mA / kPa)。
 // 2026-11-13: 型式(目標の供給圧力)の選択と「GC16 で読み取る」を足した(SPEC「校正の自動読み取り」段階 1)。手入力の 8 項目はそのまま残す。
 // 2026-11-18: 読み取りを「マルチメータで読み取る」(電流の 4 欄)と「GC16 で読み取る」(圧力の 4 欄)に分けた(SPEC「段階 1 の直しと 1 日 1 回の流れ」)。
 // 片方だけ使い、残りを手で入れてもよい。押す順番も問わない。
 // 読み取った値は欄に入れるだけで、適用は今までどおり人が「適用」を押す。読み取りが失敗・中止しても、手で入れて適用すれば測定へ進める。
+// 2026-11-20: どこをどの順に押すかが分かりにくかったので(人の指摘)、上から「手順 1 電流」「手順 2 圧力」「手順 3 適用」の枠に分け、
+// 読み取りのボタンをその値の欄と同じ枠に入れた。いちばん上に「次にすること」を出し、次に押す所に色を付ける(UpdateGuide)。
+// 案内だけで、押す順番は今までどおり問わない(「適用」はいつでも押せる)。欄の数は変えていない。
+// 読み取りが済んだボタンは「…読み取り直す」に替わり、押すと先に聞く(既定「いいえ」。間違って押しても発振器・GC16 が動かないように。人と決めた)。
 internal sealed class CalibrationDialog : Form
 {
+    // 次に押す所に付ける色。
+    private static readonly Color NextColor = Color.FromArgb(255, 224, 130);
+    private const int ContentWidth = 600;
+
     // 添字は 電流: 0=低点電圧 1=低点実測値 2=高点電圧 3=高点実測値、圧力: 4〜7 も同じ順。
     private readonly TextBox[] _values = new TextBox[8];
     private readonly ComboBox _modelBox = new();
+    private readonly Label _nextLabel = new();
     private readonly Label _readingLabel = new();
+    private readonly Label _currentStateLabel = new();
+    private readonly Label _pressureStateLabel = new();
+    private readonly Label _modelLabel = new();
+    private readonly Button _applyButton = new();
+    private Button? _readCurrentButton;
+    private Button? _readPressureButton;
     private readonly Func<IWin32Window, CurrentReadingResult?>? _readCurrent;
     private readonly Func<ProductModel, IWin32Window, PressureReadingResult?>? _readPressure;
     // 読み取った結果と、そのとき欄に入れた文字(適用の前に手で直したかを見るため)。
@@ -71,50 +86,67 @@ internal sealed class CalibrationDialog : Form
         });
         root.Controls.Add(new Label
         {
-            AutoSize = true, MaximumSize = new Size(520, 0),
+            AutoSize = true, MaximumSize = new Size(ContentWidth, 0),
             Text = hardware + " ／ " + templateName + "\r\n" + initialNote,
-            Margin = new Padding(0, 0, 0, 12)
+            Margin = new Padding(0, 0, 0, 8)
         });
-        root.Controls.Add(BuildReadingSection());
+        // 次にすること(いちばん目に入る所に、色付きで出す)。
+        _nextLabel.AutoSize = true;
+        _nextLabel.MinimumSize = new Size(ContentWidth, 0);
+        _nextLabel.MaximumSize = new Size(ContentWidth, 0);
+        _nextLabel.Font = new Font(Font.FontFamily, 11, FontStyle.Bold);
+        _nextLabel.BackColor = NextColor;
+        _nextLabel.Padding = new Padding(8, 6, 8, 6);
+        _nextLabel.Margin = new Padding(0, 0, 0, 4);
+        root.Controls.Add(_nextLabel);
+        _readingLabel.AutoSize = true;
+        _readingLabel.MaximumSize = new Size(ContentWidth, 0);
+        _readingLabel.Margin = new Padding(0, 0, 0, 8);
+        _readingLabel.Text = _readCurrent is null && _readPressure is null
+            ? "型式は校正記録に目標の供給圧力として残します（選ばなくても適用できます）。"
+            : "色の付いた所を、上から順に押してください。読み取れなかった欄は手で入れて「適用」でも進めます。";
+        root.Controls.Add(_readingLabel);
         float[] values = [initial.Current.Input1, initial.Current.Output1, initial.Current.Input2, initial.Current.Output2,
             initial.Pressure.Input1, initial.Pressure.Output1, initial.Pressure.Input2, initial.Pressure.Output2];
-        root.Controls.Add(BuildSection("電流", "mA", 0, values));
-        root.Controls.Add(BuildSection("圧力", "kPa", 4, values));
-        root.Controls.Add(new Label { AutoSize = true, MaximumSize = new Size(520, 0), Margin = new Padding(0, 8, 0, 12),
-            Text = "1 が低点（ゼロ付近）、2 が高点です。「適用」で今日の校正値として残し、モードの雛形に入れて LOGGER で開きます。\r\n" +
-                "その日はアプリを立ち上げ直しても、校正し直さなくて済みます。" });
-        var buttons = new FlowLayoutPanel { AutoSize = true, FlowDirection = FlowDirection.LeftToRight };
-        var apply = new Button { Text = "適用", AutoSize = true, MinimumSize = new Size(120, 36) };
-        var cancel = new Button { Text = "キャンセル", AutoSize = true, MinimumSize = new Size(100, 36), DialogResult = DialogResult.Cancel };
-        apply.Click += (_, _) => ApplyValues();
-        buttons.Controls.AddRange([apply, cancel]);
-        root.Controls.Add(buttons);
+        root.Controls.Add(BuildCurrentStep(values));
+        root.Controls.Add(BuildPressureStep(values));
+        root.Controls.Add(BuildApplyStep());
         Controls.Add(root);
-        // 入力中のEnterで誤って適用しないよう、適用はボタン操作だけにする。
-        CancelButton = cancel;
+        _modelBox.SelectedIndexChanged += (_, _) => UpdateGuide();
+        UpdateGuide();
     }
 
-    // 「マルチメータで読み取る」(電流)と、型式(目標の供給圧力)+「GC16 で読み取る」(圧力)。型式は測定の型式(参照波形)の初期値にしない(決まったこと 25)。
-    private Control BuildReadingSection()
+    // 手順 1: 「マルチメータで読み取る」と電流の 4 欄。
+    private Control BuildCurrentStep(float[] values)
     {
-        var section = new FlowLayoutPanel
-        {
-            AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink,
-            FlowDirection = FlowDirection.TopDown, WrapContents = false, Margin = new Padding(0, 0, 0, 10)
-        };
+        var (group, body) = MakeStep(_readCurrent is null ? "手順 1　電流の値を入れる" : "手順 1　電流を読み取る（マルチメータ）");
         if (_readCurrent is not null)
         {
-            var currentRow = new FlowLayoutPanel { AutoSize = true, FlowDirection = FlowDirection.LeftToRight, WrapContents = false, Margin = new Padding(0, 0, 0, 4) };
-            currentRow.Controls.Add(new Label { Text = "電流（①②）", AutoSize = true, Margin = new Padding(0, 8, 6, 3) });
-            var readCurrent = new Button { Text = "マルチメータで読み取る", AutoSize = true, MinimumSize = new Size(170, 32), Margin = new Padding(3) };
-            readCurrent.Click += (_, _) => ReadCurrent();
-            currentRow.Controls.Add(readCurrent);
-            section.Controls.Add(currentRow);
+            var row = MakeRow();
+            _readCurrentButton = new Button { Text = "マルチメータで読み取る", AutoSize = true, MinimumSize = new Size(190, 36), Margin = new Padding(0, 0, 8, 3) };
+            _readCurrentButton.Click += (_, _) => ReadCurrent();
+            row.Controls.Add(_readCurrentButton);
+            body.Controls.Add(row);
+            ConfigureStateLabel(_currentStateLabel);
+            body.Controls.Add(_currentStateLabel);
         }
-        var row = new FlowLayoutPanel { AutoSize = true, FlowDirection = FlowDirection.LeftToRight, WrapContents = false, Margin = Padding.Empty };
-        row.Controls.Add(new Label { Text = "型式（供給圧力の目標）", AutoSize = true, Margin = new Padding(0, 8, 6, 3) });
+        body.Controls.Add(BuildSection("電流", "mA", 0, values));
+        return group;
+    }
+
+    // 手順 2: 型式(目標の供給圧力)→「GC16 で読み取る」と圧力の 4 欄。型式は測定の型式(参照波形)の初期値にしない(決まったこと 25)。
+    private Control BuildPressureStep(float[] values)
+    {
+        var (group, body) = MakeStep(_readPressure is null ? "手順 2　圧力の値を入れる" : "手順 2　圧力を読み取る（GC16）");
+        var row = MakeRow();
+        _modelLabel.Text = "型式（供給圧力の目標）";
+        _modelLabel.AutoSize = true;
+        _modelLabel.Padding = new Padding(4, 4, 4, 4);
+        _modelLabel.Margin = new Padding(0, 4, 4, 3);
+        row.Controls.Add(_modelLabel);
         _modelBox.DropDownStyle = ComboBoxStyle.DropDownList;
-        _modelBox.Width = 220;
+        _modelBox.Width = 200;
+        _modelBox.Margin = new Padding(0, 7, 3, 3);
         _modelBox.AccessibleName = "型式（供給圧力の目標）";
         _modelBox.Items.Add("（選んでいない）");
         foreach (var model in ProductModel.All) _modelBox.Items.Add(model);
@@ -122,18 +154,114 @@ internal sealed class CalibrationDialog : Form
         row.Controls.Add(_modelBox);
         if (_readPressure is not null)
         {
-            var read = new Button { Text = "GC16 で読み取る", AutoSize = true, MinimumSize = new Size(140, 32), Margin = new Padding(12, 3, 3, 3) };
-            read.Click += (_, _) => ReadPressure();
-            row.Controls.Add(read);
+            row.Controls.Add(new Label { Text = "→", AutoSize = true, Margin = new Padding(4, 10, 4, 3) });
+            _readPressureButton = new Button { Text = "GC16 で読み取る", AutoSize = true, MinimumSize = new Size(150, 36), Margin = new Padding(0, 0, 3, 3) };
+            _readPressureButton.Click += (_, _) => ReadPressure();
+            row.Controls.Add(_readPressureButton);
         }
-        section.Controls.Add(row);
-        _readingLabel.AutoSize = true;
-        _readingLabel.MaximumSize = new Size(520, 0);
-        _readingLabel.Margin = new Padding(0, 4, 0, 0);
-        _readingLabel.Text = _readCurrent is null && _readPressure is null ? "型式は校正記録に目標の供給圧力として残します（選ばなくても適用できます）。" :
-            "電流は「マルチメータで読み取る」、圧力は型式を選んでから「GC16 で読み取る」を押してください。読み取れなかった欄は手で入れて「適用」してください。";
-        section.Controls.Add(_readingLabel);
-        return section;
+        body.Controls.Add(row);
+        if (_readPressure is not null)
+        {
+            ConfigureStateLabel(_pressureStateLabel);
+            body.Controls.Add(_pressureStateLabel);
+        }
+        body.Controls.Add(BuildSection("圧力", "kPa", 4, values));
+        return group;
+    }
+
+    // 手順 3: 値を確かめて「適用」。
+    private Control BuildApplyStep()
+    {
+        var (group, body) = MakeStep("手順 3　値を確かめて「適用」を押す");
+        body.Controls.Add(new Label { AutoSize = true, MaximumSize = new Size(ContentWidth - 30, 0), Margin = new Padding(0, 0, 0, 8),
+            Text = "1 が低点（ゼロ付近）、2 が高点です。「適用」で今日の校正値として残し、モードの雛形に入れて LOGGER で開きます。\r\n" +
+                "その日はアプリを立ち上げ直しても、校正し直さなくて済みます。" });
+        var buttons = MakeRow();
+        _applyButton.Text = "適用";
+        _applyButton.AutoSize = true;
+        _applyButton.MinimumSize = new Size(150, 40);
+        _applyButton.Margin = new Padding(0, 0, 12, 3);
+        var cancel = new Button { Text = "キャンセル", AutoSize = true, MinimumSize = new Size(100, 40), DialogResult = DialogResult.Cancel };
+        _applyButton.Click += (_, _) => ApplyValues();
+        buttons.Controls.AddRange([_applyButton, cancel]);
+        body.Controls.Add(buttons);
+        // 入力中のEnterで誤って適用しないよう、適用はボタン操作だけにする。
+        CancelButton = cancel;
+        return group;
+    }
+
+    // 手順の枠(見出し付き)と、その中身を上から並べる入れ物。
+    private (GroupBox Group, FlowLayoutPanel Body) MakeStep(string title)
+    {
+        var group = new GroupBox
+        {
+            Text = title, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            MinimumSize = new Size(ContentWidth, 0), MaximumSize = new Size(ContentWidth, 0),
+            Font = new Font(Font, FontStyle.Bold), Padding = new Padding(10, 6, 10, 6), Margin = new Padding(0, 0, 0, 8)
+        };
+        var body = new FlowLayoutPanel
+        {
+            AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, Dock = DockStyle.Fill,
+            FlowDirection = FlowDirection.TopDown, WrapContents = false, Font = Font
+        };
+        group.Controls.Add(body);
+        return (group, body);
+    }
+
+    private static FlowLayoutPanel MakeRow() => new()
+    {
+        AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink,
+        FlowDirection = FlowDirection.LeftToRight, WrapContents = false, Margin = new Padding(0, 0, 0, 4)
+    };
+
+    private void ConfigureStateLabel(Label label)
+    {
+        label.AutoSize = true;
+        label.MaximumSize = new Size(ContentWidth - 30, 0);
+        label.Margin = new Padding(0, 0, 0, 4);
+    }
+
+    // 「次にすること」と、次に押す所の色、読み取りの済み・まだを、今の状態に合わせる。案内だけで、押せる・押せないは変えない
+    // (「GC16 で読み取る」だけは、型式を選ぶまで押せない。今までは押すと「型式を選んでください」と出た)。
+    private void UpdateGuide()
+    {
+        bool needCurrent = _readCurrentButton is not null && _currentResult is null;
+        bool needPressure = _readPressureButton is not null && _pressureResult is null;
+        bool modelChosen = SelectedModel is not null;
+        bool nextCurrent = needCurrent;
+        bool nextModel = !nextCurrent && needPressure && !modelChosen;
+        bool nextPressure = !nextCurrent && needPressure && modelChosen;
+        bool nextApply = !nextCurrent && !nextModel && !nextPressure;
+        _nextLabel.Text = "次にすること：" +
+            (nextCurrent ? "手順 1 の「マルチメータで読み取る」を押してください"
+            : nextModel ? "手順 2 で型式を選んでください"
+            : nextPressure ? "手順 2 の「GC16 で読み取る」を押してください"
+            : _readCurrentButton is null && _readPressureButton is null ? "電流・圧力の値を入れて、手順 3 の「適用」を押してください"
+            : "手順 3 で値を確かめて「適用」を押してください");
+        Highlight(_readCurrentButton, nextCurrent);
+        Highlight(_readPressureButton, nextPressure);
+        Highlight(_applyButton, nextApply);
+        _modelLabel.BackColor = nextModel ? NextColor : Color.Transparent;
+        if (_readPressureButton is not null) _readPressureButton.Enabled = modelChosen;
+        // 済んだ側のボタンは、読み取り直し用だと分かる文字にする。
+        if (_readCurrentButton is not null) _readCurrentButton.Text = _currentResult is null ? "マルチメータで読み取る" : "マルチメータで読み取り直す";
+        if (_readPressureButton is not null) _readPressureButton.Text = _pressureResult is null ? "GC16 で読み取る" : "GC16 で読み取り直す";
+        SetState(_currentStateLabel, _currentResult is null ? null : "✓ 読み取り済み：" + _currentResult.MethodText + "\r\n（値がおかしいときだけ「マルチメータで読み取り直す」を押します）", "まだ読み取っていません");
+        SetState(_pressureStateLabel, _pressureResult is null ? null : $"✓ 読み取り済み：{_pressureResult.Model.Name}、0 点 {_pressureResult.Zero.Describe()}\r\n（型式を間違えた・値がおかしいときだけ「GC16 で読み取り直す」を押します）",
+            modelChosen ? "まだ読み取っていません" : "まだ読み取っていません（先に型式を選びます）");
+    }
+
+    private static void Highlight(Button? button, bool next)
+    {
+        if (button is null) return;
+        button.BackColor = next ? NextColor : SystemColors.Control;
+        button.UseVisualStyleBackColor = !next;
+    }
+
+    private static void SetState(Label label, string? done, string notYet)
+    {
+        label.Text = done ?? notYet;
+        label.ForeColor = done is null ? SystemColors.GrayText : Color.DarkGreen;
     }
 
     private ProductModel? SelectedModel => _modelBox.SelectedItem as ProductModel;
@@ -141,6 +269,7 @@ internal sealed class CalibrationDialog : Form
     private void ReadCurrent()
     {
         if (_readCurrent is null) return;
+        if (_currentResult is not null && !ConfirmReadAgain("電流")) return;
         CurrentReadingResult? result = _readCurrent(this);
         if (result is null)
         {
@@ -149,7 +278,8 @@ internal sealed class CalibrationDialog : Form
         }
         _currentTexts = Fill(0, result.Current);
         _currentResult = result;
-        _readingLabel.Text = $"電流を読み取りました（{result.MethodText}）。" + (_pressureResult is null ? "圧力も読み取るか手で入れて、" : "") + "値を確かめて「適用」を押してください。";
+        _readingLabel.Text = "電流を読み取りました。値は手順 1 の欄に入っています。";
+        UpdateGuide();
     }
 
     private void ReadPressure()
@@ -160,6 +290,7 @@ internal sealed class CalibrationDialog : Form
             ErrorNotification.Show(this, "目標の供給圧力を出すため、型式を選んでください。", "型式を選んでください", MessageBoxButtons.OK, MessageBoxIcon.Warning);
             return;
         }
+        if (_pressureResult is not null && !ConfirmReadAgain("圧力")) return;
         PressureReadingResult? result = _readPressure(model, this);
         if (result is null)
         {
@@ -168,9 +299,16 @@ internal sealed class CalibrationDialog : Form
         }
         _pressureTexts = Fill(4, result.Pressure);
         _pressureResult = result;
-        _readingLabel.Text = $"GC16 で読み取りました（{result.Model.Name}、0 点 {result.Zero.Describe()}）。" +
-            (_currentResult is null ? "電流も読み取るか手で入れて、" : "") + "値を確かめて「適用」を押してください。";
+        _readingLabel.Text = "圧力を読み取りました。値は手順 2 の欄に入っています。";
+        UpdateGuide();
     }
+
+    // 読み取り済みの側をもう一度読み取る前に聞く。「いいえ」なら何もしない(機器は動かない)。
+    private bool ConfirmReadAgain(string name) =>
+        _confirm($"{name}を読み取り直しますか？",
+            $"{name}はもう読み取ってあります。もう一度、最初から読み取りますか？\r\n" +
+            "（今の値は、読み取り直しが終わるまで残ります。途中で中止すれば今の値のままです）\r\n\r\n" +
+            "「はい」：読み取り直す\r\n「いいえ」：今の値のままにする");
 
     // 読み取った 2 点を、first から 4 欄に入れ、入れた文字を返す。
     private string[] Fill(int first, ScalingPoints points)
@@ -185,25 +323,15 @@ internal sealed class CalibrationDialog : Form
     private bool EditedSince(int first, string[]? texts) =>
         texts is null || Enumerable.Range(0, texts.Length).Any(i => _values[first + i].Text.Trim() != texts[i]);
 
-    // 「電流」「圧力」の 1 枠。見出し行(計測値・表示値)と、1(低点)・2(高点)の 2 行。
+    // 「電流」「圧力」の値の欄。見出し行(計測値・表示値)と、1(低点)・2(高点)の 2 行。
     private Control BuildSection(string name, string unit, int firstIndex, float[] values)
     {
-        var section = new FlowLayoutPanel
-        {
-            AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink,
-            FlowDirection = FlowDirection.TopDown, WrapContents = false, Margin = new Padding(0, 0, 0, 10)
-        };
-        section.Controls.Add(new Label
-        {
-            Text = name, AutoSize = true, Font = new Font(Font, FontStyle.Bold), BorderStyle = BorderStyle.FixedSingle,
-            Padding = new Padding(6, 2, 6, 2), Margin = new Padding(0, 0, 0, 4)
-        });
-        var grid = new TableLayoutPanel { AutoSize = true, ColumnCount = 5, RowCount = 3, Margin = new Padding(12, 0, 0, 0) };
+        var grid = new TableLayoutPanel { AutoSize = true, ColumnCount = 5, RowCount = 3, Margin = new Padding(0, 0, 0, 2) };
         grid.Controls.Add(new Label { Text = "計測値", AutoSize = true, Margin = new Padding(3, 3, 3, 3) }, 1, 0);
         grid.Controls.Add(new Label { Text = "表示値", AutoSize = true, Margin = new Padding(3, 3, 3, 3) }, 3, 0);
         for (int row = 0; row < 2; row++)
         {
-            grid.Controls.Add(new Label { Text = (row + 1).ToString(), AutoSize = true, Margin = new Padding(3, 6, 8, 3) }, 0, row + 1);
+            grid.Controls.Add(new Label { Text = (row + 1) + (row == 0 ? "（低点）" : "（高点）"), AutoSize = true, Margin = new Padding(3, 6, 8, 3) }, 0, row + 1);
             // 左の列: 計測値(V)。右の列: 表示値(mA / kPa)。
             int inputIndex = firstIndex + row * 2;
             grid.Controls.Add(MakeBox(inputIndex, values[inputIndex], $"{name} {(row == 0 ? "低点" : "高点")}電圧 (V)"), 1, row + 1);
@@ -211,8 +339,7 @@ internal sealed class CalibrationDialog : Form
             grid.Controls.Add(MakeBox(inputIndex + 1, values[inputIndex + 1], $"{name} {(row == 0 ? "低点" : "高点")}実測値 ({unit})"), 3, row + 1);
             grid.Controls.Add(new Label { Text = unit, AutoSize = true, Margin = new Padding(3, 6, 3, 3) }, 4, row + 1);
         }
-        section.Controls.Add(grid);
-        return section;
+        return grid;
     }
 
     private TextBox MakeBox(int index, float value, string accessibleName)

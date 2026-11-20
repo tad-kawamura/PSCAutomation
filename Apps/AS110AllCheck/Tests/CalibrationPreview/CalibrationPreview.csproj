@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- 校正画面を、機器なしで開いて見るための道具(2026-11-20)。計器は模擬で、実物の画面(CalibrationDialog・AutoCalibrationDialog)と
+       実物の手順(AutoCalibrationProcedure)をそのまま動かす。検査ではない(合否は出さない)。使い方は Program.cs の先頭。 -->
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net9.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../AS110AllCheck.csproj" />
+  </ItemGroup>
+</Project>

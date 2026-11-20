@@ -6,6 +6,8 @@ namespace PSCAutomation.Apps.AS110AllCheck;
 // 「マルチメータで読み取る」は ①②、「GC16 で読み取る」は ③④ を、開くとすぐ順に行う。
 // 人への指示(ボールバルブの切り替え・マルチメータの値・レギュレーター)はこの画面の中に出す。
 // 読み取れたら閉じて、校正画面の欄に入れる(適用は校正画面で人が押す)。
+// 2026-11-20: 人が押す所が分かりにくかったので(人の指摘)、いまどの段か(①→② / ③→④)を上に出し、指示の枠は
+// 人の操作を待っているあいだだけ色を付けて「あなたの操作です」と出す。自動で進んでいるあいだは「操作は要りません」と出す。
 // いつでも「中止して手入力に戻る」で止められる。止まったときは後片付け(WF1973 の出力停止・GC16 を RM,0・7351E を離す・ボールバルブを測定の向き)をしてから、
 // 校正画面の手入力に戻る(実機で確かめるまで、自動がうまく行かなくても手入力で必ず測定へ進める。人の指示)。
 internal sealed class AutoCalibrationDialog : Form, IAutoCalibrationOperator
@@ -18,7 +20,18 @@ internal sealed class AutoCalibrationDialog : Form, IAutoCalibrationOperator
     private readonly CancellationTokenSource _cancel = new();
     private readonly Label _statusLabel = new();
     private readonly Label _pressureLabel = new();
+    private readonly Label _promptHeading = new();
+    private readonly FlowLayoutPanel _promptPanel = new();
     private readonly Label _promptLabel = new();
+    // いまどの段か(この読み取りで行う 2 つの段)。
+    private readonly AutoCalibrationStage[] _stages;
+    private readonly Label[] _stageLabels;
+    private AutoCalibrationStage? _currentStage;
+    // 人の操作を待っているあいだの、指示の枠の色。
+    private static readonly Color WaitingColor = Color.FromArgb(255, 224, 130);
+    // 指示の枠の幅と文字の大きさ(2026-11-20、人の指示: 指示の文字はできるだけ大きく)。
+    private const int PanelWidth = 760;
+    private const float PromptFontSize = 16, PromptHeadingFontSize = 18;
     private readonly Label _promptError = new();
     private readonly FlowLayoutPanel _inputPanel = new();
     private readonly TextBox _inputBox = new();
@@ -61,14 +74,27 @@ internal sealed class AutoCalibrationDialog : Form, IAutoCalibrationOperator
         });
         root.Controls.Add(new Label
         {
-            AutoSize = true, MaximumSize = new Size(600, 0), Margin = new Padding(0, 0, 0, 8),
+            AutoSize = true, MaximumSize = new Size(PanelWidth, 0), Margin = new Padding(0, 0, 0, 8),
             Text = kind == AutoCalibrationKind.Current
                 ? "① 0 mA → ② 30 mA の順に、NR-500 CH1 の電圧（LOGGER）とマルチメータ（7351E）の電流を読み取ります。指示はこの画面に出ます。"
                 : $"型式 {model!.Name} ／ 目標の供給圧力 {model.SupplyPressure} kPa\r\n" +
                   "③ 大気圧でゼロ調整 → ④ 供給圧力 の順に、NR-500 CH2 の電圧（LOGGER）と GC16 の圧力を読み取ります。指示はこの画面に出ます。"
         });
+        _stages = kind == AutoCalibrationKind.Current
+            ? [AutoCalibrationStage.CurrentLow, AutoCalibrationStage.CurrentHigh]
+            : [AutoCalibrationStage.PressureLow, AutoCalibrationStage.PressureHigh];
+        _stageLabels = new Label[_stages.Length];
+        var stageRow = new FlowLayoutPanel { AutoSize = true, FlowDirection = FlowDirection.LeftToRight, WrapContents = false, Margin = new Padding(0, 0, 0, 8) };
+        for (int i = 0; i < _stages.Length; i++)
+        {
+            if (i > 0) stageRow.Controls.Add(new Label { Text = "→", AutoSize = true, Margin = new Padding(4, 6, 4, 0) });
+            _stageLabels[i] = new Label { AutoSize = true, BorderStyle = BorderStyle.FixedSingle, Padding = new Padding(8, 4, 8, 4), Margin = Padding.Empty };
+            stageRow.Controls.Add(_stageLabels[i]);
+        }
+        root.Controls.Add(stageRow);
+        UpdateStages(finished: false);
         _statusLabel.AutoSize = true;
-        _statusLabel.MaximumSize = new Size(600, 0);
+        _statusLabel.MaximumSize = new Size(PanelWidth, 0);
         _statusLabel.Font = new Font(Font, FontStyle.Bold);
         _statusLabel.Margin = new Padding(0, 0, 0, 6);
         root.Controls.Add(_statusLabel);
@@ -78,19 +104,30 @@ internal sealed class AutoCalibrationDialog : Form, IAutoCalibrationOperator
         _pressureLabel.Visible = kind == AutoCalibrationKind.Pressure;
         ShowPressure(null);
         root.Controls.Add(_pressureLabel);
-        var prompt = new FlowLayoutPanel
-        {
-            AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, FlowDirection = FlowDirection.TopDown, WrapContents = false,
-            BorderStyle = BorderStyle.FixedSingle, Padding = new Padding(8), Margin = new Padding(0, 0, 0, 8), MinimumSize = new Size(600, 0)
-        };
+        var prompt = _promptPanel;
+        prompt.AutoSize = true;
+        prompt.AutoSizeMode = AutoSizeMode.GrowAndShrink;
+        prompt.FlowDirection = FlowDirection.TopDown;
+        prompt.WrapContents = false;
+        prompt.BorderStyle = BorderStyle.FixedSingle;
+        prompt.Padding = new Padding(8);
+        prompt.Margin = new Padding(0, 0, 0, 8);
+        prompt.MinimumSize = new Size(PanelWidth, 0);
+        _promptHeading.AutoSize = true;
+        _promptHeading.Font = new Font(Font.FontFamily, PromptHeadingFontSize, FontStyle.Bold);
+        _promptHeading.Margin = new Padding(0, 0, 0, 6);
+        prompt.Controls.Add(_promptHeading);
         _promptLabel.AutoSize = true;
-        _promptLabel.MaximumSize = new Size(580, 0);
+        _promptLabel.Font = new Font(Font.FontFamily, PromptFontSize);
+        _inputPanel.Font = _promptLabel.Font;
+        _promptError.Font = _promptLabel.Font;
+        _promptLabel.MaximumSize = new Size(PanelWidth - 20, 0);
         _promptLabel.Margin = new Padding(0, 0, 0, 6);
         prompt.Controls.Add(_promptLabel);
         _inputPanel.AutoSize = true;
         _inputPanel.FlowDirection = FlowDirection.LeftToRight;
         _inputPanel.Visible = false;
-        _inputBox.Width = 110;
+        _inputBox.Width = 180;
         _inputBox.TextAlign = HorizontalAlignment.Right;
         _inputBox.AccessibleName = "マルチメータの電流 (mA)";
         _inputPanel.Controls.AddRange([_inputBox, new Label { Text = "mA", AutoSize = true, Margin = new Padding(3, 6, 3, 3) }]);
@@ -103,10 +140,11 @@ internal sealed class AutoCalibrationDialog : Form, IAutoCalibrationOperator
         _choicesPanel.FlowDirection = FlowDirection.LeftToRight;
         prompt.Controls.Add(_choicesPanel);
         root.Controls.Add(prompt);
+        root.Controls.Add(new Label { Text = "経過（見るだけ）", AutoSize = true, ForeColor = SystemColors.GrayText, Margin = new Padding(0, 0, 0, 2) });
         _logBox.Multiline = true;
         _logBox.ReadOnly = true;
         _logBox.ScrollBars = ScrollBars.Vertical;
-        _logBox.Size = new Size(600, 150);
+        _logBox.Size = new Size(PanelWidth, 150);
         _logBox.Margin = new Padding(0, 0, 0, 8);
         root.Controls.Add(_logBox);
         _stopButton.Text = "中止して手入力に戻る";
@@ -149,11 +187,13 @@ internal sealed class AutoCalibrationDialog : Form, IAutoCalibrationOperator
             if (_kind == AutoCalibrationKind.Current)
             {
                 CurrentResult = await procedure.RunCurrentAsync(_cancel.Token);
+                UpdateStages(finished: true);
                 ShowStatus("読み取りが終わりました：" + As110Calibration.DescribePoints(CurrentResult.Current, "mA"));
             }
             else
             {
                 PressureResult = await procedure.RunPressureAsync(_model!, _cancel.Token);
+                UpdateStages(finished: true);
                 ShowStatus("読み取りが終わりました：" + As110Calibration.DescribePoints(PressureResult.Pressure, "kPa"));
             }
         }
@@ -191,9 +231,12 @@ internal sealed class AutoCalibrationDialog : Form, IAutoCalibrationOperator
         ShowStatus("校正画面に戻って、値を手で入れて「適用」すれば測定へ進めます。");
         ShowPressure(null);
         ClearPrompt();
-        _promptLabel.Text = message + "\r\n「閉じて手入力に戻る」を押してください。";
+        _promptLabel.Text = message + "\r\n下の「閉じて手入力に戻る」を押してください。";
+        SetWaiting(true);
         _stopButton.Text = "閉じて手入力に戻る";
         _stopButton.Enabled = true;
+        _stopButton.BackColor = WaitingColor;
+        _stopButton.UseVisualStyleBackColor = false;
     }
 
     // 画面の外で起きた異常(M5Stack の通信切れ)で読み取りを中止する(2026-11-14、全体見直し・区切り 4)。
@@ -248,6 +291,34 @@ internal sealed class AutoCalibrationDialog : Form, IAutoCalibrationOperator
         _log(text.Replace("\r\n", " "));
     }
 
+    public void ShowStage(AutoCalibrationStage stage)
+    {
+        _currentStage = stage;
+        UpdateStages(finished: false);
+    }
+
+    // 段の表示: 済んだ段は ✓(緑)、いまの段は ▶(太字)、これからの段は灰色。
+    private void UpdateStages(bool finished)
+    {
+        for (int i = 0; i < _stages.Length; i++)
+        {
+            bool done = finished || (_currentStage is { } current && _stages[i] < current);
+            bool now = !finished && _currentStage == _stages[i];
+            _stageLabels[i].Text = (done ? "✓ " : now ? "▶ " : "") + AutoCalibrationProcedure.StageName(_stages[i]);
+            _stageLabels[i].Font = new Font(Font, now ? FontStyle.Bold : FontStyle.Regular);
+            _stageLabels[i].ForeColor = done ? Color.DarkGreen : now ? SystemColors.ControlText : SystemColors.GrayText;
+            _stageLabels[i].BackColor = now ? Color.White : Color.Transparent;
+        }
+    }
+
+    // 指示の枠: 人の操作を待っているあいだは色を付けて知らせ、自動で進んでいるあいだは「操作は要りません」と出す。
+    private void SetWaiting(bool waiting)
+    {
+        _promptPanel.BackColor = waiting ? WaitingColor : SystemColors.Control;
+        _promptHeading.Text = waiting ? "▶ あなたの操作です" : "自動で進めています（操作は要りません）";
+        _promptHeading.ForeColor = waiting ? SystemColors.ControlText : SystemColors.GrayText;
+    }
+
     public void ShowPressure(double? kilopascals) =>
         _pressureLabel.Text = "GC16：" + (kilopascals is { } v ? v.ToString("0.00", CultureInfo.InvariantCulture) + " kPa" : "--- kPa") +
             (_model is null ? "" : $"（目標 {_model.SupplyPressure} kPa）");
@@ -268,6 +339,7 @@ internal sealed class AutoCalibrationDialog : Form, IAutoCalibrationOperator
             "デジタルマルチメータの表示（mA）を入れて「OK」を押してください。\r\n小数点は . です（例 " + (high ? "29.9" : "0.01") + "）。";
         _inputBox.Text = "";
         _inputPanel.Visible = true;
+        SetWaiting(true);
         AddChoice("OK", () =>
         {
             if (double.TryParse(_inputBox.Text.Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out double value) &&
@@ -293,8 +365,11 @@ internal sealed class AutoCalibrationDialog : Form, IAutoCalibrationOperator
             ("中止", CurrentMeterMissingChoice.Abort)], cancellationToken);
 
     public Task<bool> WaitRegulatorAdjustedAsync(double targetKilopascals, CancellationToken cancellationToken) =>
-        PromptAsync($"④ レギュレーターを目標 {targetKilopascals:0.#} kPa に合わせてください。上の GC16 の値を見ながら回し、合わせたら「合わせた」を押してください。",
-            [("合わせた", true), ("中止", false)], cancellationToken);
+        PromptAsync($"レギュレータを回して、目標圧力 {targetKilopascals:0.#} kPa に設定して下さい。\r\n\r\n" +
+            "　1. 上の GC16 の値を見ながら、レギュレータを回す\r\n" +
+            "　2. 目標圧力になったら、下の「設定した」を押す\r\n\r\n" +
+            "「設定した」を押すまで、先へは進みません。",
+            [("設定した", true), ("中止", false)], cancellationToken);
 
     public Task<WaitChoice> AskNotSettledAsync(string message, CancellationToken cancellationToken) =>
         PromptAsync(message, [("待ち続ける", WaitChoice.KeepWaiting), ("この段をやり直す", WaitChoice.RedoStage), ("中止", WaitChoice.Abort)], cancellationToken);
@@ -314,6 +389,7 @@ internal sealed class AutoCalibrationDialog : Form, IAutoCalibrationOperator
         var completion = new TaskCompletionSource<T>(TaskCreationOptions.RunContinuationsAsynchronously);
         ClearPrompt();
         _promptLabel.Text = message;
+        SetWaiting(true);
         foreach (var (label, value) in choices)
             AddChoice(label, () => completion.TrySetResult(value));
         using (cancellationToken.Register(() => completion.TrySetCanceled(cancellationToken)))
@@ -325,14 +401,26 @@ internal sealed class AutoCalibrationDialog : Form, IAutoCalibrationOperator
 
     private void AddChoice(string label, Action clicked)
     {
-        var button = new Button { Text = label, AutoSize = true, MinimumSize = new Size(110, 34) };
+        // 押す所が分かるよう、ボタンは白地にする(枠の色と見分ける)。「中止」だけは今までどおりの色。
+        var button = new Button { Text = label, AutoSize = true, MinimumSize = new Size(170, 52), Margin = new Padding(0, 3, 12, 3) };
+        if (label != "中止")
+        {
+            button.BackColor = Color.White;
+            button.Font = new Font(Font.FontFamily, PromptFontSize, FontStyle.Bold);
+        }
+        else
+        {
+            button.BackColor = SystemColors.Control;
+            button.Font = new Font(Font.FontFamily, PromptFontSize);
+        }
         button.Click += (_, _) => clicked();
         _choicesPanel.Controls.Add(button);
     }
 
     private void ClearPrompt()
     {
-        _promptLabel.Text = "（指示はここに出ます）";
+        _promptLabel.Text = "そのままお待ちください。操作が要るときは、この枠に色が付いて指示が出ます。";
+        SetWaiting(false);
         _inputPanel.Visible = false;
         _promptError.Visible = false;
         foreach (Control control in _choicesPanel.Controls.Cast<Control>().ToArray())

@@ -30,8 +30,8 @@ internal static class AutoCalibrationTests
             Check(rig.Output.Commands.SequenceEqual(["0", "5", "stop", "5", "stop"]),
                 "auto calibration: WF1973 0 V then 5 V and stopped after the multimeter reading; 5 V from ③ to ④ then stopped: " + string.Join(",", rig.Output.Commands));
             Check(rig.Locator.Finds == 1 && rig.Gauge.Disposals == 1 && rig.Gauge.ZeroAdjusts == 1, "auto calibration: GC16 found once, zero-adjusted once, released (RM,0) once");
-            Check(rig.Operator.Instructions.SequenceEqual([ManualBallValveSwitcher.AtmosphereInstruction, ManualBallValveSwitcher.SupplyInstruction]),
-                "auto calibration: ball valves asked atmosphere then supply, no restore notice after success");
+            Check(rig.Operator.Instructions.SequenceEqual([ManualBallValveSwitcher.AtmosphereInstruction]) && rig.Operator.AdjustWaits == 1 && rig.Operator.Notices.Count == 0,
+                "auto calibration: asked for atmosphere once, then the regulator once (no separate supply instruction), no restore notice after success");
             Check(pressure.Zero.WithinIdeal && pressure.Zero.Adjustments == 1 && pressure.Zero.Describe().Contains("±0.1 kPa 以内"), "auto calibration: zero check within ±0.1 kPa");
             Check(pressure.SinceGaugeConfirmed is { } since && since > TimeSpan.Zero && pressure.GaugePort == "COM7", "auto calibration: elapsed time since GC16 was confirmed and the port");
             Check(rig.Operator.AdjustedAt is { } adjusted && rig.HighSettledAt is { } settled && settled - adjusted >= TimeSpan.FromSeconds(5),
@@ -96,7 +96,7 @@ internal static class AutoCalibrationTests
             rig.Operator.NotSettledAnswers.Enqueue(WaitChoice.Abort);
             await ExpectCanceled(rig, model, "not settled: 中止 stops the automatic reading");
             Check(rig.Operator.NotSettledAsked == 1 && rig.Operator.NotSettledMessages[0].Contains("15 秒") &&
-                rig.Operator.NotSettledMessages[0].Contains("ボールバルブ①②の向き") && rig.Gauge.ZeroAdjusts == 0 &&
+                rig.Operator.NotSettledMessages[0].Contains("配管・バルブの状態") && rig.Gauge.ZeroAdjusts == 0 &&
                 rig.Operator.Notices.SequenceEqual([ManualBallValveSwitcher.RestoreInstruction]) && rig.Output.Commands.Last() == "stop",
                 "not settled: notice after 15 s, no zero adjustment, valves back and output stopped");
         }
@@ -173,7 +173,7 @@ internal static class AutoCalibrationTests
                 "④ pressure voltage not above the low point: stopped inside ④ with the wiring hint");
             Check(rig.CurrentMeters.Meter.Reads == 4 && rig.Gauge.ZeroAdjusts == 1 &&
                 rig.Operator.Instructions.Count(i => i == ManualBallValveSwitcher.AtmosphereInstruction) == 1 &&
-                rig.Operator.Instructions.Count(i => i == ManualBallValveSwitcher.SupplyInstruction) == 2 &&
+                rig.Operator.AdjustWaits == 2 &&
                 Near(c.Pressure.Input2, Rig.Ch2Volts(539.4)), "④ pressure voltage: 再開 restarts ④ only (③ kept)");
         }
         {
@@ -647,6 +647,7 @@ internal static class AutoCalibrationTests
         public Action? OnDeviation, OnNotSettled, OnAdjustWait, OnResume;
         public int PressuresShown, CurrentAsked, DeviationAsked, NotSettledAsked, ZeroRetryAsked, ResumeAsked, MeterMissingAsked;
         public bool Adjusted;
+        public int AdjustWaits;
         public DateTimeOffset? AdjustedAt;
 
         public void ShowStatus(string text) => Statuses.Add(text);
@@ -670,7 +671,6 @@ internal static class AutoCalibrationTests
         {
             Instructions.Add(instruction);
             if (instruction == ManualBallValveSwitcher.AtmosphereInstruction) rig.Atmosphere = true;
-            if (instruction == ManualBallValveSwitcher.SupplyInstruction) { rig.Atmosphere = false; Adjusted = false; }
             return Task.FromResult(true);
         }
 
@@ -697,6 +697,10 @@ internal static class AutoCalibrationTests
 
         public Task<bool> WaitRegulatorAdjustedAsync(double targetKilopascals, CancellationToken cancellationToken)
         {
+            // 供給側へ戻す指示は「レギュレータを回して…」にまとめた(2026-11-20)。人はここで供給圧力をかけて合わせる。
+            AdjustWaits++;
+            rig.Atmosphere = false;
+            Adjusted = false;
             OnAdjustWait?.Invoke();
             cancellationToken.ThrowIfCancellationRequested();
             var adjusting = new TaskCompletionSource<bool>();

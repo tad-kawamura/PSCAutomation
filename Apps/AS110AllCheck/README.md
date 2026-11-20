@@ -196,6 +196,19 @@ dotnet run --project Apps/AS110AllCheck/Tests/SaveAvailability/SaveAvailability.
 dotnet run --project Apps/AS110AllCheck/Tests/SaveAvailability/SaveAvailability.csproj -c Release -- --no-mainform-display --with-excel
 ```
 
+校正画面を機器なしで開いて見る（2026-11-20。検査ではなく、画面の確認用。計器は模擬で、画面と手順はアプリの実物。機器・LOGGER には触らず、「適用」を押しても校正値は保存しない）:
+
+```powershell
+# 校正画面が開く。実機と同じ順に押して確かめる(ボールバルブ・レギュレーターの指示は「した」ことにして押す)
+dotnet run --project Apps/AS110AllCheck/Tests/CalibrationPreview -c Release
+# マルチメータ(7351E)が見つからないときの画面を見る
+dotnet run --project Apps/AS110AllCheck/Tests/CalibrationPreview -c Release -- --no-meter
+# 人が押さずに一通り進め、各場面の画像(png)を残す(1 分ほど)
+dotnet run --project Apps/AS110AllCheck/Tests/CalibrationPreview -c Release -- --screenshots Apps/AS110AllCheck/Tests/CalibrationPreview/画像
+```
+
+校正画面は 2026-11-20 に、押す順番が分かるよう直した（実機は未確認）。上から「手順 1 電流」「手順 2 圧力」「手順 3 適用」の枠に分け、いちばん上に「次にすること」を出し、次に押す所に色を付ける。「GC16 で読み取る」は型式を選ぶまで押せない。読み取りの画面は、いまどの段か（①→② / ③→④）を出し、人の操作を待っているあいだだけ指示の枠に色を付ける。案内だけで、押す順番は今までどおり問わない（手入力だけで「適用」もできる）。読み取りが済んだボタンは「マルチメータで読み取り直す」「GC16 で読み取り直す」に替わり、押すと「読み取り直しますか？」と聞く（既定「いいえ」）。同日、人の指示で指示の言い方も変えた: 「ボールバルブ①を閉じ②を開け」は「GC16 が大気圧になるようにして下さい」に、供給側へ戻す指示と「合わせた」の 2 画面は「レギュレータを回して目標圧力に設定して下さい」（ボタンは「設定した」）の 1 画面にまとめた。この README・SPEC の前の日付の所に出てくる「ボールバルブを…」「合わせた」は、この画面のこと。
+
 Excel の作業ブック（アプリの DLL を読み込んで実行。モードなしは図形の S/N 書き換えと判定シートの前面表示）:
 
 ```powershell

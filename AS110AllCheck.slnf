@@ -7,6 +7,7 @@
       "Apps\\AS110AllCheck\\Tests\\AppShutdown\\AppShutdownTests.csproj",
       "Apps\\AS110AllCheck\\Tests\\SaveAvailability\\SaveAvailability.csproj",
       "Apps\\AS110AllCheck\\Tests\\ExcelHeader\\ExcelHeaderTests.csproj",
+      "Apps\\AS110AllCheck\\Tests\\CalibrationPreview\\CalibrationPreview.csproj",
       "Wrappers\\WaveLogger.Automation\\WaveLogger.Automation.csproj",
       "Wrappers\\Common\\Common.csproj",
       "Wrappers\\Arduino\\Arduino.csproj",

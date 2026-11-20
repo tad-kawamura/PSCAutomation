@@ -28,6 +28,8 @@
   <ItemGroup>
     <!-- 終了処理の検査から内部の型を直接使う(元: Properties/AssemblyInfo.cs) -->
     <InternalsVisibleTo Include="AppShutdownTests" />
+    <!-- 校正画面を機器なしで開いて見る道具(Tests/CalibrationPreview) -->
+    <InternalsVisibleTo Include="CalibrationPreview" />
   </ItemGroup>
 
   <ItemGroup>

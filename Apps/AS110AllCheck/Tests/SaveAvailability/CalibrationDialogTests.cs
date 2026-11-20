@@ -198,6 +198,24 @@ internal static class CalibrationDialogTests
                 throw new Exception("Applying the reading asked whether to discard it");
         }
         Console.WriteLine("PASS calibration GUI asks before discarding a reading (either button); applying or closing without one does not ask");
+
+        // 2026-11-20: 読み取りが済んだボタンは「…読み取り直す」に替わり、押すと先に聞く(「いいえ」なら読み取りを始めない)。
+        asked.Clear();
+        answer = false;
+        using (var dialog = Open(true))
+        {
+            var boxes = (TextBox[])dialogType.GetField("_values", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(dialog)!;
+            Descendants(dialog).OfType<Button>().Single(b => b.Text == "マルチメータで読み取る").PerformClick();
+            var again = Descendants(dialog).OfType<Button>().Single(b => b.Text == "マルチメータで読み取り直す");
+            boxes[3].Text = "12345";
+            again.PerformClick();
+            if (asked.Count != 1 || !asked[0].Contains("電流を読み取り直しますか") || boxes[3].Text != "12345")
+                throw new Exception("Reading again must ask first, and いいえ must not read");
+            answer = true;
+            again.PerformClick();
+            if (asked.Count != 2 || boxes[3].Text != "29.9") throw new Exception("はい must read again and fill the values");
+        }
+        Console.WriteLine("PASS calibration GUI: a finished reading button becomes 読み取り直す and asks before reading again");
     }
 
     private static IEnumerable<Control> Descendants(Control parent)
