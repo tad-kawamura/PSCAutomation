@@ -88,7 +88,10 @@ internal static class DialogForegroundTests
             {
                 owner.TopMost = topMost;
                 Exception? failure = null;
-                int ticks = 0;
+                // 「まだ開いていない」回数(waited)と「開いてから確かめた」回数(checks)は別に数える(2026-11-20)。
+                // 1 つの変数で数えていたときは、最初の確認にダイアログが間に合わないと「最初の 1 回だけの確かめ」
+                // (S/N の一覧・入力欄)を飛ばし、前面要求も 3 回より減ったまま PASS と出る形だった。
+                int waited = 0, checks = 0;
                 bool dialogSeen = false;
                 using var timer = new System.Windows.Forms.Timer { Interval = 100 };
                 timer.Tick += (_, _) =>
@@ -98,7 +101,7 @@ internal static class DialogForegroundTests
                     if (dialog is null && dialogSeen) return;
                     if (dialog is null)
                     {
-                        if (++ticks > 30)
+                        if (++waited > 30)
                         {
                             Console.WriteLine("FAIL Dialog did not open: " + method);
                             // ここで終わると finally が動かないので、先に実 MainForm を終了処理を通して閉じ、一時の保存先も消す(2026-11-20)。
@@ -114,7 +117,7 @@ internal static class DialogForegroundTests
                     {
                         if (!dialog.TopMost) throw new Exception("Dialog is not topmost");
                         if (!IsAbove(dialog.Handle, owner.Handle)) throw new Exception("Dialog is behind MainForm");
-                        if (ticks == 0 && method == "ReleaseCompletedSerial")
+                        if (checks == 0 && method == "ReleaseCompletedSerial")
                         {
                             // S/N が番号順に並び、保護中はチェック付き、解除済み・記録なしはチェックなし。
                             var serials = dialog.Controls.OfType<CheckedListBox>().Single();
@@ -122,7 +125,7 @@ internal static class DialogForegroundTests
                             if (shown != "S/N 1+,S/N 2（解除済み）-,S/N 3+,S/N 5（記録なし）-")
                                 throw new Exception("Release dialog does not list serials with protection state in order: " + shown);
                         }
-                        if (ticks == 0 && dialog.Controls.OfType<TextBox>().FirstOrDefault() is { } input)
+                        if (checks == 0 && dialog.Controls.OfType<TextBox>().FirstOrDefault() is { } input)
                         {
                             input.Focus();
                             input.Text = "123";
@@ -136,7 +139,7 @@ internal static class DialogForegroundTests
                             throw new Exception("MainForm changed modal foreground/focus");
                     }
                     catch (Exception ex) { failure = ex; }
-                    if (++ticks >= 3 || failure is not null)
+                    if (++checks >= 3 || failure is not null)
                     {
                         timer.Stop();
                         dialog.DialogResult = DialogResult.Cancel;
