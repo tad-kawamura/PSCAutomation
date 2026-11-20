@@ -44,4 +44,12 @@
     <!-- 雛形への書き込み(Excel 不要)と、作業ブックの Excel 操作 -->
     <ProjectReference Include="..\..\Wrappers\Excel\Excel.csproj" />
   </ItemGroup>
+
+  <ItemGroup>
+    <!-- 非同期(async / await)の書き方の誤りをビルドのときに警告する(VSTHRD***)。exe には入らない。AGENTS.md「画面(WinForms)で待ちのある処理を書くとき」 -->
+    <PackageReference Include="Microsoft.VisualStudio.Threading.Analyzers" Version="18.12.1">
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+      <PrivateAssets>all</PrivateAssets>
+    </PackageReference>
+  </ItemGroup>
 </Project>
