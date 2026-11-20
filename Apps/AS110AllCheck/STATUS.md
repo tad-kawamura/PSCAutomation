@@ -45,7 +45,7 @@ updated: "2026-11-20"
 ## 決めたこと(直近)
 
 - 検査(`Tests/ExcelHeader`・`Tests/SaveAvailability`)のあとに窓の無い EXCEL が残る件を直した(2026-11-20)。残していたのは検査のコードで、アプリ本体と `Wrappers/Excel` は変えていない。検査で Excel の COM を直接触る所を足すときの形は README「検査のあと、窓の無い EXCEL が…」。アプリ本体で Excel が残るのは仕様の 2 つだけ: 画面に出ている Excel に人がほかのブックを開いているとき(閉じない)と、アプリが異常終了したとき(画面に出ていない Excel は次の起動で片づける。出ているものは人が閉じる)
-- 検査 `SaveAvailability` が途中で失敗して終わると窓の無い WAVE LOGGER(NRWL.exe)が 1 つ残る件も直した(2026-11-20)。失敗して抜けるときも実 MainForm を終了処理を通して閉じる(`Tests/SaveAvailability/MainFormCloser.cs`。検査のコードだけ)。`--no-dialogs` を付けない検査(`DialogForegroundTests`)は確かめていない
+- 検査 `SaveAvailability` が途中で失敗して終わると窓の無い WAVE LOGGER(NRWL.exe)が 1 つ残る件も直した(2026-11-20)。失敗して抜けるときも実 MainForm を終了処理を通して閉じる(`Tests/SaveAvailability/MainFormCloser.cs`。検査のコードだけ)。`--no-dialogs` を付けない検査(表示あり)も同日に確かめた: 3 回とも 77 件成功で、EXCEL・NRWL は残らない。確かめる前に、表示ありの検査が機器なしの PC で例外の画面(続行ボタン)を出して止まる件を直した(`Tests/SaveAvailability/DialogForegroundTests.cs`。検査のコードだけ。README「表示ありの検査が例外の画面で止まる」)。表示ありで失敗して終わる経路は確かめていない
 - 検査 `SaveAvailability`(`--no-dialogs --with-excel` と雛形 2 つ)が途中で止まっていた件を直した(2026-11-20)。原因は検査の並びで、アプリ本体は変えていない。2026-11-13 の `fad750b` で足した S/N の確定の確かめが S/N を空にして終わり、その後ろの Excel を使う確かめが「保存できる」を期待したままだった(同じコミットで「S/N が空は保存できない」にしている。そのとき `--with-excel` は実行していなかった)。Excel を使う確かめの前で S/N 123 の転送済みの状態を作り直すようにし、最後まで通る
 - 検査 `SaveAvailability`(`--no-dialogs --with-excel`)が 34 件のあと `ObjectDisposedException` で止まることがあった件を直した(2026-11-20)。原因は検査の側で、アプリ本体は変えていない。合否ポップアップは 0.4 秒で自動で閉じる(仕様)。PC が遅い回は、検査が Enter を送る前に閉じ、閉じた画面を見て止まった。間に合わなかった回は出し直してやり直す(`Tests/SaveAvailability/ExcelJudgmentFocusTests.cs`。詳しくは README「合否ポップアップの確かめが…」)
 

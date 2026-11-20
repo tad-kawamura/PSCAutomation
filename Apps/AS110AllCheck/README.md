@@ -192,7 +192,7 @@ dotnet run --project Apps/AS110AllCheck/Tests/Verification/AS110AllCheck.Verific
 dotnet run --project Apps/AS110AllCheck/Tests/AppShutdown/AppShutdownTests.csproj -c Release
 # 実際の MainForm と Excel(画面を出す。実行中はマウス・キーボードに触らない)
 dotnet run --project Apps/AS110AllCheck/Tests/SaveAvailability/SaveAvailability.csproj -c Release -- --no-dialogs --with-excel "<dir>/雛形/AS110-035雛形.xlsx" "<dir>/雛形/AS110データ調整・データ取り用.xdt"
-# 合否ポップアップ・前面表示も確かめる。--no-mainform-display は、実 MainForm を表示する検証(機器のない PC では初期化で止まる)だけを飛ばす
+# 合否ポップアップ・前面表示も確かめる。--no-mainform-display は、実 MainForm を表示する検証だけを飛ばす(機器のない PC で止まった件は 2026-11-20 に直した。下の「表示ありの検査が例外の画面で止まる」)
 dotnet run --project Apps/AS110AllCheck/Tests/SaveAvailability/SaveAvailability.csproj -c Release -- --no-mainform-display --with-excel
 ```
 
@@ -222,7 +222,9 @@ dotnet $e $d "<dir>/雛形/AS110-035雛形.xlsx" --optimization
 - 原因: 検査はセルや図形を Excel の COM で直接確かめます。その参照（sheet・Range など）を持ったまま Excel に終了を頼むと、Excel は終了の途中で固まるか異常終了しました（Windows のイベントログに EXCEL.EXE のエラーが残る）。アプリ本体は `Wrappers/Excel` の部品だけを使うので、この残り方はしません
 - 直し（`Tests/Shared/ExcelLeftovers.cs`）: 検査の本体を別のメソッド（`…Core` など）に分け、それが終わってから参照を返し（`ReleaseComReferences`）、そのあとで Excel を閉じる。例外は Main で受け、finally を走らせてから終わる。それでも残った Excel は、検査が起動したと分かっているもの（`Track` で覚えたもの）で画面に出ていないものだけ、検査の終わりに終了する（人が開いた Excel と、画面に出ている Excel には触らない）
 - 検査で Excel の COM を直接触る所を足すときは、同じ形にする（本体を別メソッドにして、起動した Excel を `ExcelLeftovers.Track` で覚える）
-- `Tests/SaveAvailability` が途中で失敗して終わると、窓の無い WAVE LOGGER（NRWL.exe）も 1 つ残りました。失敗して抜けるときも実 MainForm を終了処理を通して閉じるようにしました（`Tests/SaveAvailability/MainFormCloser.cs`、2026-11-20）。わざと失敗させた 2 回と成功の 6 回で、前後に NRWL・EXCEL は増えませんでした（`--no-dialogs` を付けない検査は確かめていません）
+- `Tests/SaveAvailability` が途中で失敗して終わると、窓の無い WAVE LOGGER（NRWL.exe）も 1 つ残りました。失敗して抜けるときも実 MainForm を終了処理を通して閉じるようにしました（`Tests/SaveAvailability/MainFormCloser.cs`、2026-11-20）。わざと失敗させた 2 回と成功の 6 回で、前後に NRWL・EXCEL は増えませんでした
+- `--no-dialogs` を付けない検査（表示あり。`DialogForegroundTests`）も同日に確かめました。この PC（機器なし）で `--with-excel` と雛形 2 つを付けて 3 回、どれも 77 件成功で、終わったあと EXCEL・NRWL は残りませんでした（EXCEL.EXE のエラーの記録も 0 件）。確かめる前に、下の「表示ありの検査が例外の画面で止まる」を直しています。失敗して終わる経路（`Environment.Exit` で終わる所を含む）は、表示ありでは確かめていません
+- 表示ありの検査が例外の画面で止まる件（2026-11-20 に直した。検査のコードだけ）: 直す前は 4 回のうち 3 回、7〜10 件のあと進まなくなりました（残りの 1 回は 36 件まで進んだ所で 45 秒の打ち切り）。窓を調べた 2 回は、どちらも「ハンドルされていない例外…Cannot access a disposed object. 'System.Windows.Forms.TextBox'」の画面（続行ボタン）が出て、人が押すのを待っていました（README の「機器のない PC では初期化で止まる」はこれ）。原因は `DialogForegroundTests.Run`。画面が出たあとの処理（`OnShown`。最後に接続確認を始める）は `Show` から戻ったあとで遅れて動くので、「接続確認を始めさせない」ための処理中の印を先に下ろしてしまい、接続確認が始まっていました。それが画面を閉じたあとで終わり、閉じた画面のログ欄に書こうとしました。印を下ろす前に `Application.DoEvents()` で先に動かすようにし、閉じるときも終了処理を通す（`MainFormCloser`）ようにしました。アプリ本体では、処理中に閉じようとすると処理が終わるまで待つので、この止まり方はしません。なお、止まった時点でも EXCEL・NRWL は残っていませんでした。閉じ方だけ元（終了処理を飛ばす）に戻した 1 回でも NRWL は残らなかったので、閉じ方の直しは念のためです
 - 確かめた範囲: この PC で ExcelHeader の 6 モードと SaveAvailability（`--no-dialogs --with-excel`。55 件のあと既知の所で失敗して終わる）を 2 巡。どれも前後で EXCEL のプロセスは増えず、EXCEL.EXE のエラーの記録も 0 件。直す前は、モードなし・`--reuse`・SaveAvailability で 1 つずつ残った
 
 移植前の確認結果は [整理・検証記録](docs/reorganization.md)、元の2026-10-19時点の検証記録は [ver3_検証結果.txt](docs/legacy/ver3_検証結果.txt) です。

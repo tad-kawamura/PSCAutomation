@@ -64,6 +64,10 @@ internal static class DialogForegroundTests
         Set("_operationInProgress", true);
         ((System.Windows.Forms.Timer)type.GetField("_statusHeartbeat", flags)!.GetValue(owner)!).Stop();
         owner.Show();
+        // 画面が出たあとの処理(OnShown。最後に接続確認を始める)は、Show から戻ったあとのメッセージ処理で遅れて動く。
+        // 処理中の印を下ろす前にここで動かして、接続確認を始めさせない(2026-11-20)。先に印を下ろすと、最初のダイアログを出している間に
+        // 接続確認が始まり、画面を閉じたあとで終わって、閉じた画面のログ欄に書こうとして例外の画面(続行ボタン)で検査が止まった。
+        Application.DoEvents();
         Set("_operationInProgress", false);
         // 保護解除の画面は保存先の完了記録から一覧を作るので、完了済み S/N 2 つと解除済み S/N 1 つを持つ一時の保存先を用意する。
         string saveRoot = Path.Combine(Path.GetTempPath(), "AS110AllCheck-release-" + Guid.NewGuid().ToString("N"));
@@ -133,8 +137,9 @@ internal static class DialogForegroundTests
         }
         finally
         {
-            Set("_shutdownComplete", true);
-            owner.Close();
+            // 終了処理を通して閉じる(2026-11-20)。終了処理を飛ばして閉じると、new MainForm() が始めた LOGGER 本体ソフトの事前起動が破棄されず、
+            // 窓なしの WAVE LOGGER(NRWL.exe)が残ることがある(MainFormCloser.cs)。
+            new MainFormCloser(owner).Dispose();
             try { Directory.Delete(saveRoot, true); } catch (IOException) { }
         }
     }

@@ -17,7 +17,7 @@ internal static class Program
     {
         if (args.Contains("--foreground-target")) { ForegroundProbe.RunTarget(); return; }
         if (args.Contains("--calibration-foreground")) { DialogForegroundTests.RunCalibrationOnly(); return; }
-        // --no-mainform-display: 実MainFormを表示する検証(機器の初期化が始まり、機器のないPCでは止まる)だけを飛ばし、合否ポップアップの検証は行う。
+        // --no-mainform-display: 実MainFormを表示する検証(機器のないPCで止まった件は 2026-11-20 に直した。DialogForegroundTests.cs)だけを飛ばし、合否ポップアップの検証は行う。
         if (!args.Contains("--no-dialogs") && !args.Contains("--no-mainform-display")) DialogForegroundTests.Run();
         var assembly=Assembly.Load("AS110AllCheck");
         CalibrationDialogTests.Run(assembly);
