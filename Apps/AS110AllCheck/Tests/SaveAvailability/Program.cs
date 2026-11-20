@@ -352,6 +352,12 @@ internal static class Program
             object model=assembly.GetType("PSCAutomation.Apps.AS110AllCheck.ProductModel")!.GetField("All")!.GetValue(null) is Array models?models.GetValue(0)!:throw new Exception();
             string output=Path.Combine(Path.GetTempPath(),"as110-save-ui-"+Guid.NewGuid()+".xlsx");
             object? session=null;
+            // ここより前の確かめは S/N を空にして終わる(S/N の確定の確かめ)。S/N が空の測定結果は保存を押せない決まりなので、
+            // 「S/N 123 を測って転送まで済んだ」状態をここで作り直す(下で開く Excel の S/N と同じ番号)。前の確かめの残りに頼らない。
+            flowType.GetMethod("Configure")!.Invoke(flow,["123",product]);
+            flowType.GetMethod("BeginMeasurement")!.Invoke(flow,[DateTime.Now]);
+            flowType.GetMethod("CaptureSucceeded")!.Invoke(flow,null);
+            flowType.GetMethod("TransferSucceeded")!.Invoke(flow,null);
             // 検査の本体。別の関数にしているのは、セルを直接見た参照を返してから Excel を閉じるため(ExcelLeftovers.ReleaseComReferences)。
             void RealExcelChecks()
             {
