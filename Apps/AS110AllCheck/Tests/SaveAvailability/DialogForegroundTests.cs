@@ -14,6 +14,18 @@ internal static class DialogForegroundTests
         return false;
     }
 
+    // 所有者のモーダルの画面を 1 つ返す(無ければ null)。2 つ以上あるときは、理由を tooMany に入れて全部を閉じさせる(2026-11-20)。
+    // 以前は SingleOrDefault で、2 つあるとタイマーの中で例外になり、例外の画面(続行ボタン)が出て人を待って止まった。
+    private static Form? FindModal(Form owner, out string? tooMany)
+    {
+        var modals = owner.OwnedForms.Where(f => f.Modal).ToArray();
+        tooMany = null;
+        if (modals.Length <= 1) return modals.FirstOrDefault();
+        tooMany = "More than one modal form is open: " + string.Join(" / ", modals.Select(f => f.Text));
+        foreach (var form in modals) form.DialogResult = DialogResult.Cancel;
+        return null;
+    }
+
     private static void ShowCalibration(Form owner)
     {
         var assembly = Assembly.Load("AS110AllCheck");
@@ -39,7 +51,8 @@ internal static class DialogForegroundTests
         using var timer = new System.Windows.Forms.Timer { Interval = 100 };
         timer.Tick += (_, _) =>
         {
-            var dialog = owner.OwnedForms.SingleOrDefault(f => f.Modal);
+            var dialog = FindModal(owner, out string? tooMany);
+            if (tooMany is not null) { dialogSeen = true; failure = tooMany; timer.Stop(); return; }
             if (dialog is null) { if (++ticks > 30) { Console.WriteLine("FAIL calibration dialog did not open"); Environment.Exit(1); } return; }
             dialogSeen = true;
             bool above = IsAbove(dialog.Handle, owner.Handle);
@@ -96,7 +109,8 @@ internal static class DialogForegroundTests
                 using var timer = new System.Windows.Forms.Timer { Interval = 100 };
                 timer.Tick += (_, _) =>
                 {
-                    var dialog = owner.OwnedForms.SingleOrDefault(f => f.Modal);
+                    var dialog = FindModal(owner, out string? tooMany);
+                    if (tooMany is not null) { dialogSeen = true; failure = new Exception(tooMany); timer.Stop(); return; }
                     // 見つけたダイアログが閉じたあとは数えない(閉じてから呼び出しが戻るまでの間に「開かなかった」と数えないため)。
                     if (dialog is null && dialogSeen) return;
                     if (dialog is null)
