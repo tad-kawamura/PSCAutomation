@@ -84,7 +84,7 @@ internal sealed partial class MainForm : Form
         {
             // 呼び出し元の操作が終わってから開始する。
             _excelPreparationTimer = new System.Windows.Forms.Timer { Interval = 500 };
-            _excelPreparationTimer.Tick += async (_, _) => await PrepareExcelWhenIdleAsync();
+            _excelPreparationTimer.Tick += (_, _) => PrepareExcelWhenIdleAsync().Forget();
         }
         _excelPreparationTimer.Start();
     }

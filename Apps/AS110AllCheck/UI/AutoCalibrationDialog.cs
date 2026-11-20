@@ -126,9 +126,15 @@ internal sealed class AutoCalibrationDialog : Form, IAutoCalibrationOperator
     // 読み取りを始めたか(WF1973 を DC にしたので、呼び出し側で発振器の設定を戻す)。
     public bool Started { get; private set; }
 
-    protected override async void OnShown(EventArgs e)
+    protected override void OnShown(EventArgs e)
     {
         base.OnShown(e);
+        RunProcedureAsync().Forget();
+    }
+
+    // 画面が出たら読み取りを始め、終わったら結果に合わせて閉じる。
+    private async Task RunProcedureAsync()
+    {
         _running = true;
         AutoCalibrationProcedure? procedure = null;
         try

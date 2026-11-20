@@ -42,13 +42,13 @@ internal sealed class CalibrationLoggerReader(ICalibrationLoggerSource logger, s
             await PrepareAsync(cancellationToken);
             long first = logger.GetDataCount();
             DateTimeOffset from = clock.Now;
-            await clock.Delay(_settings.VoltageAverageWindow + _settings.VoltageDeliveryMargin, cancellationToken);
+            await clock.DelayAsync(_settings.VoltageAverageWindow + _settings.VoltageDeliveryMargin, cancellationToken);
             DateTimeOffset deadline = clock.Now + _settings.VoltageReadTimeout;
             long last = logger.GetDataCount();
             // 点が少なければ、上限まで待つ(LOGGER から PC に届く分)。
             while (last - first < _settings.MinVoltagePoints && IsRecording(logger.GetState()) && clock.Now < deadline)
             {
-                await clock.Delay(_settings.LoggerPollInterval, cancellationToken);
+                await clock.DelayAsync(_settings.LoggerPollInterval, cancellationToken);
                 last = logger.GetDataCount();
             }
             if (last < first)
@@ -85,7 +85,7 @@ internal sealed class CalibrationLoggerReader(ICalibrationLoggerSource logger, s
         while (!IsStopped(state))
         {
             if (clock.Now >= deadline) throw new InvalidOperationException($"LOGGER が止まりません（状態 {state}）。");
-            await clock.Delay(_settings.LoggerPollInterval, cancellationToken);
+            await clock.DelayAsync(_settings.LoggerPollInterval, cancellationToken);
             state = logger.GetState();
         }
         DateTimeOffset started = clock.Now;
@@ -95,7 +95,7 @@ internal sealed class CalibrationLoggerReader(ICalibrationLoggerSource logger, s
         long? baseline = null;
         while (true)
         {
-            await clock.Delay(_settings.LoggerPollInterval, cancellationToken);
+            await clock.DelayAsync(_settings.LoggerPollInterval, cancellationToken);
             state = logger.GetState();
             if (IsRecording(state))
             {

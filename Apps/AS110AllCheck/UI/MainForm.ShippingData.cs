@@ -97,7 +97,9 @@ internal sealed partial class MainForm : Form
     private string JudgedBlockedText(bool afterMeasurement) =>
         JudgedPassUnreadable ? JudgedReadFailedText(afterMeasurement) : JudgedNotPassedText + "。";
 
-    private void SupplyPressureSelectionCommitted()
+    private void SupplyPressureSelectionCommitted() => SupplyPressureSelectionCommittedAsync().Forget();
+
+    private async Task SupplyPressureSelectionCommittedAsync()
     {
         bool shipping = _supplyPressureBox.SelectedIndex == 1;
         if (shipping == _shippingDataSelected) return;
@@ -105,14 +107,14 @@ internal sealed partial class MainForm : Form
         if (!CanChangeSetup) { _supplyPressureBox.SelectedIndex = _shippingDataSelected ? 1 : 0; return; }
         _shippingDataSelected = shipping;
         CloseJudgmentNotice();
-        RunOperation("供給圧力選択", () =>
+        await RunOperationAsync("供給圧力選択", async () =>
         {
             ConfigureProduct(requireSaveRoot: false);
             // 今は手動のレギュレーター。合わせてもらう文を返すだけ(将来アプリから設定できるレギュレーターに差し替える。Production/SupplyPressure.cs)。
-            // 手動のレギュレーターは待たずに終わるので、ここでは結果をそのまま待つ。
-            // 注意: 通信のある機器に差し替えるときは、この待ち方だと設定・読み返しのあいだ画面が固まる。
-            // そのときは RunOperation を RunOperationAsync に替えて await で待つ(SPEC「供給圧力の設定(将来用)」4。2026-11-13、人が承認)。
-            string regulator = SupplyPressureSettings.ApplyAsync(new ManualSupplyPressureRegulator(), _flow.Model).GetAwaiter().GetResult();
+            // 手動のレギュレーターは待たずに終わるので、ここも今までどおりその場で終わる。
+            // await で待つ形にしてあるので、通信のある機器に差し替えても、設定・読み返しのあいだ画面は固まらない
+            // (2026-11-20 に GetAwaiter().GetResult() から替えた。SPEC「供給圧力の設定(将来用)」4)。
+            string regulator = await SupplyPressureSettings.ApplyAsync(new ManualSupplyPressureRegulator(), _flow.Model);
             return (_flow.ShippingData ? $"{_flow.Model.SupplyPressure} kPa（データ取り２・{_flow.Model.Name} 出荷データ）" : $"{_flow.Model.SupplyPressure} kPa（データ取り）") + " / " + regulator;
         });
         UpdateControls();

@@ -66,7 +66,8 @@ internal sealed partial class MainForm : Form
             IReadOnlyList<WaveLoggerEdition> installed = WaveLoggerSession.GetInstalledEditions();
             if (installed.Count == 0) return;
             WaveLoggerEdition edition = installed.Count == 1 ? installed[0] : WaveLoggerEdition.Legacy;
-            _logger.BeginServerStartup(edition);
+            // 返ってくる Task(起動の完了)はここでは待たない。失敗しても例外にならず、接続確認の Initialize が結果を受け取る。
+            _ = _logger.BeginServerStartup(edition);
         }
         catch (Exception ex)
         {
@@ -169,7 +170,7 @@ internal sealed partial class MainForm : Form
         _wifiProfileComboBox.Visible = wifiSelected;
     }
 
-    private async void InitializeClicked(object? sender, EventArgs e) => await CheckConnectionsAsync();
+    private void InitializeClicked(object? sender, EventArgs e) => CheckConnectionsAsync().Forget();
 
     private async Task CheckConnectionsAsync()
     {
@@ -517,9 +518,9 @@ internal sealed partial class MainForm : Form
 
     private bool _loggerWindowClosed;
 
-    private async void RestoreWifiClicked(object? sender, EventArgs e)
+    private void RestoreWifiClicked(object? sender, EventArgs e)
     {
-        await RunOperationAsync("Wi-Fi復帰", async () =>
+        RunOperationAsync("Wi-Fi復帰", async () =>
         {
             ResetTemplate();
             _hardwareDetected = false;
@@ -529,9 +530,11 @@ internal sealed partial class MainForm : Form
 
             await _nrXConnection.RestorePreviousWifiAsync();
             return "元のWi-Fiへ戻しました。";
-        });
+        }).Forget();
     }
-    private async void StatusHeartbeatTick(object? sender, EventArgs e)
+    private void StatusHeartbeatTick(object? sender, EventArgs e) => StatusHeartbeatTickAsync().Forget();
+
+    private async Task StatusHeartbeatTickAsync()
     {
         RefreshExcelJudgment();
         if (!_operationInProgress && !_loggerWindowClosed && _logger.IsInitialized)

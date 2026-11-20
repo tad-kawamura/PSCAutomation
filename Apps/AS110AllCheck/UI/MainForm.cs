@@ -51,7 +51,7 @@ internal sealed partial class MainForm : Form
         StartPcDelayObservation();
     }
 
-    protected override async void OnShown(EventArgs e)
+    protected override void OnShown(EventArgs e)
     {
         base.OnShown(e);
         // 使う一時フォルダーに印を置いてから、前の起動の残りを片づける(SessionFolders)。
@@ -63,7 +63,7 @@ internal sealed partial class MainForm : Form
             AppendLog("設定ファイル：" + warning.Replace("\n", " "));
             ErrorNotification.Show(this, warning, "設定ファイルを読めませんでした", MessageBoxButtons.OK, MessageBoxIcon.Warning);
         }
-        await CheckConnectionsAsync();
+        CheckConnectionsAsync().Forget();
     }
 
 

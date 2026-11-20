@@ -59,7 +59,10 @@ internal sealed partial class MainForm
     internal void LogUnexpectedError(Exception ex, string output) =>
         ShutdownLog($"想定外のエラー：{ex.GetType().Name} / {ex.Message} / {output} / アプリを終了して起動し直してください。");
 
-    protected override async void OnFormClosing(FormClosingEventArgs e)
+    // 閉じるか取りやめるか(e.Cancel)は、下の処理が最初の待ち(await)に入る前に決まるので、ここへ戻った時点で決まっている。
+    protected override void OnFormClosing(FormClosingEventArgs e) => HandleFormClosingAsync(e).Forget();
+
+    private async Task HandleFormClosingAsync(FormClosingEventArgs e)
     {
         if (_shutdownComplete) { base.OnFormClosing(e); return; }
         // Windows の終了・サインアウトのときは聞かない(確認の画面で Windows の終了を止めないため)。

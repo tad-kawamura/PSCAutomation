@@ -55,9 +55,10 @@ internal sealed partial class MainForm : Form
     private void CloseArduinoPort()
     {
         if (!_arduino.IsConnected) return;
-        _arduino.DisconnectAsync().ContinueWith(
+        // 閉じ終わるのは待たない。失敗したときだけ診断ログに残す(続きは画面と関係ないので、スレッドプールで動かすと明示する)。
+        _ = _arduino.DisconnectAsync().ContinueWith(
             task => ArduinoDiagnosticLog.Write("CLOSE_ERROR", "切断後のポートを閉じられません / " + task.Exception?.GetBaseException().Message),
-            TaskContinuationOptions.OnlyOnFaulted);
+            CancellationToken.None, TaskContinuationOptions.OnlyOnFaulted, TaskScheduler.Default);
     }
 
     private void ArduinoNfStatusChanged()
@@ -83,7 +84,10 @@ internal sealed partial class MainForm : Form
         finally { _nfNotEnergizedAlertShown = false; }
     }
 
-    private async void ExecuteMeasurement(long? receivedAt = null, long? requestVersion = null)
+    private void ExecuteMeasurement(long? receivedAt = null, long? requestVersion = null) =>
+        ExecuteMeasurementAsync(receivedAt, requestVersion).Forget();
+
+    private async Task ExecuteMeasurementAsync(long? receivedAt, long? requestVersion)
     {
         if (_closeRequested || _nfNotEnergizedAlertShown || _operationInProgress || _leakRunning || _reviewStage || _flow.CaptureFailed || _flow.SaveFailed) return;
         long enteredAt = Stopwatch.GetTimestamp();

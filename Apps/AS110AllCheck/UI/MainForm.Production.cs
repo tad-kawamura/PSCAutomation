@@ -207,7 +207,7 @@ internal sealed partial class MainForm : Form
         ConfigureButton(_transferButton,"Excel転送",(_,_)=>TransferLatest());
         ConfigureButton(_saveButton,"保存",(_,_)=>SaveLatest());
         ConfigureButton(_leakOutputButton,"+30mA",(_,_)=>StartLeakOutput());
-        ConfigureButton(_leakButton,"漏れ試験実施",async (_,_)=>await LeakCheckAsync());
+        ConfigureButton(_leakButton,"漏れ試験実施",(_,_)=>LeakCheckAsync().Forget());
         ConfigureButton(_completeButton,"合格",(_,_)=>CompleteProduct());
         ConfigureButton(_remeasureButton,"再測定へ戻る",(_,_)=>{
             if(_operationInProgress || _leakRunning || _flow.SaveFailed)return;
@@ -602,20 +602,23 @@ internal sealed partial class MainForm : Form
     {
         long received=Stopwatch.GetTimestamp();
         if(IsDisposed || !IsHandleCreated)return;
-        BeginInvoke((Action)(async ()=> {
-            if(_closeRequested)return;
-            // PC でモーダルの画面を開いている間は受け付けない。画面を開いていても PC のボタンの「押せるか」(Enabled)は変わらないので、
-            // それだけを見ていると、画面の裏で測定・転送・保存が進んだ(例: 「転送設定」を開いたまま M5Stack で保存 → 「設定保存」で保存済みが取り消される。
-            // 2026-11-13、全体見直し・区切り 3)。
-            if(ModalDialogOpen){AppendLog($"M5Stack操作を受け付けません：{(char)('A'+button-1)} / PC で画面（設定・確認・通知）を開いています。閉じてからもう一度押してください。");return;}
-            if(_closeRequested || _repeatConfirmationShown || _operationInProgress || _leakRunning || !_arduino.MeasurementInputReady || token!=_boardToken || epoch!=_displayEpoch || Stopwatch.GetElapsedTime(received).TotalSeconds>=1)return;
-            if (_flow.Mode == TestMode.Motion && button != 1) return;
-            AppendLog($"M5Stack操作受付：{(char)('A'+button-1)} / モード={_flow.Mode} / revision={_flow.Revision} / 保存後工程={_reviewStage}");
-            if(_reviewStage){if(button==1 && _leakOutputButton.Enabled)StartLeakOutput();else if(button==2 && _leakButton.Enabled)await LeakCheckAsync();else if(button==3 && _completeButton.Enabled)CompleteProduct();}
-            else if(button==1 && _startButton.Enabled)ExecuteMeasurement(received,_arduino.MeasurementRequestVersion);
-            else if(button==2){if(_flow.CaptureFailed && _retryCaptureButton.Enabled)RetryCapture();else if(_transferButton.Enabled)TransferLatest();}
-            else if(button==3 && _saveButton.Enabled)SaveLatest();
-        }));
+        BeginInvoke((Action)(()=>HandleBoardButtonAsync(button,epoch,token,received).Forget()));
+    }
+    // M5Stack のボタンを、画面のスレッドで受け付ける(BoardButtonRequested から)。
+    private async Task HandleBoardButtonAsync(int button,long epoch,string token,long received)
+    {
+        if(_closeRequested)return;
+        // PC でモーダルの画面を開いている間は受け付けない。画面を開いていても PC のボタンの「押せるか」(Enabled)は変わらないので、
+        // それだけを見ていると、画面の裏で測定・転送・保存が進んだ(例: 「転送設定」を開いたまま M5Stack で保存 → 「設定保存」で保存済みが取り消される。
+        // 2026-11-13、全体見直し・区切り 3)。
+        if(ModalDialogOpen){AppendLog($"M5Stack操作を受け付けません：{(char)('A'+button-1)} / PC で画面（設定・確認・通知）を開いています。閉じてからもう一度押してください。");return;}
+        if(_closeRequested || _repeatConfirmationShown || _operationInProgress || _leakRunning || !_arduino.MeasurementInputReady || token!=_boardToken || epoch!=_displayEpoch || Stopwatch.GetElapsedTime(received).TotalSeconds>=1)return;
+        if (_flow.Mode == TestMode.Motion && button != 1) return;
+        AppendLog($"M5Stack操作受付：{(char)('A'+button-1)} / モード={_flow.Mode} / revision={_flow.Revision} / 保存後工程={_reviewStage}");
+        if(_reviewStage){if(button==1 && _leakOutputButton.Enabled)StartLeakOutput();else if(button==2 && _leakButton.Enabled)await LeakCheckAsync();else if(button==3 && _completeButton.Enabled)CompleteProduct();}
+        else if(button==1 && _startButton.Enabled)await ExecuteMeasurementAsync(received,_arduino.MeasurementRequestVersion);
+        else if(button==2){if(_flow.CaptureFailed && _retryCaptureButton.Enabled)RetryCapture();else if(_transferButton.Enabled)await TransferLatestAsync();}
+        else if(button==3 && _saveButton.Enabled)SaveLatest();
     }
     private void CaptureLatest()
     {
@@ -650,7 +653,8 @@ internal sealed partial class MainForm : Form
         if(_operationInProgress || !_flow.CaptureFailed)return;
         RunOperation("一時保存再試行",()=>{RefreshLoggerState();if(!LoggerReadyToStart)throw new InvalidOperationException("LOGGER停止を待ってください。");try { CaptureLatest(); } catch(InvalidDataException) { _flow.Invalidate(); throw; } return "最新結果を一時保存しました。";});
     }
-    private async void TransferLatest()
+    private void TransferLatest()=>TransferLatestAsync().Forget();
+    private async Task TransferLatestAsync()
     {
         if(!_transferButton.Enabled)return;
         if(!ConfirmRepeatAfterPass("Excel転送"))return;

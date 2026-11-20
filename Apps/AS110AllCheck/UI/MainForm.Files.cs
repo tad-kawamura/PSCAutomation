@@ -119,7 +119,9 @@ internal sealed partial class MainForm : Form
         }
     }
 
-    private async void ReferenceSelectionCommitted(object? sender, EventArgs e)
+    private void ReferenceSelectionCommitted(object? sender, EventArgs e) => LoadSelectedReferenceAsync().Forget();
+
+    private async Task LoadSelectedReferenceAsync()
     {
         if (!ConnectionsReady || !_calibrationApplied || _operationInProgress ||
             _referenceComboBox.SelectedItem is not ReferenceWaveform reference)

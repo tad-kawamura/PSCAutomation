@@ -487,7 +487,7 @@ internal static class AutoCalibrationTests
     private sealed class FakeClock : ICalibrationClock
     {
         public DateTimeOffset Now { get; private set; } = new(2026, 11, 13, 8, 0, 0, TimeSpan.FromHours(9));
-        public Task Delay(TimeSpan delay, CancellationToken cancellationToken)
+        public Task DelayAsync(TimeSpan delay, CancellationToken cancellationToken)
         {
             cancellationToken.ThrowIfCancellationRequested();
             Now += delay;
@@ -835,7 +835,7 @@ internal static class CalibrationLoggerReaderTests
     private sealed class Clock : ICalibrationClock
     {
         public DateTimeOffset Now { get; private set; } = new(2026, 11, 18, 9, 0, 0, TimeSpan.FromHours(9));
-        public Task Delay(TimeSpan delay, CancellationToken cancellationToken) { Now += delay; return Task.CompletedTask; }
+        public Task DelayAsync(TimeSpan delay, CancellationToken cancellationToken) { Now += delay; return Task.CompletedTask; }
     }
 
     // 模擬の LOGGER: Start から 0.2 秒後に記録が始まり、10 ms ごとに 1 点(値は Level)。PC に届く遅れは無し。

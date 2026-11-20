@@ -143,7 +143,7 @@ internal sealed class AutoCalibrationProcedure
     {
         SetCurrent(0);
         var meter = await EnsureCurrentMeterAsync(ct);
-        await _clock.Delay(_settings.CurrentSettle, ct);
+        await _clock.DelayAsync(_settings.CurrentSettle, ct);
         if (meter is not null) await TuneCurrentAsync(meter, AutoCalibrationStage.CurrentLow, ct);
         _currentLowCommandVolts = _currentVolts ?? 0;
         var (volts, milliamps) = await ReadCurrentPointAsync(AutoCalibrationStage.CurrentLow, meter, ct);
@@ -160,7 +160,7 @@ internal sealed class AutoCalibrationProcedure
     {
         SetCurrent(_settings.CommandVolts);
         var meter = await EnsureCurrentMeterAsync(ct);
-        await _clock.Delay(_settings.CurrentSettle, ct);
+        await _clock.DelayAsync(_settings.CurrentSettle, ct);
         if (meter is not null) await TuneCurrentAsync(meter, AutoCalibrationStage.CurrentHigh, ct);
         var (volts, milliamps) = await ReadCurrentPointAsync(AutoCalibrationStage.CurrentHigh, meter, ct);
         // 30 mA が出ていれば、低点からはっきり上がる(アンプの設定で約 1〜5 V)。「低点以下」だけを見ると、出力が止まっていても
@@ -220,7 +220,7 @@ internal sealed class AutoCalibrationProcedure
             next = Math.Clamp(next, lower, upper);
             _operator.ShowStatus($"{name} {F4(volts)} V で {F(milliamps)} mA。発振器を {F4(next)} V に直します。");
             AdjustCurrent(next);
-            await _clock.Delay(_settings.CurrentSettle, ct);
+            await _clock.DelayAsync(_settings.CurrentSettle, ct);
         }
     }
 
@@ -307,7 +307,7 @@ internal sealed class AutoCalibrationProcedure
             adjustments++;
             round++;
             _operator.ShowStatus($"③ GC16 をゼロ調整しました（{adjustments} 回目）。{_settings.ZeroSettle.TotalSeconds:0.#} 秒待って 0 点を確かめます。");
-            await _clock.Delay(_settings.ZeroSettle, ct);
+            await _clock.DelayAsync(_settings.ZeroSettle, ct);
             zero = await gauge.ReadKilopascalsAsync(ct);
             _operator.ShowPressure(zero);
             if (Math.Abs(zero) <= _settings.ZeroAllowedKpa) break;
@@ -372,14 +372,14 @@ internal sealed class AutoCalibrationProcedure
             while (!adjusted.IsCompleted)
             {
                 _operator.ShowPressure(await gauge.ReadKilopascalsAsync(ct));
-                await Task.WhenAny(adjusted, _clock.Delay(_settings.SampleInterval, ct));
+                await Task.WhenAny(adjusted, _clock.DelayAsync(_settings.SampleInterval, ct));
                 ct.ThrowIfCancellationRequested();
             }
         }
         finally
         {
             // 読み取りが失敗したときは、出したままの「合わせた」を引っ込める。
-            prompt.Cancel();
+            await prompt.CancelAsync();
         }
         if (!await adjusted) throw new OperationCanceledException("校正の自動読み取りを中止しました。");
     }
@@ -415,7 +415,7 @@ internal sealed class AutoCalibrationProcedure
                 deadline = start + _settings.WaitLimit;
                 continue;
             }
-            await _clock.Delay(_settings.SampleInterval, ct);
+            await _clock.DelayAsync(_settings.SampleInterval, ct);
         }
     }
 
@@ -710,13 +710,13 @@ internal interface IAutoCalibrationOperator
 internal interface ICalibrationClock
 {
     DateTimeOffset Now { get; }
-    Task Delay(TimeSpan delay, CancellationToken cancellationToken);
+    Task DelayAsync(TimeSpan delay, CancellationToken cancellationToken);
 }
 
 internal sealed class SystemCalibrationClock : ICalibrationClock
 {
     public DateTimeOffset Now => DateTimeOffset.Now;
-    public Task Delay(TimeSpan delay, CancellationToken cancellationToken) => Task.Delay(delay, cancellationToken);
+    public Task DelayAsync(TimeSpan delay, CancellationToken cancellationToken) => Task.Delay(delay, cancellationToken);
 }
 
 // 段階 1 の弁: 人にボールバルブを切り替えてもらい、OK を待つ(電磁弁①②は未選定。決まったこと 15)。
