@@ -122,7 +122,7 @@ PSCAutomation.sln      ← 全体
   - push の前の取り込みで `git pull --ff-only` が止まったとき(自分の未 push のコミットと、遠隔の新しいコミットが分かれたとき)は、`git pull --rebase` で自分のコミットを遠隔の先頭に載せ直してから push する。同じ箇所がぶつかったら、直し方を人に見せて決める
   - それ以外の人: `main` には直接コミットしない。作業用のブランチ(例: `feature/<内容>`)を切ってコミットし、そのブランチを push して `main` 向けのプルリクエストを作る。取り込み(マージ)は `tad-kawamura` が確認してから行う
 - 家の PC からの push(2026-11-14、人の決定): 家の PC では GitHub に `tad-kawamura` でサインインできないので、本人の別アカウント `tds-cell` で出す。git の名前(`user.name`)は `tad-kawamura` のままにし、上の「メインの作業者」と同じ扱いにする
-  - `tds-cell` をこのリポジトリの共同作業者(書き込み可)にして、家からも `main` に直接 push する。設定は人が行う(会社の PC で `tad-kawamura` として Settings → Collaborators から招待し、家で `tds-cell` として承諾する。同じ時刻でなくてよい)
+  - `tds-cell` をこのリポジトリの共同作業者(書き込み可)にして、家からも `main` に直接 push する。設定は人が行う(会社の PC で `tad-kawamura` として Settings → Collaborators から招待し、家で `tds-cell` として承諾する。同じ時刻でなくてよい)。2026-11-22 に済み(承諾も済み、家から `tds-cell` で `main` に push できた)
   - 共同作業者になるまで(`git push origin main` が `denied to tds-cell` の 403 で断られるあいだ)は、同じ push を繰り返さない。フォーク `tds-cell/PSCAutomation`(家の PC での送り先の名前は `fork`)へ作業用のブランチを push し、人がブラウザで `main` 向けのプルリクエストを作る
   - そのプルリクエストは、`tad-kawamura` が **「Create a merge commit」** で取り込む。「Squash and merge」「Rebase and merge」はコミットが作り直され、家の PC の `main` と食い違うので使わない
   - サインインは人がする(AI はパスワードやコードを入れない)。Git の認証画面は、ほかの窓の後ろに出ることがある

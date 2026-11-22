@@ -132,6 +132,16 @@ internal static class AutoCalibrationTests
                 "communication lost in ①: no GC16 search, no valve notice, the 7351E is released");
         }
         {
+            // ① で NR-500 の電圧が読めなくても、同時に始めた 7351E の読み取りが終わってから 7351E を閉じる(読み取りの途中で閉じない。2026-11-22)。
+            var rig = new Rig();
+            rig.CurrentMeters.Meter.SlowRead = TimeSpan.FromMilliseconds(300);
+            rig.Meter.FailNext = true;
+            rig.Operator.ResumeAnswers.Enqueue(false);
+            await ExpectCanceled(rig, model, "voltage read fails while the 7351E is still reading: 中止 stops the automatic reading");
+            Check(rig.CurrentMeters.Meter.Disposals == 1 && !rig.CurrentMeters.Meter.DisposedWhileReading && rig.Operator.ResumeMessages[0].Contains("無効値"),
+                "voltage read fails in ①: the 7351E is closed only after its reading finished, and the voltage failure is the one shown");
+        }
+        {
             var rig = new Rig();
             rig.Locator.Fail = true; // GC16 が見つからない
             rig.Operator.ResumeAnswers.Enqueue(false);
@@ -553,18 +563,38 @@ internal static class AutoCalibrationTests
         public double ZeroMilliamps = 0.01;
         public string Name => "7351E";
 
+        // 指定すると、読み取りに本当にこの時間かかる(別のスレッドで。読み取りの途中で閉じないことの確かめ。2026-11-22)。
+        public TimeSpan? SlowRead;
+        private int _inFlight;
+        public bool DisposedWhileReading;
+
         public Task<double> ReadMilliampsAsync(CancellationToken cancellationToken)
+        {
+            double milliamps = Milliamps();
+            if (SlowRead is not { } slow) return Task.FromResult(milliamps);
+            Interlocked.Increment(ref _inFlight);
+            return Task.Run(async () =>
+            {
+                try { await Task.Delay(slow); return milliamps; }
+                finally { Interlocked.Decrement(ref _inFlight); }
+            });
+        }
+
+        private double Milliamps()
         {
             Reads++;
             double volts = rig.Output.Volts ?? 0;
             // MilliampsPerVolt を指定したときは、0 V 付近も含めて直線(ZeroMilliamps + LowOffsetMilliamps + 電圧 × 傾き。① の微調整の確かめ)。
-            double milliamps = rig.AmplifierOff ? 0
+            return rig.AmplifierOff ? 0
                 : MilliampsPerVolt is { } perVolt ? ZeroMilliamps + LowOffsetMilliamps + volts * perVolt
                 : volts > 0 ? HighMilliamps : ZeroMilliamps + LowOffsetMilliamps;
-            return Task.FromResult(milliamps);
         }
 
-        public void Dispose() => Disposals++;
+        public void Dispose()
+        {
+            Disposals++;
+            if (Volatile.Read(ref _inFlight) > 0) DisposedWhileReading = true;
+        }
     }
 
     private sealed class FakeCurrentMeterLocator(Rig rig) : ICurrentMeterLocator

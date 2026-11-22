@@ -237,7 +237,20 @@ internal sealed class AutoCalibrationProcedure
             return (await ReadVoltsAsync(_settings.CurrentChannel, "電流", ct), value);
         }
         var reading = meter.ReadMilliampsAsync(ct);
-        float volts = await ReadVoltsAsync(_settings.CurrentChannel, "電流", ct);
+        float volts;
+        try
+        {
+            volts = await ReadVoltsAsync(_settings.CurrentChannel, "電流", ct);
+        }
+        catch
+        {
+            // 電圧の読み取りが失敗・中止しても、7351E の読み取りが終わるのを待ってから抜ける。このあと 7351E との通信を閉じるが、
+            // 部品(Adcmt7351ESession)は同時に使われるのを防いでいないので、読み取りの途中で閉じないようにする(2026-11-22)。
+            // 電流の値はもう使わないので、読み取りの失敗はここでは見ない(元の失敗を知らせる)。
+            try { await reading; }
+            catch (Exception) { }
+            throw;
+        }
         double milliamps = await reading;
         if (!double.IsFinite(milliamps)) throw new InvalidDataException($"マルチメータ（{meter.Name}）の電流を読めません。");
         return (volts, milliamps);
