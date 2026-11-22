@@ -224,6 +224,12 @@ dotnet $e $d "<dir>/雛形/AS110-035雛形.xlsx" --optimization
 
 `Tests/ExcelHeader` と `Tests/SaveAvailability` は、Excel が応答しない（別の Excel が残っている、画面を触った）と `0x80010001`（呼び出し拒否）や前面表示の失敗で止まることがあります。Excel を閉じ、画面に触らずに再実行してください。
 
+前面表示の準備の失敗（`Cannot establish external foreground test condition`）は、画面に触っていなくてもたまに出ました（2026-11-22 は、ビルドし直した直後の 10 回のうち 1 回。起動した直後の Excel を前面にできなかった）。同日、検査の側でやり直すようにしました（`Tests/SaveAvailability/ForegroundProbe.cs` の `Activate`。検査のコードだけ）。
+
+- 直し: 前面にできなかったら 0.2 秒待ってやり直す（10 回まで。3 回目からは、今の前面の窓の入力につないでから頼む）。やり直して前面にできた回は `RETRY external window came to the foreground on attempt N` と出す。最後までだめなら、そのとき前面にいた窓（プロセス名・題）を付けて今までどおり失敗にする
+- 確かめ: 直したあと、ビルドし直した直後の 1 回目を 12 回（`--no-dialogs --with-excel` と雛形 2 つ）、どれも 68 件成功。表示あり（`--with-excel` と雛形 2 つ）も 2 回、どちらも 78 件成功。検査のあと EXCEL・NRWL は残らない。ただし、この 14 回では前面にできない回そのものが 1 回も起きなかった（やり直しは 0 回）。やり直しの道は、検査を一時的に書き換えて 1 回目の要求を飛ばした 1 回で確かめた（2 回目で前面になり、68 件成功）
+- 未確認: 実際に前面にできなかった回で、やり直しが効くこと（原因は分かっていない。次に出たら、失敗の文に付く前面の窓の名前を見る）
+
 合否ポップアップの確かめが `ObjectDisposedException` で止まることがありました（`SaveAvailability --with-excel` で 34 件通ったあと。2026-11-20 に 2 回、どちらもビルドし直した直後の 1 回目）。同日に直しました。
 
 - 原因: 合否ポップアップは 0.4 秒で自動で閉じます（仕様。`MainForm.JudgmentNoticeDisplayMilliseconds`）。検査（`Tests/SaveAvailability/ExcelJudgmentFocusTests.cs`）はポップアップを出してから入力先を確かめて Enter を送りますが、ここまでに 0.4 秒以上かかると先に自動で閉じ、閉じた画面を見て止まりました。アプリ本体の不具合ではありません
