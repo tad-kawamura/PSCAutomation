@@ -53,6 +53,21 @@ internal static class MeasurementProfileTests
             && settings.ForModel(m006, TestMode.Adjustment).ExpectedSamples == 7000 && settings.ForModel(m006, TestMode.Adjustment).Compression == 7,
             "AS110-006 production follows the transfer settings times two, adjustment follows them as is");
 
+        // Excel 雛形: AS110-035・015 のデータ調整だけ「_データ調整」の雛形。データ取りとほかの型式は今までどおり(2026-11-24、人の指示)。
+        var m015 = ProductModel.All.First(m => m.Name == "AS110-015");
+        Check(MeasurementProfile.ExcelTemplateName(m035, TestMode.Adjustment) == "AS110-035雛形_データ調整.xlsx"
+            && MeasurementProfile.ExcelTemplateName(m015, TestMode.Adjustment) == "AS110-015雛形_データ調整.xlsx",
+            "AS110-035 and AS110-015 use their adjustment Excel templates in adjustment");
+        Check(MeasurementProfile.ExcelTemplateName(m035, TestMode.Production) == "AS110-035雛形.xlsx"
+            && MeasurementProfile.ExcelTemplateName(m015, TestMode.Production) == "AS110-015雛形.xlsx",
+            "AS110-035 and AS110-015 keep their Excel templates in production");
+        Check(ProductModel.All.Where(m => m.Name is not ("AS110-035" or "AS110-015")).All(m => Enum.GetValues<TestMode>().All(mode =>
+                MeasurementProfile.ExcelTemplateName(m, mode) == m.Name + "雛形.xlsx" && !MeasurementProfile.UsesAdjustmentExcelTemplate(m, mode))),
+            "other models use one Excel template in every mode");
+        Check(MeasurementProfile.AllExcelTemplateNames().Count() == ProductModel.All.Length + 2
+            && MeasurementProfile.AllExcelTemplateNames().Contains("AS110-015雛形_データ調整.xlsx"),
+            "transfer settings check covers the adjustment Excel templates too");
+
         // 漏れ試験の最大値の下限: AS110-006 は 550 kPa。前の版の設定ファイル(006 が無い)にも足す。人が入れた値は変えない。
         Check(new TransferSettings().LeakMaximumLowerLimitKpa["AS110-006"] == 550.0, "AS110-006 leak maximum lower limit defaults to 550 kPa");
         var old = TransferSettings.FromJson("{\"LeakMaximumLowerLimitKpa\":{\"AS110-035\":531}}");

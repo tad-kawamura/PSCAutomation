@@ -23,4 +23,22 @@ internal static class MeasurementProfile
     // データ調整・データ取りの LOGGER 雛形のファイル名(拡張子なし)。型式専用なら共用の名前の後ろに「_型式名」を付ける。
     public static string LoggerTemplateName(string commonName, ProductModel model, TestMode mode) =>
         HasOwnLoggerTemplate(model, mode) ? $"{commonName}_{model.Name}" : commonName;
+
+    // データ調整だけ別の Excel 雛形を使う型式(2026-11-24、人の指示。SPEC「データ調整用の Excel 雛形を分ける」)。
+    // データ調整のときだけ Excel の合格の値を少し変えるため。データ取りの雛形は今までどおり。分ける型式を足すときはここに足す。
+    private static readonly HashSet<string> AdjustmentExcelTemplateModels =
+        new(StringComparer.OrdinalIgnoreCase) { "AS110-035", "AS110-015" };
+
+    // そのモードでデータ調整用の Excel 雛形を使うか(データ調整かつ、分ける型式)。
+    public static bool UsesAdjustmentExcelTemplate(ProductModel model, TestMode mode) =>
+        mode == TestMode.Adjustment && AdjustmentExcelTemplateModels.Contains(model.Name);
+
+    // Excel 雛形のファイル名。ふつうは「<型式名>雛形.xlsx」、データ調整用は「<型式名>雛形_データ調整.xlsx」。
+    // データ調整用が無いときは止める(データ取りの雛形へは戻さない。合格の値の違う雛形で黙って判定しないため。2026-11-24、人の決定 B1)。
+    public static string ExcelTemplateName(ProductModel model, TestMode mode) =>
+        model.Name + (UsesAdjustmentExcelTemplate(model, mode) ? "雛形_データ調整.xlsx" : "雛形.xlsx");
+
+    // 雛形フォルダーに置くことのある Excel 雛形の名前すべて(転送設定のシート名を確かめるのに使う)。
+    public static IEnumerable<string> AllExcelTemplateNames() =>
+        ProductModel.All.SelectMany(m => new[] { ExcelTemplateName(m, TestMode.Production), ExcelTemplateName(m, TestMode.Adjustment) }).Distinct();
 }

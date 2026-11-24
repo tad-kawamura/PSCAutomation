@@ -144,8 +144,8 @@ internal sealed partial class MainForm : Form
                 // 出荷データは工程の型式(AS110-116B350)ではなく、参照波形で選んだ型式(AS110-116B)と比べる(同じ参照波形の選び直しを止めない)。
                 if (!canChangeSetup && model != _flow.TemplateModel)
                     throw new InvalidOperationException("測定結果が残っている間は型式（参照波形）を変えられません。「設定変更（測定を破棄）」を先に押してください。");
-                // Excel 雛形の無い型式は、測る前に止める(転送してから気づかないように)。
-                ExcelTemplatePathFor(model);
+                // Excel 雛形の無い型式は、測る前に止める(転送してから気づかないように)。データ調整用を分ける型式は、いまのモードの雛形で確かめる。
+                ExcelTemplatePathFor(model, _flow.Mode);
                 // LOGGER 雛形も型式とモードで決まる(AS110-006 のデータ取りは専用の 13000 点。MeasurementProfile)。専用の雛形が無ければここで止める。
                 string loggerTemplate = GetDetectedTemplatePath(model);
                 // 型式が替わったら供給圧力は型式の値(データ取り)に戻す(出荷データの 350 kPa は型式ごとの工程のため)。

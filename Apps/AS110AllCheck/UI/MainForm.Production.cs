@@ -377,7 +377,12 @@ internal sealed partial class MainForm : Form
         if (templatePurposeChanged && !(_templateLoaded && _calibrationApplied && _workingTemplateSource is not null)) ResetTemplate();
         RunOperation("モード選択",()=> { ReloadTemplateForMode(templatePurposeChanged); ConfigureProduct(requireSaveRoot:false); StopLeakOutput();_generator?.PrepareBurst(CurrentBurstSettings);
             // データ調整で校正を済ませてからデータ取りへ移ったときは、前回の保存先が残っていればここで校正記録を書く。
-            WriteCalibrationRecordIfReady();return _modeBox.Text; });
+            WriteCalibrationRecordIfReady();
+            // 参照波形を選んだあとでデータ調整へ替えたときも、データ調整用の Excel 雛形(AS110-035・015)が無いことを測る前に知らせる
+            // (参照波形を選んだときの確かめと同じ。モードは替えたまま。置けばそのまま進められる。2026-11-24、人の決定 B1)。
+            if(_selectedReferencePath is not null && MeasurementProfile.UsesAdjustmentExcelTemplate(_flow.TemplateModel,_flow.Mode))
+                ExcelTemplatePathFor(_flow.TemplateModel,_flow.Mode);
+            return _modeBox.Text; });
         UpdateControls();
         // 接続確認が済んでいれば、モードを選んだ流れで校正画面を開く(まだなら接続確認の終わりで開く)。
         OpenCalibrationIfPending();
@@ -670,7 +675,7 @@ internal sealed partial class MainForm : Form
             _excel ??= new ExcelWorkSession();
             // データ取りでも S/N が空(データ調整の結果のままデータ取りへ移った)なら、データ調整と同じ「-」を見出しに書く。
             // 空文字を書くと見出しの「S/N 数字」が無くなり、S/N を入れた後の転送で置き換えられず、S/N の無い Excel・PDF が保存される(事前準備が S/N を待つのと同じ理由)。
-            _excel=ExcelWorkSession.Open(ExcelTemplatePath,ExcelWorkPath,_capturePath,ModelTransferSettings,_flow.Model,
+            _excel=ExcelWorkSession.Open(ExcelTemplatePathWithLog(),ExcelWorkPath,_capturePath,ModelTransferSettings,_flow.Model,
                 _flow.Mode==TestMode.Production && !_flow.SerialMissing?_flow.Serial:"-",_flow.MeasuredAt,_excel,AppendLog);
             RecordExcelProcess();
             var calculationTimer=Stopwatch.StartNew();

@@ -9,22 +9,36 @@ internal sealed partial class MainForm : Form
 
     // Excel 雛形は型式ごとに「<型式名>雛形.xlsx」(例: AS110-035雛形.xlsx)。無い型式はほかの型式の判定式で判定しないよう止める
     // (2026-11-12、人の指示。それまでは「<型式名>.xlsx」が無ければ AS110-035 用の「雛形.xlsx」を使っていた)。
-    private static string ExcelTemplateFileName(ProductModel model) => model.Name + "雛形.xlsx";
-
-    private static string ExcelTemplatePathFor(ProductModel model)
+    // AS110-035・015 のデータ調整は「<型式名>雛形_データ調整.xlsx」を使い、無ければ止める(2026-11-24、人の指示。MeasurementProfile.ExcelTemplateName)。
+    private static string ExcelTemplatePathFor(ProductModel model, TestMode mode)
     {
-        string path = Path.Combine(TemplateFolderPath, ExcelTemplateFileName(model));
+        string name = MeasurementProfile.ExcelTemplateName(model, mode);
+        string path = Path.Combine(TemplateFolderPath, name);
         if (!File.Exists(path))
-            throw new FileNotFoundException($"{ExcelTemplateFileName(model)} がありません。雛形フォルダーに置いてください。", path);
+            throw new FileNotFoundException($"{name} がありません。雛形フォルダーに置いてください。", path);
         return path;
     }
 
     // いま雛形フォルダーにある Excel 雛形(転送設定のシート名を確かめるのに使う)。出荷データの型式は専用の雛形を持たないので、あるものだけ。
     private static string[] ExistingExcelTemplates() =>
-        ProductModel.All.Select(m => Path.Combine(TemplateFolderPath, ExcelTemplateFileName(m))).Where(File.Exists).ToArray();
+        MeasurementProfile.AllExcelTemplateNames().Select(name => Path.Combine(TemplateFolderPath, name)).Where(File.Exists).ToArray();
 
     // 出荷データ(AS110-116B350)は判定した型式(AS110-116B)の雛形に転送する(TemplateModel)。
-    private string ExcelTemplatePath => ExcelTemplatePathFor(_flow.TemplateModel);
+    private string ExcelTemplatePath => ExcelTemplatePathFor(_flow.TemplateModel, _flow.Mode);
+
+    // 使う Excel 雛形が替わったら(型式・モードを替えたとき)ログに出す。どちらの雛形で判定したかを後から分かるようにする。
+    private string? _loggedExcelTemplateName;
+    private string ExcelTemplatePathWithLog()
+    {
+        string path = ExcelTemplatePath;
+        string name = Path.GetFileName(path);
+        if (!string.Equals(name, _loggedExcelTemplateName, StringComparison.OrdinalIgnoreCase))
+        {
+            AppendLog("Excel 雛形：" + name);
+            _loggedExcelTemplateName = name;
+        }
+        return path;
+    }
 
     private string ExcelWorkPath => Path.Combine(_sessionFolder, "work.xlsx");
 
@@ -106,7 +120,7 @@ internal sealed partial class MainForm : Form
         try
         {
             _excel ??= new ExcelWorkSession();
-            _excel = await ExcelWorkSession.PrepareAsync(ExcelTemplatePath, ExcelWorkPath, ModelTransferSettings, _flow.Model,
+            _excel = await ExcelWorkSession.PrepareAsync(ExcelTemplatePathWithLog(), ExcelWorkPath, ModelTransferSettings, _flow.Model,
                 _flow.Mode == TestMode.Production ? _flow.Serial : "-", _excel, AppendLog);
         }
         catch (Exception ex) when (!_closeRequested)
