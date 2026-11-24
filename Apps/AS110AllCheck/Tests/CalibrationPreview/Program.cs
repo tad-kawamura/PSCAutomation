@@ -11,6 +11,9 @@ using PSCAutomation.Wrappers.LoggerFiles;
 //       校正画面が開く。実機と同じ順に押して確かめる(ボールバルブ・レギュレーターの指示は「した」ことにして押す)。
 //   dotnet run --project Apps/AS110AllCheck/Tests/CalibrationPreview -- --no-meter
 //       マルチメータ(7351E)が見つからないときの画面(「電流を手で入れる」)を見る。
+//   dotnet run --project Apps/AS110AllCheck/Tests/CalibrationPreview -- --no-gc16
+//       「GC16 で読み取る」の最初の 1 回だけ GC16 が見つからない。「再開」で続けられることと、「中止」を押したあとの止まった画面の
+//       「もう一度読み取る」で ③ からやり直せることを見る。
 //   dotnet run --project Apps/AS110AllCheck/Tests/CalibrationPreview -- --screenshots <フォルダー>
 //       人が押さずに一通り進め、各場面の画像(png)をフォルダーに残す。
 internal static class Program
@@ -22,6 +25,7 @@ internal static class Program
         Application.EnableVisualStyles();
         Application.SetCompatibleTextRenderingDefault(false);
         bool noMeter = args.Contains("--no-meter");
+        bool noGauge = args.Contains("--no-gc16");
         int shots = Array.IndexOf(args, "--screenshots");
         if (shots >= 0)
         {
@@ -30,7 +34,7 @@ internal static class Program
         }
         while (true)
         {
-            var rig = new SimulatedRig { MeterMissing = noMeter };
+            var rig = new SimulatedRig { MeterMissing = noMeter, GaugeMissingOnce = noGauge };
             using var dialog = Preview.OpenCalibration(rig);
             DialogResult result = dialog.ShowDialog();
             string message = result == DialogResult.OK
@@ -86,6 +90,8 @@ internal sealed class SimulatedRig : IPressureGaugeLocator, ICurrentCommandOutpu
     private double _zeroOffset;
 
     public bool MeterMissing { get; init; }
+    // 最初の 1 回だけ GC16 が見つからない(USB の挿し忘れ。挿して「もう一度読み取る」を押した形)。
+    public bool GaugeMissingOnce { get; set; }
     public DateTimeOffset? FirstConfirmedAt { get; private set; }
 
     private double Milliamps => (_outputOn ? _commandVolts * 5.97 + 0.14 : 0) + Noise(0.004);
@@ -136,6 +142,11 @@ internal sealed class SimulatedRig : IPressureGaugeLocator, ICurrentCommandOutpu
     async Task<IPressureGauge> IPressureGaugeLocator.FindAsync(CancellationToken cancellationToken)
     {
         await Task.Delay(800, cancellationToken);
+        if (GaugeMissingOnce)
+        {
+            GaugeMissingOnce = false;
+            throw new InvalidOperationException("GC16 が見つかりません。電源・変換ケーブル・本体の通信設定(S-1 が rS)を確認してください。（模擬）");
+        }
         FirstConfirmedAt ??= DateTimeOffset.Now.AddMinutes(-12);
         return new Gauge(this);
     }
@@ -191,6 +202,7 @@ internal static class Screenshots
     private static readonly HashSet<string> Seen = [];
     private static DateTime _autoShownAt;
     private static Form? _autoDialog;
+    private static bool _abortAtResume;
 
     public static int Run(string folder)
     {
@@ -219,6 +231,17 @@ internal static class Screenshots
             ShowOffScreen(dialog);
             Seen.Clear();
             Button("マルチメータで読み取る", dialog).PerformClick();
+        }
+        // GC16 の USB を挿し忘れて「再開・中止」が出たところで「中止」を押し、止まった画面の「もう一度読み取る」で続ける(2026-11-24)。
+        using (var dialog = Preview.OpenCalibration(new SimulatedRig { GaugeMissingOnce = true }))
+        {
+            ShowOffScreen(dialog);
+            Seen.Clear();
+            _abortAtResume = true;
+            Descendants(dialog).OfType<ComboBox>().Single().SelectedIndex = 1;
+            Application.DoEvents();
+            Button("GC16 で読み取る", dialog).PerformClick();
+            Capture(dialog, "校正画面_GC16をやり直したあと");
         }
         Console.WriteLine($"{_count} 枚の画像を残しました：{folder}");
         return 0;
@@ -253,6 +276,21 @@ internal static class Screenshots
             return;
         }
         string texts = string.Join("・", choices.Select(b => b.Text));
+        // 「再開・中止」で中止を押す場面(止まった画面を出すため。1 回だけ)。
+        if (_abortAtResume && choices.Any(b => b.Text == "再開"))
+        {
+            _abortAtResume = false;
+            Capture(dialog, $"読み取り_{kind}_再開・中止（中止を押す）");
+            choices.First(b => b.Text == "中止").PerformClick();
+            return;
+        }
+        // 止まった画面の「もう一度読み取る」は 1 回だけ押す(2 回目も止まったら閉じる。押し続けて終わらなくならないように)。
+        if (texts == AutoCalibrationDialog.RetryLabel && !Seen.Add(kind + "/やり直した"))
+        {
+            Capture(dialog, $"読み取り_{kind}_やり直しても止まった");
+            Descendants(dialog).OfType<Button>().First(b => b.Text == "閉じて手入力に戻る").PerformClick();
+            return;
+        }
         var input = Descendants(dialog).OfType<TextBox>().FirstOrDefault(t => !t.ReadOnly && t.Visible);
         if (Seen.Add(kind + "/" + texts + "/" + (input is not null)))
             Capture(dialog, $"読み取り_{kind}_{(input is not null ? "電流を手で入れる" : texts)}");

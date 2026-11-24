@@ -52,7 +52,9 @@ internal sealed partial class MainForm : Form
         using var dialog = new AutoCalibrationDialog(kind, model,
             calibrationOperator => new AutoCalibrationProcedure(GaugeLocator, new GeneratorCurrentOutput(generator), _currentMeterLocator, reader,
                 new ManualBallValveSwitcher(calibrationOperator), calibrationOperator, new SystemCalibrationClock()),
-            CalibrationInProgressMarker.Default, line => AppendLog("校正の読み取り：" + line));
+            CalibrationInProgressMarker.Default, line => AppendLog("校正の読み取り：" + line),
+            // M5Stack が切れた・発振器の出力状態が分からないときは、読み取りの画面でやり直させない(「確認」でつなぎ直す)。
+            canRetry: () => ConnectionsReady && ReferenceEquals(_generator, generator));
         _autoCalibrationDialog = dialog;
         try
         {

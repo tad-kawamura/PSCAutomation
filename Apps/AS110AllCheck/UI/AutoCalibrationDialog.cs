@@ -10,14 +10,22 @@ namespace PSCAutomation.Apps.AS110AllCheck;
 // 人の操作を待っているあいだだけ色を付けて「あなたの操作です」と出す。自動で進んでいるあいだは「操作は要りません」と出す。
 // いつでも「中止して手入力に戻る」で止められる。止まったときは後片付け(WF1973 の出力停止・GC16 を RM,0・7351E を離す・ボールバルブを測定の向き)をしてから、
 // 校正画面の手入力に戻る(実機で確かめるまで、自動がうまく行かなくても手入力で必ず測定へ進める。人の指示)。
+// 2026-11-24: 止まったあと、その場で「もう一度読み取る」を押せるようにした(現場で GC16 の USB を挿し忘れて止まったとき、
+// いきなり手入力を促された。人の指摘)。挿して押せば、この読み取りの最初の段(① か ③)からやり直す。
+// M5Stack の通信が切れた・WF1973 の出力を止められなかった・接続確認が済んでいないときは、この画面ではつなぎ直せないので出さず、
+// 校正画面を閉じて「確認」を押すよう案内する。
 internal sealed class AutoCalibrationDialog : Form, IAutoCalibrationOperator
 {
+    public const string RetryLabel = "もう一度読み取る";
     private readonly AutoCalibrationKind _kind;
     private readonly ProductModel? _model;
     private readonly Func<IAutoCalibrationOperator, AutoCalibrationProcedure> _createProcedure;
     private readonly CalibrationInProgressMarker _marker;
     private readonly Action<string> _log;
-    private readonly CancellationTokenSource _cancel = new();
+    // やり直してよいか(M5Stack・発振器・LOGGER の接続が今も使えるか)。止まったときに聞く。
+    private readonly Func<bool> _canRetry;
+    // 中止すると使えなくなるので、やり直すときに作り直す。
+    private CancellationTokenSource _cancel = new();
     private readonly Label _statusLabel = new();
     private readonly Label _pressureLabel = new();
     private readonly Label _promptHeading = new();
@@ -42,8 +50,9 @@ internal sealed class AutoCalibrationDialog : Form, IAutoCalibrationOperator
     private bool _closeWhenDone;
 
     // model は「GC16 で読み取る」のときの型式(目標の供給圧力)。「マルチメータで読み取る」は null。
+    // canRetry を渡さないときは、止まったあといつでもやり直せる(機器なしの確認用)。
     public AutoCalibrationDialog(AutoCalibrationKind kind, ProductModel? model, Func<IAutoCalibrationOperator, AutoCalibrationProcedure> createProcedure,
-        CalibrationInProgressMarker marker, Action<string> log)
+        CalibrationInProgressMarker marker, Action<string> log, Func<bool>? canRetry = null)
     {
         if (kind == AutoCalibrationKind.Pressure) ArgumentNullException.ThrowIfNull(model);
         _kind = kind;
@@ -51,6 +60,7 @@ internal sealed class AutoCalibrationDialog : Form, IAutoCalibrationOperator
         _createProcedure = createProcedure;
         _marker = marker;
         _log = log;
+        _canRetry = canRetry ?? (() => true);
         string title = kind == AutoCalibrationKind.Current ? "マルチメータで読み取る" : "GC16 で読み取る";
         Text = title + "（校正の自動読み取り）";
         Font = SystemFonts.MessageBoxFont;
@@ -170,11 +180,25 @@ internal sealed class AutoCalibrationDialog : Form, IAutoCalibrationOperator
         RunProcedureAsync().Forget();
     }
 
-    // 画面が出たら読み取りを始め、終わったら結果に合わせて閉じる。
+    // 画面が出たら読み取りを始め、終わったら結果に合わせて閉じる。止まったあと「もう一度読み取る」でも呼ぶ。
     private async Task RunProcedureAsync()
     {
+        if (_running) return;
         _running = true;
+        if (_cancel.IsCancellationRequested)
+        {
+            _cancel.Dispose();
+            _cancel = new CancellationTokenSource();
+        }
+        _abortReason = null;
+        _currentStage = null;
+        UpdateStages(finished: false);
+        ClearPrompt();
+        _stopButton.Text = "中止して手入力に戻る";
+        _stopButton.Enabled = true;
+        _stopButton.UseVisualStyleBackColor = true;
         AutoCalibrationProcedure? procedure = null;
+        string? failure = null;
         try
         {
             try { _marker.Begin(DateTimeOffset.Now, _model?.Name ?? "（電流の読み取り）"); }
@@ -199,19 +223,21 @@ internal sealed class AutoCalibrationDialog : Form, IAutoCalibrationOperator
         }
         catch (OperationCanceledException ex)
         {
-            Finish(_abortReason is { } reason ? reason + "ため、読み取りを中止しました。" :
-                ex.InnerException is { } cause ? "中止しました（" + cause.Message + "）。" : "中止しました。");
+            failure = _abortReason is { } reason ? reason + "ため、読み取りを中止しました。" :
+                ex.InnerException is { } cause ? "中止しました（" + cause.Message + "）。" : "中止しました。";
         }
         catch (Exception ex)
         {
-            Finish("読み取りを続けられません：" + ex.Message);
+            failure = "読み取りを続けられません：" + ex.Message;
         }
         finally
         {
-            OutputStopFailed = procedure?.OutputStopFailed ?? false;
+            // 前の回で止められなかったときは、やり直して止められても「止められなかった」を残す(呼び出し側で出力状態不明にする)。
+            OutputStopFailed |= procedure?.OutputStopFailed ?? false;
             _marker.Clear();
             _running = false;
         }
+        if (failure is not null) Finish(failure);
         if (Succeeded)
         {
             DialogResult = DialogResult.OK;
@@ -224,19 +250,47 @@ internal sealed class AutoCalibrationDialog : Form, IAutoCalibrationOperator
         }
     }
 
-    // 中止・失敗: 理由を残し、閉じるボタンにする(閉じると校正画面の手入力に戻る)。
+    // 中止・失敗: 理由を残し、やり直せるなら「もう一度読み取る」を出す。閉じると校正画面の手入力に戻る。
     private void Finish(string message)
     {
+        bool canRetry = !_closeWhenDone && _abortReason is null && !OutputStopFailed && _canRetry();
         ShowStatus(message);
-        ShowStatus("校正画面に戻って、値を手で入れて「適用」すれば測定へ進めます。");
         ShowPressure(null);
         ClearPrompt();
-        _promptLabel.Text = message + "\r\n下の「閉じて手入力に戻る」を押してください。";
         SetWaiting(true);
+        if (canRetry)
+        {
+            string devices = _kind == AutoCalibrationKind.Current ? "マルチメータ（7351E）の" : "GC16 の";
+            string first = AutoCalibrationProcedure.StageName(_stages[0]);
+            ShowStatus($"{devices} USB・電源・ケーブルを確かめて「{RetryLabel}」を押すと、{first}からやり直します。" +
+                "値を手で入れるときは「閉じて手入力に戻る」を押してください。");
+            _promptLabel.Text = message + "\r\n\r\n" +
+                $"{devices} USB・電源・ケーブルを確かめて、「{RetryLabel}」を押してください（{first}からやり直します）。\r\n" +
+                "値を手で入れるときは、下の「閉じて手入力に戻る」を押してください。";
+            AddChoice(RetryLabel, () =>
+            {
+                // 止まっているあいだに M5Stack などが切れたら、やり直さずに「確認」へ案内する。
+                if (!_canRetry())
+                {
+                    Finish("M5Stack・発振器・LOGGER の接続が使えなくなりました。");
+                    return;
+                }
+                ShowStatus("もう一度読み取ります。");
+                RunProcedureAsync().Forget();
+            });
+            _stopButton.UseVisualStyleBackColor = true;
+        }
+        else
+        {
+            const string reconnect = "この画面ではつなぎ直せません。校正画面を閉じてメイン画面の「確認」を押し、もう一度「校正」を押してください" +
+                "（校正画面で値を手で入れて「適用」しても、測定へ進めます）。";
+            ShowStatus(reconnect);
+            _promptLabel.Text = message + "\r\n\r\n" + reconnect + "\r\n下の「閉じて手入力に戻る」を押してください。";
+            _stopButton.BackColor = WaitingColor;
+            _stopButton.UseVisualStyleBackColor = false;
+        }
         _stopButton.Text = "閉じて手入力に戻る";
         _stopButton.Enabled = true;
-        _stopButton.BackColor = WaitingColor;
-        _stopButton.UseVisualStyleBackColor = false;
     }
 
     // 画面の外で起きた異常(M5Stack の通信切れ)で読み取りを中止する(2026-11-14、全体見直し・区切り 4)。
