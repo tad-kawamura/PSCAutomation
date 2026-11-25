@@ -773,9 +773,12 @@ internal sealed class SystemCalibrationClock : ICalibrationClock
 // (「GC16 が大気圧になるようにして下さい」)。供給側へ戻す指示は出さない: すぐあとの「レギュレータを回して目標圧力に設定して下さい」
 // (IAutoCalibrationOperator.WaitRegulatorAdjustedAsync)の 1 画面にまとめた。OK を押したあとにもう 1 つ画面が出て、
 // まだ人の作業が要ることが分かりにくかったため。
+// 2026-11-25(人が選んだ): 人がすること(大気圧にする)と、OK のあとアプリがすること(ゼロ調整・読み取り)を分けて書く。
+// 前の文では「ゼロ調整を人がする」と読めた。
 internal sealed class ManualBallValveSwitcher(IAutoCalibrationOperator calibrationOperator) : IValveSwitcher
 {
-    public const string AtmosphereInstruction = "GC16 が大気圧になるようにして下さい。\r\n\r\nできたら、下の「OK」を押す\r\n「OK」を押すまで、先へは進みません。";
+    public const string AtmosphereInstruction = "GC16 を大気圧にして下さい（圧力がかからない状態）。\r\n\r\n" +
+        "「OK」を押すと、GC16 のゼロ調整と\r\n読み取りをアプリが自動で行います。";
     public const string RestoreInstruction = "供給圧力がかかる状態（測定のときの状態）に戻して下さい。";
 
     public async Task SetAtmosphereAsync(CancellationToken cancellationToken)
