@@ -377,18 +377,23 @@ internal sealed class AutoCalibrationProcedure
             // 手入力用の文が出て、①〜③の値も消えた(2026-11-14、全体見直し・区切り 4)。
             if (_pressureLow is { } low && volts <= low.Volts)
                 throw new InvalidDataException($"圧力の高点の電圧 {F(volts)} V が低点 {F(low.Volts)} V 以下です。NR-500 CH{_settings.PressureChannel}（圧力）の配線を確かめてください。");
-            double limit = target * _settings.HighDeviationRatio;
-            if (Math.Abs(settled - target) > limit)
-            {
-                var choice = await _operator.AskDeviationAsync(
-                    $"④ {F(settled)} kPa で落ち着きました。目標 {target} kPa から ±{F(limit)} kPa（{_settings.HighDeviationRatio:P0}）を超えています。\r\n" +
-                    "供給圧力がかかっているか（配管・バルブの状態）と、レギュレータを確かめて下さい。", "合わせ直す", ct);
-                if (choice == DeviationChoice.Readjust) continue;
-                if (choice == DeviationChoice.Abort) throw new OperationCanceledException("校正の自動読み取りを中止しました。");
-            }
-            // 「このまま使う」を選んでも、低点以下の圧力は高点にできない。
             if (_pressureLow is { } lowPoint && (float)settled <= lowPoint.Kilopascals)
                 throw new InvalidDataException($"圧力の高点 {F(settled)} kPa が低点 {F(lowPoint.Kilopascals)} kPa 以下です。供給圧力がかかっているか（配管・バルブの状態）を確かめて下さい。");
+            // 目標 ±2 kPa に入っていなければ「合わせ直す / 中止」(このまま使うは選べない。2026-11-25、人)。
+            // ±10% を超えるほど外れているときは、レギュレータより先に弁の向き・配管を疑う文にする(決まったこと 27)。
+            double error = Math.Abs(settled - target);
+            if (error > _settings.HighToleranceKpa + 1e-9)
+            {
+                double limit = target * _settings.HighDeviationRatio;
+                string message = error > limit
+                    ? $"④ GC16 の表示が {F(settled)} kPa で落ち着きました。目標 {target} kPa から ±{F(limit)} kPa（{_settings.HighDeviationRatio:P0}）を超えています。\r\n" +
+                        "供給圧力がかかっているか（配管・バルブの状態）と、レギュレータを確かめて下さい。"
+                    : $"④ GC16 の表示が {F(settled)} kPa で落ち着きました。\r\n{target} ±{F(_settings.HighToleranceKpa)} kPa に入っていません。\r\n" +
+                        "「合わせ直す」を押して、レギュレータを回し直して下さい。";
+                if (!await _operator.AskRegulatorReadjustAsync(message, ct))
+                    throw new OperationCanceledException("校正の自動読み取りを中止しました。");
+                continue;
+            }
             _pressureHigh = (volts, (float)settled);
             _operator.ShowStatus($"④ 圧力の高点：{F(volts)} V = {F((float)settled)} kPa（目標 {target} kPa）");
             return;
@@ -399,7 +404,7 @@ internal sealed class AutoCalibrationProcedure
     private async Task WaitRegulatorAdjustedAsync(IPressureGauge gauge, double target, CancellationToken ct)
     {
         using var prompt = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        var adjusted = _operator.WaitRegulatorAdjustedAsync(target, prompt.Token);
+        var adjusted = _operator.WaitRegulatorAdjustedAsync(target, _settings.HighToleranceKpa, prompt.Token);
         try
         {
             while (!adjusted.IsCompleted)
@@ -614,6 +619,8 @@ internal sealed record AutoCalibrationSettings
     // 外れの知らせ: ③ はゼロ調整の前の値が ±5 kPa、④ は目標から ±10%。
     public double LowDeviationKpa { get; init; } = 5;
     public double HighDeviationRatio { get; init; } = 0.10;
+    // ④ の目標の幅: 落ち着いた GC16 の値が目標 ±2 kPa に入っていなければ、合わせ直すか中止(このまま使えない。2026-11-25、人)。
+    public double HighToleranceKpa { get; init; } = 2;
     public int CurrentChannel { get; init; } = 1;
     public int PressureChannel { get; init; } = 2;
     // NR-500 の電圧は、読むと決めた時点よりあとに記録された、この長さの分を平均する(2026-11-18、人)。
@@ -640,7 +647,7 @@ internal sealed record AutoCalibrationSettings
             CurrentSettle < TimeSpan.Zero || ZeroSettle < TimeSpan.Zero)
             throw new ArgumentOutOfRangeException(nameof(WaitLimit), "待ち時間を確かめてください。");
         if (StableToleranceKpa <= 0 || ZeroIdealKpa <= 0 || ZeroAllowedKpa < ZeroIdealKpa || ZeroRetries < 0 ||
-            LowDeviationKpa <= 0 || HighDeviationRatio <= 0 || !(MinCurrentRiseVolts > 0) ||
+            LowDeviationKpa <= 0 || HighDeviationRatio <= 0 || !(HighToleranceKpa > 0) || !(MinCurrentRiseVolts > 0) ||
             !(LowCurrentToleranceMilliamps > 0) || !(MinHighCurrentMilliamps > 0))
             throw new ArgumentOutOfRangeException(nameof(ZeroAllowedKpa), "落ち着き・0 点・外れの基準を確かめてください。");
         if (VoltageAverageWindow <= TimeSpan.Zero || VoltageDeliveryMargin < TimeSpan.Zero || MinVoltagePoints < 1 ||
@@ -746,7 +753,9 @@ internal interface IAutoCalibrationOperator
     // 7351E が見つからない: もう一度探す / 電流を手で入れる / 中止。
     Task<CurrentMeterMissingChoice> AskCurrentMeterMissingAsync(string message, CancellationToken cancellationToken);
     // ④ 人がレギュレーターを目標に合わせて「合わせた」を押すのを待つ。false = 中止。
-    Task<bool> WaitRegulatorAdjustedAsync(double targetKilopascals, CancellationToken cancellationToken);
+    Task<bool> WaitRegulatorAdjustedAsync(double targetKilopascals, double toleranceKilopascals, CancellationToken cancellationToken);
+    // ④ 落ち着いた値が目標の幅に入らない: true = 合わせ直す、false = 中止(このまま使うは選べない。2026-11-25)。
+    Task<bool> AskRegulatorReadjustAsync(string message, CancellationToken cancellationToken);
     Task<WaitChoice> AskNotSettledAsync(string message, CancellationToken cancellationToken);
     // 外れの知らせ。readjustLabel は Readjust のボタンの文字(③④ は「合わせ直す」、①② は「やり直す」)。
     Task<DeviationChoice> AskDeviationAsync(string message, string readjustLabel, CancellationToken cancellationToken);

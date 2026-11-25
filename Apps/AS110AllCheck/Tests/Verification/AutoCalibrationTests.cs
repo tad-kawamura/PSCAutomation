@@ -76,18 +76,35 @@ internal static class AutoCalibrationTests
                 rig.Gauge.ZeroAdjusts == 1 && rig.Gauge.ZeroAdjustedAtKpa == 0, "③ deviation over ±5 kPa: no zero adjustment until 合わせ直す and settled at atmosphere");
         }
 
-        // 4. ④ で目標から ±10% を超えたら知らせる。「このまま使う」ならその値で記録する。
+        // 4. ④ は目標 ±2 kPa に入らなければ「合わせ直す / 中止」(このまま使うは無い。2026-11-25、人)。
+        //    ±10% を超えるほど外れていたら、弁の向き・配管を疑う文(決まったこと 27)。
         {
             var rig = new Rig { RegulatorKpa = 450 };
-            rig.Operator.DeviationAnswers.Enqueue(DeviationChoice.UseAsIs);
+            rig.Operator.ReadjustAnswers.Enqueue(true);
+            rig.Operator.OnReadjust = () => rig.RegulatorKpa = 539.4;
             var (c, _, _) = await rig.RunBothAsync(model, CancellationToken.None);
-            Check(rig.Operator.DeviationAsked == 1 && rig.Operator.DeviationMessages[0].Contains("④") && Near(c.Pressure.Output2, 450.03),
-                "④ deviation over ±10%: このまま使う records the settled value");
+            Check(rig.Operator.ReadjustMessages.Count == 1 && rig.Operator.ReadjustMessages[0].Contains("④") &&
+                rig.Operator.ReadjustMessages[0].Contains("配管・バルブ") && rig.Operator.DeviationAsked == 0 && rig.Operator.AdjustWaits == 2 &&
+                Near(c.Pressure.Output2, 539.43), "④ over ±10%: valve hint, 合わせ直す waits for the regulator again and records 539.4");
         }
         {
-            var rig = new Rig { RegulatorKpa = 520 }; // 539 kPa の ±10%(±53.9)以内なので知らせない
+            var rig = new Rig { RegulatorKpa = 535.8 }; // ±10% 以内だが ±2 kPa の外
+            rig.Operator.ReadjustAnswers.Enqueue(true);
+            rig.Operator.OnReadjust = () => rig.RegulatorKpa = 537.5;
+            var (c, _, _) = await rig.RunBothAsync(model, CancellationToken.None);
+            Check(rig.Operator.ReadjustMessages.Count == 1 && rig.Operator.ReadjustMessages[0].Contains("539 ±2 kPa に入っていません") &&
+                !rig.Operator.ReadjustMessages[0].Contains("配管") && rig.Operator.AdjustTolerance == 2 && Near(c.Pressure.Output2, 537.53),
+                "④ outside ±2 kPa: 合わせ直す, then 537.5 kPa (inside ±2) is recorded");
+        }
+        {
+            var rig = new Rig { RegulatorKpa = 535.8 };
+            rig.Operator.ReadjustAnswers.Enqueue(false);
+            await ExpectCanceled(rig, model, "④ outside ±2 kPa: 中止 stops the automatic reading");
+        }
+        {
+            var rig = new Rig { RegulatorKpa = 540.9 }; // ±2 kPa 以内なので知らせない
             await rig.RunBothAsync(model, CancellationToken.None);
-            Check(rig.Operator.DeviationAsked == 0, "④ a few-kPa (here 19 kPa) offset from the target does not warn");
+            Check(rig.Operator.ReadjustMessages.Count == 0 && rig.Operator.DeviationAsked == 0, "④ inside ±2 kPa does not warn");
         }
 
         // 5. 落ち着かない: 15 秒を過ぎたら「弁の向きを確かめて」と知らせる。「中止」で止め、後片付けで弁を戻す知らせを出す。
@@ -448,7 +465,7 @@ internal static class AutoCalibrationTests
             var s = AutoCalibrationSettings.Default;
             Check(s.CommandVolts == 5 && s.StableWindow == TimeSpan.FromSeconds(5) && s.StableToleranceKpa == 0.2 && s.WaitLimit == TimeSpan.FromSeconds(15) &&
                 s.ZeroSettle == TimeSpan.FromSeconds(3) && s.ZeroIdealKpa == 0.1 && s.ZeroAllowedKpa == 0.2 && s.ZeroRetries == 3 &&
-                s.LowDeviationKpa == 5 && s.HighDeviationRatio == 0.10 && s.MinCurrentRiseVolts == 0.3, "settings: defaults match SPEC 20〜24・27");
+                s.LowDeviationKpa == 5 && s.HighDeviationRatio == 0.10 && s.HighToleranceKpa == 2 && s.MinCurrentRiseVolts == 0.3, "settings: defaults match SPEC 20〜24・27");
             Check(s.VoltageAverageWindow == TimeSpan.FromSeconds(1) && s.LowCurrentToleranceMilliamps == 1 && s.MinHighCurrentMilliamps == 25,
                 "settings: 1 s voltage average and the current deviation limits (2026-11-18)");
             bool rejected = false;
@@ -755,8 +772,9 @@ internal static class AutoCalibrationTests
             return Task.FromResult(MeterMissingAnswers.Dequeue());
         }
 
-        public Task<bool> WaitRegulatorAdjustedAsync(double targetKilopascals, CancellationToken cancellationToken)
+        public Task<bool> WaitRegulatorAdjustedAsync(double targetKilopascals, double toleranceKilopascals, CancellationToken cancellationToken)
         {
+            AdjustTolerance = toleranceKilopascals;
             // 供給側へ戻す指示は「レギュレータを回して…」にまとめた(2026-11-20)。人はここで供給圧力をかけて合わせる。
             AdjustWaits++;
             rig.Atmosphere = false;
@@ -785,6 +803,18 @@ internal static class AutoCalibrationTests
             DeviationLabels.Add(readjustLabel);
             OnDeviation?.Invoke();
             return Task.FromResult(DeviationAnswers.Dequeue());
+        }
+
+        // ④ 目標 ±2 kPa に入らない: 合わせ直す / 中止(2026-11-25)。
+        public readonly List<string> ReadjustMessages = new();
+        public readonly Queue<bool> ReadjustAnswers = new();
+        public Action? OnReadjust;
+        public double? AdjustTolerance;
+        public Task<bool> AskRegulatorReadjustAsync(string message, CancellationToken cancellationToken)
+        {
+            ReadjustMessages.Add(message);
+            OnReadjust?.Invoke();
+            return Task.FromResult(ReadjustAnswers.Dequeue());
         }
 
         public Task<bool> AskZeroRetryAsync(string message, CancellationToken cancellationToken) { ZeroRetryAsked++; return Task.FromResult(ZeroRetryAnswers.Dequeue()); }

@@ -418,11 +418,11 @@ internal sealed class AutoCalibrationDialog : Form, IAutoCalibrationOperator
         PromptAsync(message, [("もう一度探す", CurrentMeterMissingChoice.Retry), ("電流を手で入れる", CurrentMeterMissingChoice.Manual),
             ("中止", CurrentMeterMissingChoice.Abort)], cancellationToken);
 
-    public Task<bool> WaitRegulatorAdjustedAsync(double targetKilopascals, CancellationToken cancellationToken) =>
+    public Task<bool> WaitRegulatorAdjustedAsync(double targetKilopascals, double toleranceKilopascals, CancellationToken cancellationToken) =>
         // どこの圧力を合わせるのか迷わないよう「GC16 の表示を」と書く。押したあとはアプリが待って読むことも書く(③ と同じ形。2026-11-25、人の指示)。
         PromptAsync($"レギュレータを回して、GC16 の表示を {targetKilopascals:0.#} kPa にして下さい。\r\n\r\n" +
             "　1. 上の GC16 の値を見ながら、レギュレータを回す\r\n" +
-            $"　2. {targetKilopascals:0.#} kPa になったら、下の「設定した」を押す\r\n\r\n" +
+            $"　2. {targetKilopascals:0.#} ±{toleranceKilopascals:0.#} kPa に入ったら、下の「設定した」を押す\r\n\r\n" +
             "「設定した」を押すと、値が落ち着くのを待って\r\n読み取りをアプリが自動で行います。",
             [("設定した", true), ("中止", false)], cancellationToken);
 
@@ -431,6 +431,9 @@ internal sealed class AutoCalibrationDialog : Form, IAutoCalibrationOperator
 
     public Task<DeviationChoice> AskDeviationAsync(string message, string readjustLabel, CancellationToken cancellationToken) =>
         PromptAsync(message, [(readjustLabel, DeviationChoice.Readjust), ("このまま使う", DeviationChoice.UseAsIs), ("中止", DeviationChoice.Abort)], cancellationToken);
+
+    public Task<bool> AskRegulatorReadjustAsync(string message, CancellationToken cancellationToken) =>
+        PromptAsync(message, [("合わせ直す", true), ("中止", false)], cancellationToken);
 
     public Task<bool> AskZeroRetryAsync(string message, CancellationToken cancellationToken) =>
         PromptAsync(message, [("もう一度", true), ("中止", false)], cancellationToken);

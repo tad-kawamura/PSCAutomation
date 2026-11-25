@@ -197,7 +197,8 @@ internal sealed class SimulatedValves(IValveSwitcher manual, SimulatedRig rig, P
     public async Task SetSupplyAsync(CancellationToken cancellationToken)
     {
         await manual.SetSupplyAsync(cancellationToken);
-        rig.SetPressureTarget((model?.SupplyPressure ?? 539) * 0.996);
+        // 人がレギュレータを合わせた値(目標 ±2 kPa の中。2026-11-25 に ±2 kPa の幅を足したので、外れた値にしない)。
+        rig.SetPressureTarget((model?.SupplyPressure ?? 539) + 0.4);
     }
 
     public Task RestoreForMeasurementAsync() => manual.RestoreForMeasurementAsync();
