@@ -166,10 +166,23 @@ internal static class AutoCalibrationTests
             rig.Operator.ResumeAnswers.Enqueue(true);
             rig.Operator.OnResume = () => rig.AmplifierOff = false;
             var (c, _, _) = await rig.RunBothAsync(model, CancellationToken.None);
-            Check(rig.Operator.ResumeAsked == 1 && rig.Operator.ResumeMessages[0].Contains("②") && rig.Operator.ResumeMessages[0].Contains("上がっていません") &&
-                rig.Operator.ResumeMessages[0].Contains("アンプの電源"), "② no current: stopped although the voltage is slightly above the low point");
+            Check(rig.Operator.ResumeAsked == 1 && rig.Operator.ResumeMessages[0].Contains("②") && rig.Operator.ResumeMessages[0].Contains("電流が 30 mA になりません") &&
+                rig.Operator.ResumeMessages[0].Contains(AutoCalibrationProcedure.CurrentPathChecklist),
+                "② no current: stopped with the current-path checklist although the voltage is slightly above the low point");
             Check(rig.CurrentMeters.Meter.Reads == 6 && rig.CurrentMeters.Finds == 2 && Near(c.Current.Input2, Rig.Ch1Volts(5)),
                 "② no current: 再開 finds the 7351E again and reads ② again (① kept)");
+        }
+
+        // 6b-2. 電流は 30 mA 流れているのに CH1 の電圧が上がらない(NR-500 CH1 の配線): 電流の通り道ではなく CH1 の配線を確かめさせる(2026-11-25)。
+        {
+            var rig = new Rig { Ch1Stuck = true };
+            rig.Operator.ResumeAnswers.Enqueue(true);
+            rig.Operator.OnResume = () => rig.Ch1Stuck = false;
+            var (c, _, _) = await rig.RunBothAsync(model, CancellationToken.None);
+            Check(rig.Operator.ResumeAsked == 1 && rig.Operator.ResumeMessages[0].Contains("②") &&
+                rig.Operator.ResumeMessages[0].Contains("CH1 の電圧が上がりません") && rig.Operator.ResumeMessages[0].Contains("NR-500 CH1 の配線") &&
+                !rig.Operator.ResumeMessages[0].Contains("アンプの電源"), "② current OK but CH1 stuck: stopped with the CH1 wiring hint");
+            Check(Near(c.Current.Input2, Rig.Ch1Volts(5)), "② CH1 stuck: 再開 reads ② again");
         }
 
         // 6c. 圧力の電圧が上がらない(CH2 の配線): ④ の中で止め、「再開」で ④ だけやり直す(③ は残す)。
@@ -459,6 +472,8 @@ internal static class AutoCalibrationTests
         public DateTimeOffset? HighSettledAt;
         // アンプの電源が入っていない(指令を出しても CH1 が上がらない。ノイズで少しだけ上)。
         public bool AmplifierOff;
+        // CH1 が電流に付いてこない(NR-500 CH1 の配線外れ。電流は流れている)。
+        public bool Ch1Stuck;
         // CH2 が圧力に付いてこない(配線外れ)。
         public bool Ch2Stuck;
 
@@ -547,7 +562,7 @@ internal static class AutoCalibrationTests
             Reads++;
             rig.Clock.Advance(TimeSpan.FromSeconds(1.3));
             if (FailNext) { FailNext = false; throw new InvalidDataException("LOGGER から CH1 の電圧を読めません（無効値）。"); }
-            if (channel == 1) return Task.FromResult(rig.AmplifierOff ? Rig.Ch1Volts(0) + (rig.Output.Volts > 0 ? 0.001 : 0) : Rig.Ch1Volts(rig.Output.Volts ?? 0));
+            if (channel == 1) return Task.FromResult(rig.AmplifierOff || rig.Ch1Stuck ?Rig.Ch1Volts(0) + (rig.Output.Volts > 0 ? 0.001 : 0) : Rig.Ch1Volts(rig.Output.Volts ?? 0));
             return Task.FromResult(rig.Ch2Stuck ? Rig.Ch2Volts(0) : Rig.Ch2Volts(rig.TruePressure));
         }
     }

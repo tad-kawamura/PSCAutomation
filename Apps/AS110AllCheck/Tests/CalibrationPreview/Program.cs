@@ -14,6 +14,8 @@ using PSCAutomation.Wrappers.LoggerFiles;
 //   dotnet run --project Apps/AS110AllCheck/Tests/CalibrationPreview -- --no-gc16
 //       「GC16 で読み取る」の最初の 1 回だけ GC16 が見つからない。「再開」で続けられることと、「中止」を押したあとの止まった画面の
 //       「もう一度読み取る」で ③ からやり直せることを見る。
+//   dotnet run --project Apps/AS110AllCheck/Tests/CalibrationPreview -- --amp-off
+//       最初の ② で電流アンプの電源が切れている(電流が 0 mA)。止まった画面の文と、「再開」で ② から続けられることを見る。
 //   dotnet run --project Apps/AS110AllCheck/Tests/CalibrationPreview -- --screenshots <フォルダー>
 //       人が押さずに一通り進め、各場面の画像(png)をフォルダーに残す。
 internal static class Program
@@ -26,6 +28,7 @@ internal static class Program
         Application.SetCompatibleTextRenderingDefault(false);
         bool noMeter = args.Contains("--no-meter");
         bool noGauge = args.Contains("--no-gc16");
+        bool ampOff = args.Contains("--amp-off");
         int shots = Array.IndexOf(args, "--screenshots");
         if (shots >= 0)
         {
@@ -34,7 +37,7 @@ internal static class Program
         }
         while (true)
         {
-            var rig = new SimulatedRig { MeterMissing = noMeter, GaugeMissingOnce = noGauge };
+            var rig = new SimulatedRig { MeterMissing = noMeter, GaugeMissingOnce = noGauge, AmplifierOffOnce = ampOff };
             using var dialog = Preview.OpenCalibration(rig);
             DialogResult result = dialog.ShowDialog();
             string message = result == DialogResult.OK
@@ -92,9 +95,11 @@ internal sealed class SimulatedRig : IPressureGaugeLocator, ICurrentCommandOutpu
     public bool MeterMissing { get; init; }
     // 最初の 1 回だけ GC16 が見つからない(USB の挿し忘れ。挿して「もう一度読み取る」を押した形)。
     public bool GaugeMissingOnce { get; set; }
+    // 電流アンプの電源が切れている(電流が流れない)。② で止まって出力が止まったら入れたことにする(「再開」で続けられる形)。2026-11-25
+    public bool AmplifierOffOnce { get; set; }
     public DateTimeOffset? FirstConfirmedAt { get; private set; }
 
-    private double Milliamps => (_outputOn ? _commandVolts * 5.97 + 0.14 : 0) + Noise(0.004);
+    private double Milliamps => (_outputOn && !AmplifierOffOnce ? _commandVolts * 5.97 + 0.14 : 0) + Noise(0.004);
     // GC16 の中の圧力(ゼロ調整の前の値)。向きを替えると 1 秒ほどで落ち着く。
     private double RawKilopascals
     {
@@ -117,7 +122,11 @@ internal sealed class SimulatedRig : IPressureGaugeLocator, ICurrentCommandOutpu
     public void SetVolts(double volts) { _commandVolts = volts; _outputOn = true; }
     public bool CanAdjust => true;
     public void AdjustVolts(double volts) => _commandVolts = volts;
-    public void Stop() => _outputOn = false;
+    public void Stop()
+    {
+        if (_outputOn && _commandVolts > 1) AmplifierOffOnce = false;
+        _outputOn = false;
+    }
 
     // マルチメータ
     async Task<ICurrentMeter> ICurrentMeterLocator.FindAsync(CancellationToken cancellationToken)
@@ -242,6 +251,14 @@ internal static class Screenshots
             Application.DoEvents();
             Button("GC16 で読み取る", dialog).PerformClick();
             Capture(dialog, "校正画面_GC16をやり直したあと");
+        }
+        // ② で電流アンプの電源が切れていて止まる(「再開・中止」の文を残し、「再開」で続ける。2026-11-25)。
+        using (var dialog = Preview.OpenCalibration(new SimulatedRig { AmplifierOffOnce = true }))
+        {
+            ShowOffScreen(dialog);
+            Seen.Clear();
+            Button("マルチメータで読み取る", dialog).PerformClick();
+            Capture(dialog, "校正画面_アンプの電源を入れて再開したあと");
         }
         Console.WriteLine($"{_count} 枚の画像を残しました：{folder}");
         return 0;

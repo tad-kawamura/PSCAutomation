@@ -166,9 +166,13 @@ internal sealed class AutoCalibrationProcedure
         var (volts, milliamps) = await ReadCurrentPointAsync(AutoCalibrationStage.CurrentHigh, meter, ct);
         // 30 mA が出ていれば、低点からはっきり上がる(アンプの設定で約 1〜5 V)。「低点以下」だけを見ると、出力が止まっていても
         // ノイズで少し上なら通り、0 mA のままの電圧を高点にした(2026-11-14、全体見直し・区切り 4)。
+        // 電流(7351E か人が入れた値)で分ける(2026-11-25、人の指示): 30 mA になっていなければ電流の通り道(アンプの電源・コイルのコネクタ・
+        // 7351E の端子)、なっていれば NR-500 CH1 の配線。WF1973 は通信と本体エラーで確かめているので並べない。7351E の通信不良は読めた時点で外れる。
         if (_currentLow is { } low && volts - low.Volts < _settings.MinCurrentRiseVolts)
-            throw new InvalidDataException($"電流の高点の電圧 {F(volts)} V が、低点 {F(low.Volts)} V から {F(_settings.MinCurrentRiseVolts)} V 以上 上がっていません。" +
-                "WF1973 の出力・アンプの電源・配線を確かめてください。");
+            throw new InvalidDataException(milliamps < _settings.MinHighCurrentMilliamps
+                ? $"電流が 30 mA になりません（{F(milliamps)} mA）。次を確かめてください。\r\n" + CurrentPathChecklist
+                : $"電流は {F(milliamps)} mA 流れていますが、CH1 の電圧が上がりません（低点 {F(low.Volts)} V → {F(volts)} V）。\r\n" +
+                    "NR-500 CH1 の配線を確かめてください。");
         if (milliamps < _settings.MinHighCurrentMilliamps)
             await AskCurrentDeviationAsync($"② 30 mA の指令で {F(milliamps)} mA しか流れていません（{F(_settings.MinHighCurrentMilliamps)} mA 未満）。\r\n" +
                 "アンプの電源・配線・マルチメータのレンジ・入れた値を確かめてください。", ct);
@@ -177,6 +181,12 @@ internal sealed class AutoCalibrationProcedure
         _currentHigh = (volts, (float)milliamps);
         _operator.ShowStatus($"② 電流の高点：{F(volts)} V = {F((float)milliamps)} mA");
     }
+
+    // ② で電流が 30 mA にならないときに確かめるもの(2026-11-25、人が挙げた 3 つ)。7351E は部品が DC 電流に設定するので、残るのは端子の挿し間違い。
+    internal const string CurrentPathChecklist =
+        "・電流アンプの電源が入っているか\r\n" +
+        "・コイルのコネクタがつながっているか（つなぎ忘れ・接触不良）\r\n" +
+        "・7351E のケーブルが電流の端子に挿さっているか";
 
     // ① は 0 mA ±0.1 mA、② は 30 mA ±0.1 mA に入るまで、WF1973 の電圧を直す(最大 MaxCurrentAdjustments 回。2026-11-19、人の指示)。
     // 次の電圧は、前の点と今の点を結ぶ直線から求める(② の最初は ① の点から。① の最初は 1 V = 6 mA とみなす。直線が求まらないときも 6 mA/V)。
