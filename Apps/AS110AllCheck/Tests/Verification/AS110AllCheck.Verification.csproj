@@ -21,6 +21,7 @@
     <Compile Include="../../Production/MeasurementProfile.cs" Link="App/MeasurementProfile.cs" />
     <Compile Include="../../Production/SupplyPressure.cs" Link="App/SupplyPressure.cs" />
     <Compile Include="../../Calibration/AutoCalibration.cs" Link="App/AutoCalibration.cs" />
+    <Compile Include="../../As110/BlockingCallProbe.cs" Link="App/BlockingCallProbe.cs" />
     <Compile Include="../../Calibration/CalibrationInProgressMarker.cs" Link="App/CalibrationInProgressMarker.cs" />
     <Compile Include="../../Calibration/CalibrationLoggerReader.cs" Link="App/CalibrationLoggerReader.cs" />
     <Compile Include="../../Calibration/TodayCalibration.cs" Link="App/TodayCalibration.cs" />

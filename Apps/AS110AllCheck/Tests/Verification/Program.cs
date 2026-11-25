@@ -6,6 +6,7 @@ await LeakCheckTests.RunAsync();
 CalibrationTests.Run();
 CalibrationRecordTests.Run();
 await AutoCalibrationTests.RunAsync();
+await BlockingCallProbeTests.RunAsync();
 await SupplyPressureTests.RunAsync();
 ShippingDataTests.Run();
 MeasurementProfileTests.Run();

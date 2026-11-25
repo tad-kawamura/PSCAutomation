@@ -227,7 +227,10 @@ internal sealed partial class MainForm : Form
                     AppendLog($"発振器：応答を確認できません（{generatorFailure}）。出力OFFを試してから接続し直します。");
                     DiscardGenerator();
                 }
-                if (_generator is null)
+                // 先に別のスレッドで試しにつなぎ、返ってきたときだけ画面のスレッドでつなぐ(2026-11-25。返ってこないと画面ごと固まったため)。
+                string? generatorHang = _generator is null ? await ProbeGeneratorAsync() : null;
+                if (generatorHang is not null) failures.Add("発振器: " + generatorHang);
+                else if (_generator is null)
                 {
                     try
                     {
@@ -486,6 +489,24 @@ internal sealed partial class MainForm : Form
     // 発振器の出力状態が不明な間は、測定・漏れ試験・合格へ進ませない。
     private bool ConnectionsReady => _arduino.IsConnected && _generator is not null &&
         !_generatorOutputUnknown && _logger.IsInitialized && _hardwareDetected;
+
+    // 発振器(VISA)の接続が返ってこないときに見切る時間。ふだんは 1.1 秒以内(画面のログ 30 回。1 回だけ 50 秒かかった回がある)。
+    internal static readonly TimeSpan GeneratorProbeTimeout = TimeSpan.FromSeconds(10);
+    private readonly BlockingCallProbe _generatorProbe = new();
+
+    // 別のスレッドで発振器に試しにつなぎ、すぐ離す(接続のときに出力 OFF・0 V を送るので、出力は変わらない)。
+    // 時間内に返ってきたら null(つながらなかったときも null。このあと画面のスレッドで同じ接続をして、今までどおりの理由を出す)。
+    // 返ってこなければ、人にしてほしいことを返す。試しのスレッドは止められないので、返るまでは次の試しを重ねない。
+    private async Task<string?> ProbeGeneratorAsync()
+    {
+        var outcome = await _generatorProbe.RunAsync(() => FunctionGeneratorConnection.Connect().Dispose(), GeneratorProbeTimeout);
+        if (outcome == BlockingCallProbe.Outcome.Completed) return null;
+        string message = outcome == BlockingCallProbe.Outcome.TimedOut
+            ? $"WF1973（SDG1032X）が {GeneratorProbeTimeout.TotalSeconds:0} 秒待っても応答しません。"
+            : "WF1973（SDG1032X）は、前の「確認」のときから応答しないままです。";
+        AppendLog("発振器：" + message + "（USB の通信が止まっているおそれ。画面が固まらないよう、つなぎに行くのをやめました）");
+        return message + "発振器の電源を入れ直してから（USB の抜き差しでもよい）、「確認」を押してください。";
+    }
 
     // 一時的な通信失敗で接続を手放さないよう、2回まで応答を確認する。
     private bool TryConfirmGenerator(out string failure)
