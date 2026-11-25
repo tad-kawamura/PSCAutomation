@@ -15,7 +15,7 @@ using PSCAutomation.Wrappers.LoggerFiles;
 //       「GC16 で読み取る」の最初の 1 回だけ GC16 が見つからない。「再開」で続けられることと、「中止」を押したあとの止まった画面の
 //       「もう一度読み取る」で ③ からやり直せることを見る。
 //   dotnet run --project Apps/AS110AllCheck/Tests/CalibrationPreview -- --amp-off
-//       最初の ② で電流アンプの電源が切れている(電流が 0 mA)。止まった画面の文と、「再開」で ② から続けられることを見る。
+//       最初の ② で電流アンプの電源が切れている(電流が 0 mA)。止まった画面の文と、「再開」で ① から読み直せることを見る。
 //   dotnet run --project Apps/AS110AllCheck/Tests/CalibrationPreview -- --screenshots <フォルダー>
 //       人が押さずに一通り進め、各場面の画像(png)をフォルダーに残す。
 internal static class Program

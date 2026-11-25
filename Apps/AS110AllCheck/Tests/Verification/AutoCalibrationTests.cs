@@ -169,8 +169,10 @@ internal static class AutoCalibrationTests
             Check(rig.Operator.ResumeAsked == 1 && rig.Operator.ResumeMessages[0].Contains("②") && rig.Operator.ResumeMessages[0].Contains("電流が 30 mA になりません") &&
                 rig.Operator.ResumeMessages[0].Contains(AutoCalibrationProcedure.CurrentPathChecklist),
                 "② no current: stopped with the current-path checklist although the voltage is slightly above the low point");
-            Check(rig.CurrentMeters.Meter.Reads == 6 && rig.CurrentMeters.Finds == 2 && Near(c.Current.Input2, Rig.Ch1Volts(5)),
-                "② no current: 再開 finds the 7351E again and reads ② again (① kept)");
+            // ① もアンプの電源が切れたまま読んでいるので、「再開」は ① から(2026-11-25、人の指摘。それまでは ② だけ読み直して ① を残した)。
+            Check(rig.Operator.ResumeMessages[0].Contains("① 電流の低点（0 mA）からやり直します") && rig.CurrentMeters.Finds == 2 &&
+                rig.Output.Commands.SequenceEqual(["0", "5", "stop", "0", "5", "stop", "5", "stop"]) && Near(c.Current.Input1, Rig.Ch1Volts(0)) && Near(c.Current.Input2, Rig.Ch1Volts(5)),
+                "② no current: 再開 finds the 7351E again and reads from ①: " + string.Join(",", rig.Output.Commands));
         }
 
         // 6b-2. 電流は 30 mA 流れているのに CH1 の電圧が上がらない(NR-500 CH1 の配線): 電流の通り道ではなく CH1 の配線を確かめさせる(2026-11-25)。
@@ -182,7 +184,9 @@ internal static class AutoCalibrationTests
             Check(rig.Operator.ResumeAsked == 1 && rig.Operator.ResumeMessages[0].Contains("②") &&
                 rig.Operator.ResumeMessages[0].Contains("CH1 の電圧が上がりません") && rig.Operator.ResumeMessages[0].Contains("NR-500 CH1 の配線") &&
                 !rig.Operator.ResumeMessages[0].Contains("アンプの電源"), "② current OK but CH1 stuck: stopped with the CH1 wiring hint");
-            Check(Near(c.Current.Input2, Rig.Ch1Volts(5)), "② CH1 stuck: 再開 reads ② again");
+            Check(rig.Operator.ResumeMessages[0].Contains("① 電流の低点（0 mA）からやり直します") &&
+                rig.Output.Commands.SequenceEqual(["0", "5", "stop", "0", "5", "stop", "5", "stop"]) && Near(c.Current.Input2, Rig.Ch1Volts(5)),
+                "② CH1 stuck: 再開 reads from ①: " + string.Join(",", rig.Output.Commands));
         }
 
         // 6c. 圧力の電圧が上がらない(CH2 の配線): ④ の中で止め、「再開」で ④ だけやり直す(③ は残す)。
@@ -262,6 +266,17 @@ internal static class AutoCalibrationTests
             var current = await rig.Procedure().RunCurrentAsync(CancellationToken.None);
             Check(rig.Operator.DeviationAsked == 1 && rig.Operator.DeviationMessages[0].Contains("②") && rig.Operator.DeviationMessages[0].Contains("25 mA 未満") &&
                 current.Current.Output2 == 22f, "② current under 25 mA: このまま使う records it");
+        }
+        {
+            // 25 mA 未満で「やり直す」: ① から読み直す(2026-11-25)。
+            var rig = new Rig();
+            rig.CurrentMeters.Meter.HighMilliamps = 22;
+            rig.Operator.DeviationAnswers.Enqueue(DeviationChoice.Readjust);
+            rig.Operator.OnDeviation = () => rig.CurrentMeters.Meter.HighMilliamps = 29.9;
+            var current = await rig.Procedure().RunCurrentAsync(CancellationToken.None);
+            Check(rig.Operator.DeviationAsked == 1 && rig.Operator.DeviationMessages[0].Contains("「やり直す」は ① から") &&
+                rig.Output.Commands.Count(c => c == "0") == 2 && current.Current.Output2 == 29.9f,
+                "② current under 25 mA: やり直す reads from ①: " + string.Join(",", rig.Output.Commands));
         }
 
         // 6f. ② の微調整(2026-11-19、人): 7351E で 30 mA ±0.1 mA に入るよう WF1973 の電圧を直す。

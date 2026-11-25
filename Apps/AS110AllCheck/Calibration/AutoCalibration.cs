@@ -105,20 +105,25 @@ internal sealed class AutoCalibrationProcedure
                 await RunStageAsync(stage, model, cancellationToken);
                 stage++;
             }
-            catch (RedoStageException)
+            catch (RedoStageException redo)
             {
+                stage = RestartStage(redo.From, stage, first);
                 _operator.ShowStatus(StageName(stage) + "を最初からやり直します。");
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
                 // 17: まず出力を止め、何が起きたかを出す。「再開」で止まった段の最初から(GC16・7351E は探し直す。COM 番号が変わっても探せる)。
+                // ② で電流の通り道・CH1 の配線がおかしかったときは、① もその状態で読んでいるので ① から(2026-11-25、人の指摘)。
                 StopCurrent();
                 ReleaseGauge();
                 ReleaseCurrentMeter();
+                var restart = RestartStage((ex as RestartStageException)?.From, stage, first);
                 string message = $"{StageName(stage)}で止まりました。\r\n{ex.Message}\r\n\r\n" +
-                    "WF1973 の出力を止めました。ケーブル・機器を確かめて「再開」を押すと、この段の最初からやり直します。";
+                    "WF1973 の出力を止めました。ケーブル・機器を確かめて「再開」を押すと、" +
+                    (restart == stage ? "この段の最初から" : StageName(restart) + "から") + "やり直します。";
                 if (!await _operator.AskResumeAsync(message, cancellationToken))
                     throw new OperationCanceledException("校正の自動読み取りを中止しました。", ex);
+                stage = restart;
             }
         }
     }
@@ -168,16 +173,19 @@ internal sealed class AutoCalibrationProcedure
         // ノイズで少し上なら通り、0 mA のままの電圧を高点にした(2026-11-14、全体見直し・区切り 4)。
         // 電流(7351E か人が入れた値)で分ける(2026-11-25、人の指示): 30 mA になっていなければ電流の通り道(アンプの電源・コイルのコネクタ・
         // 7351E の端子)、なっていれば NR-500 CH1 の配線。WF1973 は通信と本体エラーで確かめているので並べない。7351E の通信不良は読めた時点で外れる。
+        // どれも ① を同じ状態(アンプの電源が切れている・コネクタが外れている・CH1 が外れている)で読んだおそれがあるので、① からやり直す
+        // (2026-11-25、人の指摘)。30 mA ±0.1 mA に入らないだけ(25 mA 以上)のときと、通信の失敗は、今までどおり ② から。
         if (_currentLow is { } low && volts - low.Volts < _settings.MinCurrentRiseVolts)
-            throw new InvalidDataException(milliamps < _settings.MinHighCurrentMilliamps
+            throw new RestartStageException(milliamps < _settings.MinHighCurrentMilliamps
                 ? $"電流が 30 mA になりません（{F(milliamps)} mA）。次を確かめてください。\r\n" + CurrentPathChecklist
                 : $"電流は {F(milliamps)} mA 流れていますが、CH1 の電圧が上がりません（低点 {F(low.Volts)} V → {F(volts)} V）。\r\n" +
-                    "NR-500 CH1 の配線を確かめてください。");
+                    "NR-500 CH1 の配線を確かめてください。", AutoCalibrationStage.CurrentLow);
         if (milliamps < _settings.MinHighCurrentMilliamps)
             await AskCurrentDeviationAsync($"② 30 mA の指令で {F(milliamps)} mA しか流れていません（{F(_settings.MinHighCurrentMilliamps)} mA 未満）。\r\n" +
-                "アンプの電源・配線・マルチメータのレンジ・入れた値を確かめてください。", ct);
+                "アンプの電源・配線・マルチメータのレンジ・入れた値を確かめてください。「やり直す」は ① からやり直します。", ct, AutoCalibrationStage.CurrentLow);
         if (_currentLow is { } lowPoint && (float)milliamps <= lowPoint.Milliamps)
-            throw new InvalidDataException($"電流の高点 {F(milliamps)} mA が低点 {F(lowPoint.Milliamps)} mA 以下です。配線を確かめてください。");
+            throw new RestartStageException($"電流の高点 {F(milliamps)} mA が低点 {F(lowPoint.Milliamps)} mA 以下です。配線を確かめてください。",
+                AutoCalibrationStage.CurrentLow);
         _currentHigh = (volts, (float)milliamps);
         _operator.ShowStatus($"② 電流の高点：{F(volts)} V = {F((float)milliamps)} mA");
     }
@@ -267,10 +275,11 @@ internal sealed class AutoCalibrationProcedure
     }
 
     // 電流が外れていたら知らせる(「やり直す」はこの段の最初から。2026-11-18、AI の案を人が承認)。
-    private async Task AskCurrentDeviationAsync(string message, CancellationToken ct)
+    // redoFrom を渡すと、「やり直す」はその段から(② で電流が少なすぎるときは ① から。2026-11-25)。
+    private async Task AskCurrentDeviationAsync(string message, CancellationToken ct, AutoCalibrationStage? redoFrom = null)
     {
         var choice = await _operator.AskDeviationAsync(message, "やり直す", ct);
-        if (choice == DeviationChoice.Readjust) throw new RedoStageException();
+        if (choice == DeviationChoice.Readjust) throw new RedoStageException(redoFrom);
         if (choice == DeviationChoice.Abort) throw new OperationCanceledException("校正の自動読み取りを中止しました。");
     }
 
@@ -540,7 +549,21 @@ internal sealed class AutoCalibrationProcedure
     private static string F4(double value) => value.ToString("0.0000", CultureInfo.InvariantCulture);
 
     private enum ValvePosition { Measurement, Switching, Atmosphere }
-    private sealed class RedoStageException : Exception;
+    // 「やり直す」: From が null ならこの段の最初から、あればその段から。
+    private sealed class RedoStageException(AutoCalibrationStage? from = null) : Exception
+    {
+        public AutoCalibrationStage? From { get; } = from;
+    }
+
+    // 「再開・中止」で止める失敗のうち、「再開」で前の段からやり直すもの(② の電流の通り道・CH1 の配線 → ①。2026-11-25)。
+    private sealed class RestartStageException(string message, AutoCalibrationStage from) : Exception(message)
+    {
+        public AutoCalibrationStage From { get; } = from;
+    }
+
+    // やり直す段: 指定が無ければ今の段。この読み取りの最初の段より前には戻らない。
+    private static AutoCalibrationStage RestartStage(AutoCalibrationStage? from, AutoCalibrationStage current, AutoCalibrationStage first) =>
+        from is { } stage && stage < current ? (stage < first ? first : stage) : current;
 }
 
 internal enum AutoCalibrationStage { CurrentLow, CurrentHigh, PressureLow, PressureHigh }
