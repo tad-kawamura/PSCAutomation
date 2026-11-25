@@ -419,10 +419,11 @@ internal sealed class AutoCalibrationDialog : Form, IAutoCalibrationOperator
             ("中止", CurrentMeterMissingChoice.Abort)], cancellationToken);
 
     public Task<bool> WaitRegulatorAdjustedAsync(double targetKilopascals, CancellationToken cancellationToken) =>
-        PromptAsync($"レギュレータを回して、目標圧力 {targetKilopascals:0.#} kPa に設定して下さい。\r\n\r\n" +
+        // どこの圧力を合わせるのか迷わないよう「GC16 の表示を」と書く。押したあとはアプリが待って読むことも書く(③ と同じ形。2026-11-25、人の指示)。
+        PromptAsync($"レギュレータを回して、GC16 の表示を {targetKilopascals:0.#} kPa にして下さい。\r\n\r\n" +
             "　1. 上の GC16 の値を見ながら、レギュレータを回す\r\n" +
-            "　2. 目標圧力になったら、下の「設定した」を押す\r\n\r\n" +
-            "「設定した」を押すまで、先へは進みません。",
+            $"　2. {targetKilopascals:0.#} kPa になったら、下の「設定した」を押す\r\n\r\n" +
+            "「設定した」を押すと、値が落ち着くのを待って\r\n読み取りをアプリが自動で行います。",
             [("設定した", true), ("中止", false)], cancellationToken);
 
     public Task<WaitChoice> AskNotSettledAsync(string message, CancellationToken cancellationToken) =>

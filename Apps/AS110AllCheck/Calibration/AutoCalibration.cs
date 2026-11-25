@@ -770,7 +770,7 @@ internal sealed class SystemCalibrationClock : ICalibrationClock
 
 // 段階 1 の弁: 人に切り替えてもらい、OK を待つ(電磁弁①②は未選定。決まったこと 15)。
 // 2026-11-20(人の指示): 指示は「ボールバルブ①を閉じ②を開け」のような、そのスタンドだけの言い方をやめ、してほしい結果で書く
-// (「GC16 が大気圧になるようにして下さい」)。供給側へ戻す指示は出さない: すぐあとの「レギュレータを回して目標圧力に設定して下さい」
+// (「GC16 が大気圧になるようにして下さい」)。供給側へ戻す指示は出さない: すぐあとの「レギュレータを回して、GC16 の表示を … kPa にして下さい」
 // (IAutoCalibrationOperator.WaitRegulatorAdjustedAsync)の 1 画面にまとめた。OK を押したあとにもう 1 つ画面が出て、
 // まだ人の作業が要ることが分かりにくかったため。
 // 2026-11-25(人が選んだ): 人がすること(大気圧にする)と、OK のあとアプリがすること(ゼロ調整・読み取り)を分けて書く。
@@ -787,7 +787,7 @@ internal sealed class ManualBallValveSwitcher(IAutoCalibrationOperator calibrati
             throw new OperationCanceledException("校正の自動読み取りを中止しました。");
     }
 
-    // 指示は出さない(すぐあとの「レギュレータを回して目標圧力に設定して下さい」にまとめた)。
+    // 指示は出さない(すぐあとの「レギュレータを回して、GC16 の表示を … kPa にして下さい」にまとめた)。
     public Task SetSupplyAsync(CancellationToken cancellationToken) => Task.CompletedTask;
 
     public Task RestoreForMeasurementAsync() => calibrationOperator.NotifyAsync(RestoreInstruction);
