@@ -1,9 +1,0 @@
-{
-  "additionalFiles": "",
-  "compiler.optimization_flags": "-Os",
-  "customBuildProperties": "",
-  "fqbn": "esp32:esp32:m5stack_tab5:USBMode=hwcdc,CDCOnBoot=cdc",
-  "hardwareFolders": "C:\\Users\\kawam\\AppData\\Local\\Arduino15\\packages\\esp32\\hardware\\esp32\\3.3.13,C:\\Users\\kawam\\AppData\\Local\\Arduino15\\packages\\esp32\\hardware\\esp32\\3.3.13",
-  "otherLibrariesFolders": "C:\\Users\\kawam\\OneDrive\\添付ファイル\\ドキュメント\\Arduino\\libraries",
-  "sketchLocation": "C:\\_kawamura\\04_アプリ関係\\PSC_AS100201SwitchController\\Apps\\AS100201SwitchController\\firmware\\Tab5LearningPanel"
-}

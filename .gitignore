@@ -44,3 +44,6 @@ __pycache__/
 
 # 校正画面の確認用の画像(Tests/CalibrationPreview --screenshots で作り直せる)
 Apps/AS110AllCheck/Tests/CalibrationPreview/画像/
+
+# arduino-cli が書き込みのときにスケッチの隣に作る build フォルダー(2026-11-26。書き込んだ物はリポジトリに入れない)
+Apps/*/firmware/**/build/
