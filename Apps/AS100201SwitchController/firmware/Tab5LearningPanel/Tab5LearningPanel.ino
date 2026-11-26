@@ -39,15 +39,24 @@
 //     受けた TCP 接続に keepalive を付け(PC から何も届かない時間が約 WIFI_KEEPALIVE_* 秒続いたら閉じる)、
 //     あわせて子機が親機から離れた知らせ(AP_STADISCONNECTED)で親機につながる子機が 0 台になったら、すぐ閉じる。
 //
+// 版 5(2026-11-26、人の決定。SPEC_調整操作の記録.md「版 5 の変更」): 押し忘れの印と、測定の取消
+//   - 1 画面目の右の列を 完了・取消・「測定中に動かした」の 3 段にする。「測定中に動かした」は切り替えで、入れると
+//     次に確定する操作 1 件の行の後ろに :MOVED を付ける(着磁・減磁・ノズル・スペーサーのどれにも)。送れたら切れる
+//   - PC が直前の記録(取消の対象)を LAST: で知らせる。取消の確認には、何が消えるか(測定なら「使わないにしますか」、
+//     操作なら「取り消しますか」)を出す。取り消せるものが無ければ「はい」は押せない
+//
 // PC とのやり取り(LF の行単位。USB-C の内蔵 USB シリアル、または Wi-Fi の TCP。どちらも同じ行):
-//   PC → パネル  AS100201_PANEL_PING           → パネルは AS100201_PANEL_READY:4 を返す(この道が今の道になる)
+//   PC → パネル  AS100201_PANEL_PING           → パネルは AS100201_PANEL_READY:5 を返す(この道が今の道になる)
 //   パネル → PC  DIAG_FRAME:<連番>:<millis>     250ms ごと(PC はこれが 1 秒止まると操作を受け付けない)
 //   パネル → PC  DIAG_BOOT:1                    起動通知(USB)
 //   パネル → PC  BATT:<残量%>:<電圧mV>:<充電中 0/1>  30 秒ごと(電池が無いときは残量 -1)
 //   パネル → PC  ACT:MAG / ACT:DEMAG:FULL|TAP / ACT:NOZZLE:P|R:IN|OUT / ACT:SPACER:P|R:UP|DOWN:<厚さ>:<差> / DONE / UNDO
+//               操作の行には、後ろに :MOVED(測定中に動かした)が付くことがある(版 5)
 //   パネル → PC  HOLD                           パネルに触れた(返事 ACK:HOLD は表示しない)
 //   パネル → PC  SELECT / HOME                  操作を選んでいる途中 / 1 画面目(返事なし)
 //   PC → パネル  ACK:<受け取った行> / NAK:<理由>(理由は日本語 UTF-8)
+//   PC → パネル  LAST:M:<説明> / LAST:O:<説明> / LAST:  直前の記録(測定 / 操作 / 取り消せるものなし。版 5)。
+//               記録が変わったときと、SELECT / HOME を受けるたび(1 秒ごと)に届く
 //   Arduino 向けの AS100201_PING や知らない行(STATE: など)は無視する(接続確認が COM ポートを総当たりで探すため)。
 //
 // Arduino IDE の設定(ツール メニュー):
@@ -63,7 +72,8 @@
 
 // ---- 取り決め ----------------------------------------------------------
 static const char* const HELLO_REQUEST = "AS100201_PANEL_PING";
-static const char* const HELLO_REPLY = "AS100201_PANEL_READY:4";   // 版 4。PC 側 As100201PanelProtocol.PanelVersion と揃える
+static const char* const HELLO_REPLY = "AS100201_PANEL_READY:5";   // 版 5。PC 側 As100201PanelProtocol.PanelVersion と揃える
+static const char* const MOVED_SUFFIX = ":MOVED";                   // 測定中に動かした印(版 5)
 
 // スペーサーの箱の表示(厚さ mm)。2026-11-13 に箱の写真 3 枚から読み取った(手書きの札は読み違いがありうる。実物で確かめる)。
 // 箱が増えたら、ここと PC 側 As100201SpacerCatalog(開発用の代わりのパネルの選択肢)の両方を直す。
@@ -134,7 +144,7 @@ enum Screen : uint8_t { HOME, DEMAG, NOZZLE, SPACER, SPACER_PICK, SPACER_DIFF, U
 enum ButtonId : uint8_t {
   B_NONE, B_MAG, B_DEMAG, B_NOZ_P, B_NOZ_R, B_SPC_P, B_SPC_R, B_DONE, B_UNDO,
   B_BACK, B_FULL, B_TAP, B_IN, B_OUT, B_UP, B_DOWN, B_YES, B_NO,
-  B_TAB, B_THICK, B_DIFF, B_NOT_MEASURED
+  B_TAB, B_THICK, B_DIFF, B_NOT_MEASURED, B_MOVED
 };
 
 struct Button {
@@ -187,8 +197,14 @@ unsigned long lastTouchAt = 0;
 
 String pendingLine;           // 送って返事を待っている行(空なら待っていない)
 unsigned long pendingAt = 0;
-String lastOperation;         // 最後に記録された操作(ACT: の行)。取消の確認に出す
 int pressedIndex = -1;          // 押している最中のボタン(buttons の添字。なければ -1)
+// 版 5: 「測定中に動かした」の印(次に確定する操作 1 件に付く)。
+bool movedMark = false;
+// 版 5: PC から届いた直前の記録(取消の対象)。kind は 'M'(測定)/ 'O'(操作)/ 0(取り消せるものなし)。
+// 取消の確認を開いたら known を外し、PC から新しい知らせが届くまで「はい」を押せなくする(古い対象を出さないため)。
+bool lastRecordKnown = false;
+char lastRecordKind = 0;
+String lastRecordText;
 
 enum MessageKind : uint8_t { MSG_INFO, MSG_OK, MSG_WARN, MSG_ERROR };
 MessageKind messageKind = MSG_INFO;
@@ -219,6 +235,9 @@ int spacerTabOf(int index) {
 // ---- 文言 ---------------------------------------------------------------
 // PC の台帳・ログと同じ言葉で、送った行を人に見せる名前にする。
 String describe(const String& line) {
+  // 版 5: 後ろの :MOVED は印。外した残りを名前にして、印を書き足す。
+  if (line.startsWith("ACT:") && line.endsWith(MOVED_SUFFIX))
+    return describe(line.substring(0, line.length() - strlen(MOVED_SUFFIX))) + "・測定中に動かした";
   if (line == "DONE") return "完了";
   if (line == "UNDO") return "取消";
   if (line == "ACT:MAG") return "着磁";
@@ -312,7 +331,13 @@ void sendCommand(const String& line) {
   }
   pendingLine = line;
   pendingAt = millis();
+  if (line.startsWith("ACT:")) movedMark = false;   // 印は送れた操作 1 件で使い切る(版 5)
   setMessage(MSG_INFO, "送りました：" + describe(line), "PC の返事を待っています…");
+}
+
+// 操作の行を送る。「測定中に動かした」の印が入っていれば、後ろに :MOVED を付ける(版 5)。
+void sendOperation(const String& line) {
+  sendCommand(movedMark ? line + MOVED_SUFFIX : line);
 }
 
 // パネルに触れた合図。PC は測定中なら LOGGER を止める。返事は待たず、表示も変えない(送れなくても画面の操作は続けられる)。
@@ -386,11 +411,24 @@ void handleLine(Path from, const String& line) {
   }
   // 返事は今の道からだけ受け取る。
   if (from != currentPath) return;
+  if (line.startsWith("LAST:")) {
+    // 直前の記録(版 5)。LAST:M:<説明> / LAST:O:<説明> / LAST:。取消の確認を出しているときだけ描き直す。
+    char kind = 0;
+    String text;
+    if (line.length() >= 7 && line.charAt(6) == ':' && (line.charAt(5) == 'M' || line.charAt(5) == 'O')) {
+      kind = line.charAt(5);
+      text = line.substring(7);
+    }
+    bool changed = !lastRecordKnown || kind != lastRecordKind || text != lastRecordText;
+    lastRecordKnown = true;
+    lastRecordKind = kind;
+    lastRecordText = text;
+    if (changed && screen == UNDO_CONFIRM) dirty = true;
+    return;
+  }
   if (line.startsWith("ACK:")) {
     String target = line.substring(4);
     if (target == "HOLD") return;   // パネルに触れた合図の返事は出さない
-    if (target.startsWith("ACT:")) lastOperation = target;
-    else if (target == "UNDO") lastOperation = "";
     if (target == pendingLine) pendingLine = "";
     setMessage(MSG_OK, "記録しました：" + describe(target), "");
     return;
@@ -522,8 +560,11 @@ void layoutButtons() {
     addButton(GAP + cw + GAP, y2, cw, ch, B_NOZ_R, "ノズル\nR 側", C_OP);
     addButton(GAP + (cw + GAP) * 2, top, cw, ch, B_SPC_P, "スペーサー\nP 側", C_OP);
     addButton(GAP + (cw + GAP) * 2, y2, cw, ch, B_SPC_R, "スペーサー\nR 側", C_OP);
-    addButton(rightX, top, rightW, ch, B_DONE, "完了", C_DONE);
-    addButton(rightX, y2, rightW, ch, B_UNDO, "取消", C_UNDO);
+    // 右の列は 完了・取消・「測定中に動かした」の 3 段(版 5、2026-11-26)。印は入っていると選択中の色になる。
+    int rh = (bottom - top - GAP * 2) / 3;
+    addButton(rightX, top, rightW, rh, B_DONE, "完了", C_DONE);
+    addButton(rightX, top + rh + GAP, rightW, rh, B_UNDO, "取消", C_UNDO);
+    addButton(rightX, top + (rh + GAP) * 2, rightW, rh, B_MOVED, "測定中に\n動かした", C_UNSELECTED, movedMark);
     return;
   }
 
@@ -581,7 +622,7 @@ void layoutButtons() {
   } else if (screen == UNDO_CONFIRM) {
     int cw = (leftW - GAP) / 2;
     int h = 220;
-    addButton(GAP, bottom - h, cw, h, B_YES, "はい、取り消す", C_YES);
+    addButton(GAP, bottom - h, cw, h, B_YES, lastRecordKind == 'M' ? "はい、使わない" : "はい、取り消す", C_YES);
     addButton(GAP + cw + GAP, bottom - h, cw, h, B_NO, "いいえ", C_BACK);
   }
 }
@@ -589,7 +630,9 @@ void layoutButtons() {
 // 押せるのは、PC の確認を受けていて、返事待ちでないときだけ。戻る・いいえ・スペーサーの向き・タブ・厚さは
 // 送らない(次のページへ進むだけ)のでいつでも押せる。
 bool buttonEnabled(const Button& b) {
-  if (b.id == B_BACK || b.id == B_NO || b.id == B_UP || b.id == B_DOWN || b.id == B_TAB || b.id == B_THICK) return true;
+  if (b.id == B_BACK || b.id == B_NO || b.id == B_UP || b.id == B_DOWN || b.id == B_TAB || b.id == B_THICK || b.id == B_MOVED) return true;
+  // 取消の「はい」は、PC から今の取消の対象が届いていて、取り消せるものがあるときだけ(版 5)。
+  if (b.id == B_YES && (!lastRecordKnown || lastRecordKind == 0)) return false;
   return currentPath != PATH_NONE && pathAlive(currentPath) && pendingLine.length() == 0;
 }
 
@@ -691,7 +734,9 @@ void drawTitle(const String& text) {
   M5.Display.setTextSize(1.0f);
   M5.Display.setTextColor(C_TEXT);
   M5.Display.setTextDatum(middle_left);
-  M5.Display.drawString(text, GAP, HEADER_H + GAP + 30);
+  // 右の列(戻る)の下に隠れないよう、左の領域の幅に入らなければ縮める(版 5 で印の文字が付いて長くなるため)。
+  const int leftW = M5.Display.width() - GAP - 300 - GAP - GAP;
+  drawFittedString(text, &fonts::lgfxJapanGothicP_36, 1.0f, GAP, HEADER_H + GAP + 30, leftW);
 }
 
 void drawScreen() {
@@ -700,12 +745,14 @@ void drawScreen() {
   M5.Display.fillScreen(C_BG);
   drawHeader();
 
-  if (screen == DEMAG) drawTitle("減磁：程度を押すと記録します");
-  else if (screen == SPACER) drawTitle(String("スペーサー ") + side + " 側：向きを選んでください");
-  else if (screen == NOZZLE) drawTitle(String("ノズル ") + side + " 側：方向を押すと記録します");
+  // 「測定中に動かした」の印が入っていれば、操作を選ぶページの題名に出す(版 5)。
+  String moved = movedMark ? "（測定中に動かした）" : "";
+  if (screen == DEMAG) drawTitle("減磁：程度を押すと記録します" + moved);
+  else if (screen == SPACER) drawTitle(String("スペーサー ") + side + " 側：向きを選んでください" + moved);
+  else if (screen == NOZZLE) drawTitle(String("ノズル ") + side + " 側：方向を押すと記録します" + moved);
   else if (screen == SPACER_DIFF) {   // SPACER_PICK は題名を出さない(2026-11-19、人の決定)
     drawTitle(String("スペーサー ") + side + " 側・" + (spacerUp ? "上げる" : "下げる") + "・" +
-              (spacerIndex >= 0 ? SPACER_THICKNESSES[spacerIndex] : "?"));
+              (spacerIndex >= 0 ? SPACER_THICKNESSES[spacerIndex] : "?") + moved);
     M5.Display.setFont(&fonts::lgfxJapanGothicP_32);
     M5.Display.setTextColor(C_SUBTEXT);
     M5.Display.setTextDatum(middle_left);
@@ -716,14 +763,23 @@ void drawScreen() {
     M5.Display.setTextColor(C_TEXT);
     M5.Display.setTextDatum(middle_left);
     int y = HEADER_H + GAP + 110;
-    if (lastOperation.length()) {
-      M5.Display.drawString("直前の操作を取り消しますか", GAP, y);
-      M5.Display.drawString("「" + describe(lastOperation) + "」", GAP, y + 70);
-    } else {
-      M5.Display.drawString("直前の操作を取り消しますか", GAP, y);
+    // 何が消えるかは PC が LAST: で知らせる(版 5)。届くまでは「はい」を押せない。
+    if (!lastRecordKnown) {
+      M5.Display.drawString("PC に直前の記録を問い合わせています…", GAP, y);
+    } else if (lastRecordKind == 'M') {
+      M5.Display.drawString("直前の測定を使わないにしますか", GAP, y);
+      M5.Display.drawString("「" + lastRecordText + "」", GAP, y + 70);
       M5.Display.setFont(&fonts::lgfxJapanGothicP_28);
       M5.Display.setTextColor(C_SUBTEXT);
-      M5.Display.drawString("（このパネルでは直前の操作が分かりません。取り消すのは PC の記録の直前の操作です）", GAP, y + 70);
+      M5.Display.drawString("（波形のファイルは残り、台帳に「使わない」と書きます）", GAP, y + 130);
+    } else if (lastRecordKind == 'O') {
+      M5.Display.drawString("直前の操作を取り消しますか", GAP, y);
+      M5.Display.drawString("「" + lastRecordText + "」", GAP, y + 70);
+    } else {
+      M5.Display.drawString("取り消せる記録がありません", GAP, y);
+      M5.Display.setFont(&fonts::lgfxJapanGothicP_28);
+      M5.Display.setTextColor(C_SUBTEXT);
+      M5.Display.drawString("（完了・シリアル番号のあとと、取り消したあとは取り消せません）", GAP, y + 70);
     }
   }
 
@@ -752,13 +808,15 @@ int hitTest(int x, int y) {
 
 void sendSpacer(const char* diff) {
   if (spacerIndex < 0) return;
-  sendCommand(String("ACT:SPACER:") + side + ":" + (spacerUp ? "UP" : "DOWN") + ":" +
-              SPACER_THICKNESSES[spacerIndex] + ":" + diff);
+  sendOperation(String("ACT:SPACER:") + side + ":" + (spacerUp ? "UP" : "DOWN") + ":" +
+                SPACER_THICKNESSES[spacerIndex] + ":" + diff);
 }
 
 void activate(const Button& b) {
   switch (b.id) {
-    case B_MAG:   sendCommand("ACT:MAG"); break;
+    case B_MAG:   sendOperation("ACT:MAG"); break;
+    // 測定中に動かした印の切り替え(版 5)。触れた合図(HOLD)も送る(測定中なら PC が止める)。
+    case B_MOVED: sendHold(); movedMark = !movedMark; break;
     // 2 画面目のあるボタンは、押した時点で HOLD を送る(測定中なら PC が LOGGER を止める)。
     case B_DEMAG: sendHold(); screen = DEMAG; break;
     case B_NOZ_P: sendHold(); screen = NOZZLE; side = 'P'; break;
@@ -766,16 +824,17 @@ void activate(const Button& b) {
     case B_SPC_P: sendHold(); screen = SPACER; side = 'P'; break;
     case B_SPC_R: sendHold(); screen = SPACER; side = 'R'; break;
     case B_DONE:  sendCommand("DONE"); break;
-    case B_UNDO:  sendHold(); screen = UNDO_CONFIRM; break;
+    // 取消の確認を開いたら、PC から今の対象が届くまで「はい」を押せなくする(HOLD で測定が止まると対象が変わるため)。
+    case B_UNDO:  lastRecordKnown = false; sendHold(); screen = UNDO_CONFIRM; break;
     case B_BACK:
       // 厚さ・差のページは 1 つ前のページへ。ほかは 1 画面目へ。
       screen = screen == SPACER_DIFF ? SPACER_PICK : screen == SPACER_PICK ? SPACER : HOME;
       break;
     case B_NO:    screen = HOME; break;
-    case B_FULL:  sendCommand("ACT:DEMAG:FULL"); break;
-    case B_TAP:   sendCommand("ACT:DEMAG:TAP"); break;
-    case B_IN:    sendCommand(String("ACT:NOZZLE:") + side + ":IN"); break;
-    case B_OUT:   sendCommand(String("ACT:NOZZLE:") + side + ":OUT"); break;
+    case B_FULL:  sendOperation("ACT:DEMAG:FULL"); break;
+    case B_TAP:   sendOperation("ACT:DEMAG:TAP"); break;
+    case B_IN:    sendOperation(String("ACT:NOZZLE:") + side + ":IN"); break;
+    case B_OUT:   sendOperation(String("ACT:NOZZLE:") + side + ":OUT"); break;
     case B_UP:
     case B_DOWN:
       spacerUp = b.id == B_UP;

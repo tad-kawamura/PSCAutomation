@@ -8,6 +8,10 @@ internal sealed partial class MainForm : Form
     private As100201VirtualPanelLink? _virtualPanel;
     private readonly ComboBox _virtualCommandComboBox = new();
     private readonly Label _virtualReplyLabel = new();
+    // 版 5(2026-11-26): 直前の記録(LAST:)と「測定中に動かした」の印。
+    private readonly Label _virtualLastLabel = new();
+    private readonly CheckBox _virtualMovedCheckBox = new();
+    private string? _virtualLastLine;
 
     public bool UsesVirtualPanel => _useVirtualPanel;
 
@@ -116,6 +120,17 @@ internal sealed partial class MainForm : Form
             if (!_virtualPanel.Press(line)) AppendLog("代わりのパネルは接続されていないため送れません。");
         };
         faults.Controls.Add(selecting);
+        // Tab5 の 1 画面目の「測定中に動かした」の代わり。入れると次に送る操作 1 件に :MOVED を付け、送ったら外す。
+        _virtualMovedCheckBox.AutoSize = true;
+        _virtualMovedCheckBox.Text = "測定中に動かした（次の操作 1 件）";
+        _virtualMovedCheckBox.Margin = new Padding(0, 4, 16, 0);
+        _virtualMovedCheckBox.ForeColor = SystemColors.ControlText;
+        faults.Controls.Add(_virtualMovedCheckBox);
+        _virtualLastLabel.AutoSize = true;
+        _virtualLastLabel.Margin = new Padding(0, 5, 16, 0);
+        _virtualLastLabel.Text = "直前の記録：（まだありません）";
+        _virtualLastLabel.ForeColor = SystemColors.ControlText;
+        faults.Controls.Add(_virtualLastLabel);
         _virtualReplyLabel.AutoSize = true;
         _virtualReplyLabel.Margin = new Padding(0, 5, 0, 0);
         _virtualReplyLabel.Text = "パネルへの返事：（まだありません）";
@@ -150,15 +165,28 @@ internal sealed partial class MainForm : Form
     private void PressVirtualPanel(As100201PanelCommand command)
     {
         if (_virtualPanel is null) return;
+        bool moved = command.Kind == As100201PanelCommandKind.Operation && !command.Moved && _virtualMovedCheckBox.Checked;
+        if (moved) command = As100201PanelCommand.Parse(command.Line + As100201PanelCommand.MovedSuffix);
         AppendLog($"代わりのパネル：{command.DisplayName}（{command.Line}）を送ります。");
         if (!_virtualPanel.Press(command.Line))
             AppendLog("代わりのパネルは接続されていないため送れません（接続確認・再接続を待ってください）。");
+        else if (moved) _virtualMovedCheckBox.Checked = false;
     }
 
     private void VirtualPanelLineSent(string line)
     {
         PostToUi(() =>
         {
+            if (line.StartsWith(As100201PanelProtocol.LastPrefix, StringComparison.Ordinal))
+            {
+                // 直前の記録は 1 秒ごとに届くので、ログには出さず、変わったときだけ表示を書き換える。
+                if (line == _virtualLastLine) return;
+                _virtualLastLine = line;
+                string body = line[As100201PanelProtocol.LastPrefix.Length..];
+                _virtualLastLabel.Text = "直前の記録：" + (body.Length == 0 ? "取り消せるものなし"
+                    : body.StartsWith("M:", StringComparison.Ordinal) ? "測定 " + body[2..] : "操作 " + body[2..]);
+                return;
+            }
             _virtualReplyLabel.Text = "パネルへの返事：" + line;
             _virtualReplyLabel.ForeColor = line.StartsWith("ACK:", StringComparison.Ordinal) ? Color.DarkGreen : Color.DarkRed;
             AppendLog("タッチパネルへの返事：" + line);

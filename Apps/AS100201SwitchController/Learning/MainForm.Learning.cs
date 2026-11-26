@@ -353,7 +353,20 @@ internal sealed partial class MainForm : Form
     }
 
     // パネルが操作を選び始めた(SELECT)・1 画面目に戻った(HOME)。選んでいる途中は READY LED を消し、測定を始めない。
-    private void PanelSelectionChanged(bool selecting) => PostToUi(() => SetPanelSelecting(selecting));
+    // パネルは SELECT / HOME を 1 秒ごとと確認の直後に送るので、そのたびに直前の記録(LAST:)も送り直す
+    // (つなぎ直し・パネルの再起動のあとも、取消の確認に今の対象が出るように。版 5)。
+    private void PanelSelectionChanged(bool selecting) => PostToUi(() =>
+    {
+        SetPanelSelecting(selecting);
+        SendLastRecord();
+    });
+
+    // 直前の記録(取消の対象)をパネルへ知らせる(版 5、2026-11-26)。返事は求めない。送れなくても次の SELECT / HOME で送り直す。
+    private void SendLastRecord()
+    {
+        if (_panel is null || _learning is null || _closing) return;
+        _panel.TrySend(As100201PanelProtocol.Last(_learning.UndoTarget));
+    }
 
     private void SetPanelSelecting(bool selecting)
     {
@@ -515,6 +528,8 @@ internal sealed partial class MainForm : Form
     private void AfterLearningChange()
     {
         if (_closing || IsDisposed) return;
+        // 台帳に書いたら(測定・操作・完了・取消・番号)、取消の対象が変わるのでパネルへ知らせる(版 5)。
+        SendLastRecord();
         RefreshReadyLed();
         UpdateControls();
         if (_learning is { Blocked: true } && !_retryDialogOpen && IsHandleCreated)

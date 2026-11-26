@@ -126,8 +126,21 @@ internal static class LearningChecks
         Check(As100201SpacerCatalog.Thicknesses.Count == 49 && As100201SpacerCatalog.Thicknesses.Distinct().Count() == 49 &&
             As100201SpacerCatalog.Thicknesses.All(t => As100201PanelCommand.TryParse($"ACT:SPACER:P:UP:{t}:NA", out _)) &&
             As100201SpacerCatalog.Differences.All(d => As100201PanelCommand.TryParse($"ACT:SPACER:P:UP:0.450:{d}", out _)), "spacer catalog");
-        // 版 4(2026-11-13、版 3 のノズル・スペーサー・HOLD に、選んでいる途中の SELECT / HOME を足した)。版 3 までのスケッチは書き込み直しを求める。
-        Check(As100201PanelProtocol.CheckHello("AS100201_PANEL_READY:4") is null, "panel version 4 rejected");
+        // 版 5(2026-11-26): 操作の行の後ろの :MOVED(測定中に動かした)。どの操作にも付く。台帳の言葉は変えず、印だけ足す。
+        Check(As100201PanelCommand.TryParse("ACT:MAG:MOVED", out c) && c.Moved && c.Operation == As100201Operation.Magnetize && c.Line == "ACT:MAG:MOVED" &&
+            c.DisplayName == "着磁（測定中に動かした）", "MAG MOVED");
+        Check(As100201PanelCommand.TryParse("ACT:NOZZLE:R:OUT:MOVED", out c) && c.Moved && c.Direction == "離す" && c.DisplayName == "ノズル R 側（離す・測定中に動かした）", "NOZZLE MOVED");
+        Check(As100201PanelCommand.TryParse("ACT:DEMAG:FULL:MOVED", out c) && c.Moved && c.Degree == "しっかり", "DEMAG MOVED");
+        Check(As100201PanelCommand.TryParse("ACT:SPACER:P:UP:0.450:+2:MOVED", out c) && c.Moved && c.Thickness == "0.450" && c.Degree == "差+2μm", "SPACER MOVED");
+        Check(As100201PanelCommand.TryParse("ACT:MAG", out c) && !c.Moved, "MAG marked as moved");
+        Check(As100201PanelProtocol.Ack(As100201PanelCommand.Parse("ACT:MAG:MOVED")) == "ACK:ACT:MAG:MOVED", "ACK keeps the mark");
+        foreach (string bad in new[] { "ACT:MOVED", "ACT::MOVED", "ACT:MAG:MOVED:MOVED", "ACT:MAG:moved", "DONE:MOVED", "UNDO:MOVED", "HOLD:MOVED", "ACT:DEMAG:MOVED", "ACT:NOZZLE:P:MOVED" })
+            Check(!As100201PanelCommand.TryParse(bad, out _), "accepted bad moved line: " + bad);
+        // 直前の記録の知らせ(版 5)。
+        Check(As100201PanelProtocol.Last(null) == "LAST:", "LAST none");
+        // 版 5(2026-11-26、版 4 に :MOVED と LAST: を足した)。版 4 までのスケッチは書き込み直しを求める。
+        Check(As100201PanelProtocol.CheckHello("AS100201_PANEL_READY:5") is null, "panel version 5 rejected");
+        Check(As100201PanelProtocol.CheckHello("AS100201_PANEL_READY:4")?.Contains("版 4") == true, "panel version 4 accepted");
         Check(As100201PanelProtocol.CheckHello("AS100201_PANEL_READY:3")?.Contains("版 3") == true, "panel version 3 accepted");
         Check(!As100201PanelCommand.TryParse("SELECT", out _) && !As100201PanelCommand.TryParse("HOME", out _), "selection lines parsed as commands");
         Check(As100201PanelProtocol.CheckHello("AS100201_PANEL_READY:2")?.Contains("版 2") == true, "panel version 2 accepted");
@@ -135,7 +148,7 @@ internal static class LearningChecks
         Check(As100201PanelProtocol.CheckHello("AS100201_READY:2") is not null && As100201PanelProtocol.CheckHello(null)?.Contains("不明") == true, "Arduino reply accepted as panel");
         Check(As100201PanelProtocol.HelloRequest != "AS100201_PING" && !As100201PanelProtocol.HelloPrefix.StartsWith(As100201ArduinoProtocol.HelloPrefix) &&
             !As100201ArduinoProtocol.HelloPrefix.StartsWith(As100201PanelProtocol.HelloPrefix), "panel and Arduino hello strings collide");
-        Pass("panel lines (v4): ACT:MAG / DEMAG / NOZZLE direction / SPACER thickness+diff / DONE / UNDO / HOLD parsed with ledger words; v2 and malformed lines rejected; ACK/NAK; panel version 4 only; SELECT / HOME are not commands");
+        Pass("panel lines (v5): ACT:MAG / DEMAG / NOZZLE direction / SPACER thickness+diff / DONE / UNDO / HOLD parsed with ledger words; :MOVED mark on any operation; v2 and malformed lines rejected; ACK/NAK; LAST:; panel version 5 only; SELECT / HOME are not commands");
     }
 
     // 2. 台帳の行の組み立て(CSV の形)
@@ -324,32 +337,53 @@ internal static class LearningChecks
         before = ledger.Rows.Count;
         Check(s.HandleCommand(done).StartsWith("NAK:完了は記録済み") && ledger.Rows.Count == before, "second done recorded");
         // 完了の後の取消: 取り消せる操作がない。
-        Check(s.HandleCommand(undo).StartsWith("NAK:") && ledger.Rows.Count == before && logs[^1].Contains("取り消せる操作がありません"), "undo after done");
+        Check(s.HandleCommand(undo).StartsWith("NAK:") && ledger.Rows.Count == before && logs[^1].Contains("取り消せる記録がありません") && s.UndoTarget is null, "undo after done");
         // 完了のあとに操作: 「完了の取消」+「直前の測定なし」、同じ個体の続き。
         Check(s.HandleCommand(mag) == "ACK:ACT:MAG" && ledger.Rows[^1].Note == "完了の取消、直前の測定なし" && !s.Completed && s.OperationCount == 4, "operation after done cancels done");
         // 取消: 直前の操作 1 件だけ。2 回目は NAK。取消のあと操作は「直前の測定なし」のまま(取り消した操作の前の状態に戻る)。
-        Check(s.HandleCommand(undo) == "ACK:UNDO" && ledger.Rows[^1] is { Kind: As100201LedgerEventKind.Undo, SerialNumber: "SN001" } && ledger.Rows[^1].Note.StartsWith("取消の対象: 09:00:") &&
-            ledger.Rows[^1].Note.EndsWith(" 着磁") && s.OperationCount == 3, "undo row");
-        Check(s.HandleCommand(undo).StartsWith("NAK:"), "second undo");
+        // 版 5: 操作の取消の行には、対象の操作を「操作」などの列にも書く。
+        Check(As100201PanelProtocol.Last(s.UndoTarget) == "LAST:O:09:00:09 着磁", "LAST for the operation: " + As100201PanelProtocol.Last(s.UndoTarget));
+        Check(s.HandleCommand(undo) == "ACK:UNDO" && ledger.Rows[^1] is { Kind: As100201LedgerEventKind.Undo, SerialNumber: "SN001", Operation: "着磁", File: "" } &&
+            ledger.Rows[^1].Note == "取消の対象: 09:00:09 着磁" && s.OperationCount == 3 && s.UndoTarget is null, "undo row");
+        Check(s.HandleCommand(undo).StartsWith("NAK:取り消せる記録がありません"), "second undo");
         Check(s.HandleCommand(nozzle) == "ACK:ACT:NOZZLE:P:IN" && ledger.Rows[^1].Note == "直前の測定なし", "state restored after undo");
-        // 測定の次の操作は取り消せるが、測定を挟むと取り消せない。
+        // 版 5: 測定のあとの取消は、その測定を「使わない」にする(取消の行の「ファイル」列にその xdt)。xdt は残る。もう一度は NAK。
         s.MeasurementStopped("PC", "PC", "0", As100201LearningSession.StopBySwitch);
         s.MeasurementCompleted("PC", "PC", "0");
-        Check(s.HandleCommand(undo).StartsWith("NAK:"), "undo across measurement");
-        Check(s.HandleCommand(As100201PanelCommand.Parse("ACT:SPACER:R:DOWN:0.450:+2")) == "ACK:ACT:SPACER:R:DOWN:0.450:+2" && ledger.Rows[^1] is { Operation: "スペーサー R", Direction: "下げる", Thickness: "0.450", Degree: "差+2μm", Note: "" }, "spacer after measurement");
+        Check(s.MeasurementCount == 4 && As100201PanelProtocol.Last(s.UndoTarget) == "LAST:M:09:00:12 PC", "LAST for the measurement: " + As100201PanelProtocol.Last(s.UndoTarget));
+        int savedBefore = saved.Count;
+        Check(s.HandleCommand(undo) == "ACK:UNDO" && ledger.Rows[^1] is { Kind: As100201LedgerEventKind.Undo, Operation: "", File: @"SN001\20261109_090012_SN001_PC.xdt" } &&
+            ledger.Rows[^1].Note == "取消の対象: 測定 09:00:12 PC（使わない）" && s.MeasurementCount == 3 && saved.Count == savedBefore, "undo measurement: " + ledger.Rows[^1].Note);
+        Check(s.HandleCommand(undo).StartsWith("NAK:") && logs.Any(l => l.Contains("を使わないにしました")), "second undo after measurement");
+        // 測定を取り消したら、その前(ノズルの操作)に戻るので、次の操作は「直前の測定なし」。
+        Check(s.HandleCommand(As100201PanelCommand.Parse("ACT:SPACER:R:DOWN:0.450:+2")) == "ACK:ACT:SPACER:R:DOWN:0.450:+2" &&
+            ledger.Rows[^1] is { Operation: "スペーサー R", Direction: "下げる", Thickness: "0.450", Degree: "差+2μm", Note: "直前の測定なし" }, "spacer after undone measurement: " + ledger.Rows[^1].Note);
         Check(s.HandleCommand(As100201PanelCommand.Parse("HOLD")) == "ACK:HOLD" && ledger.Rows[^1].Operation == "スペーサー R", "hold wrote a ledger row");
-        Check(s.HandleCommand(undo) == "ACK:UNDO" && ledger.Rows[^1].Note.EndsWith(" スペーサー R（下げる・0.450・差+2μm）"), "undo spacer");
-        Check(s.HandleCommand(done) == "ACK:DONE" && s.SerialNumber is null, "done 2");
-        // 台帳からの数え直し: 取消は直前の操作を消す。番号の行・押した行は数えない。
-        Check(s.FindSerial("SN001") is { MeasurementCount: 4, OperationCount: 4, Completed: true, LastIsMeasurement: false }, "history with undo rows");
+        Check(s.HandleCommand(undo) == "ACK:UNDO" && ledger.Rows[^1] is { Operation: "スペーサー R", Direction: "下げる", Thickness: "0.450", Degree: "差+2μm" } &&
+            ledger.Rows[^1].Note.EndsWith(" スペーサー R（下げる・0.450・差+2μm）"), "undo spacer");
+        // 押した行は取消の対象を変えない: 測定 → 押した → 取消 で、その測定を取り消す。
+        s.MeasurementStopped("CR", "CR", "140", As100201LearningSession.StopByPanel);
+        s.MeasurementCompleted("CR", "CR", "140");
+        s.WaveformRestarted("PC", "0", null, null);
+        Check(s.UndoTarget is { IsMeasurement: true } && s.HandleCommand(undo) == "ACK:UNDO" && ledger.Rows[^1].File == @"SN001\20261109_090016_SN001_CR.xdt", "pressed row changed the undo target");
+        Check(s.HandleCommand(done) == "ACK:DONE" && s.SerialNumber is null && As100201PanelProtocol.Last(s.UndoTarget) == "LAST:", "done 2");
+        // 台帳からの数え直し: 取消は直前の操作・測定を消す(ファイル列のあるのが測定の取消)。番号の行・押した行は数えない。
+        Check(s.FindSerial("SN001") is { MeasurementCount: 3, OperationCount: 4, Completed: true, LastIsMeasurement: false }, "history with undo rows");
+        Check(As100201LearningSession.BuildHistory(new[]
+        {
+            new As100201LedgerRow(DateTime.MinValue, As100201LedgerEventKind.Operation) { SerialNumber = "SN9" },
+            new As100201LedgerRow(DateTime.MinValue, As100201LedgerEventKind.Measurement) { SerialNumber = "SN9", File = "a.xdt" },
+            new As100201LedgerRow(DateTime.MinValue, As100201LedgerEventKind.Undo) { SerialNumber = "SN9", File = "a.xdt" }
+        }, "SN9") is { MeasurementCount: 0, OperationCount: 1, LastIsMeasurement: false }, "history: measurement undo");
         // 新しい番号: 件数を 0 から。xdt は番号のフォルダーに、名前にも番号が入る。
-        Check(s.SelectSerial("SN002", null) && ledger.Rows[^1].Note == "新規", "new serial after done");
+        Check(s.SelectSerial("SN002", null) && ledger.Rows[^1].Note == "新規" && s.UndoTarget is null, "new serial after done");
         s.MeasurementStopped("", "", "", As100201LearningSession.StopBySwitch);
-        Check(ledger.Rows[^1] is { SerialNumber: "SN002", Side: "", Phase: "", Note: "位相の出し直しなし", File: @"SN002\20261109_090017_SN002.xdt" } && s.MeasurementCount == 1 && s.OperationCount == 0 && !s.Completed,
+        Check(ledger.Rows[^1] is { SerialNumber: "SN002", Side: "", Phase: "", Note: "位相の出し直しなし", File: @"SN002\20261109_090021_SN002.xdt" } && s.MeasurementCount == 1 && s.OperationCount == 0 && !s.Completed,
             "new individual: " + ledger.Rows[^1].File);
+        Check(As100201PanelProtocol.Last(s.UndoTarget) == "LAST:M:09:00:21 側なし", "LAST without side: " + As100201PanelProtocol.Last(s.UndoTarget));
         // 同じ秒に 2 つ目の xdt は _2。日をまたいでも同じ番号のフォルダー。
         s.MeasurementCompleted("", "", "");
-        Check(s.BuildXdtPath(new DateTime(2026, 11, 9, 9, 0, 17), "") == @"C:\fake\SN002\20261109_090017_SN002_2.xdt", "duplicate name suffix");
+        Check(s.BuildXdtPath(new DateTime(2026, 11, 9, 9, 0, 21), "") == @"C:\fake\SN002\20261109_090021_SN002_2.xdt", "duplicate name suffix");
         Check(s.BuildXdtPath(new DateTime(2026, 11, 10, 0, 0, 1), "PC") == @"C:\fake\SN002\20261110_000001_SN002_PC.xdt", "serial folder after midnight");
         // 完了せずに次の番号へ: そのまま切り替え、番号の行とログに残す。
         Check(s.SelectSerial("SN003", null) && ledger.Rows[^1] is { SerialNumber: "SN003", Note: "新規、前の番号 SN002 は完了せず切り替え" } &&
@@ -359,8 +393,13 @@ internal static class LearningChecks
         Check(unfinished is { MeasurementCount: 1, OperationCount: 0, Completed: false, LastIsMeasurement: true }, "history of the unfinished serial");
         Check(s.SelectSerial("SN002", unfinished) && ledger.Rows[^1].Note == "続き（未完了）、前の番号 SN003 は完了せず切り替え" &&
             s.HandleCommand(mag) == "ACK:ACT:MAG" && ledger.Rows[^1] is { SerialNumber: "SN002", Note: "" }, "continue the unfinished serial");
-        Check(ledger.Rows.All(r => r.KindText is "測定" or "操作" or "完了" or "取消" or "番号") && !s.Blocked, "unexpected kinds or blocked");
-        Pass("learning flow: serial on every row, first-op note, row at stop + xdt at completion in the serial folder, panel/auto stop triggers, done counts and clears the serial, NAK without serial, continue a completed/unfinished serial from the ledger, switch without done noted, single undo with state restore");
+        // 版 5: 「測定中に動かした」の印は操作の行の備考に残る(ほかの備考と「、」でつなぐ)。
+        Check(s.HandleCommand(As100201PanelCommand.Parse("ACT:NOZZLE:R:OUT:MOVED")) == "ACK:ACT:NOZZLE:R:OUT:MOVED" &&
+            ledger.Rows[^1] is { Operation: "ノズル R", Direction: "離す", Note: "直前の測定なし、測定中に動かした" }, "moved mark note: " + ledger.Rows[^1].Note);
+        s.MeasurementStopped("PC", "PC", "0", As100201LearningSession.StopByPanel);
+        Check(s.HandleCommand(As100201PanelCommand.Parse("ACT:MAG:MOVED")) == "ACK:ACT:MAG:MOVED" && ledger.Rows[^1].Note == "測定中に動かした", "moved mark after measurement");
+        Check(ledger.Rows.All(r => r.KindText is "測定" or "操作" or "完了" or "取消" or "番号" or "押した") && !s.Blocked, "unexpected kinds or blocked");
+        Pass("learning flow: serial on every row, first-op note, row at stop + xdt at completion in the serial folder, panel/auto stop triggers, done counts and clears the serial, NAK without serial, continue a completed/unfinished serial from the ledger, switch without done noted, single undo of the last operation or measurement (v5) with state restore, LAST: text, moved mark note");
     }
 
     // 4. 書けないときの停止と再試行
@@ -482,7 +521,7 @@ internal static class LearningChecks
         public event Action<string>? LineReceived;
         public event Action? Disconnected;
         public bool IsConnected { get; private set; }
-        public string HelloReply = "AS100201_PANEL_READY:4";
+        public string HelloReply = "AS100201_PANEL_READY:5";
         public bool Fail;
         public List<string> Sent { get; } = new();
         public List<string> Requests { get; } = new();
@@ -557,7 +596,7 @@ internal static class LearningChecks
         await panel.MaintainAsync();
         Check(!panel.IsConnected && statuses[^1].Contains("版 9"), "wrong version accepted");
         // 起動通知で古い状態を捨てる。
-        link.HelloReply = "AS100201_PANEL_READY:4";
+        link.HelloReply = "AS100201_PANEL_READY:5";
         await Task.Delay(2100);
         await panel.MaintainAsync();
         for (int i = 0; i < 6; i++) { link.Receive($"DIAG_FRAME:{seq}:{seq * 250}"); seq++; await Task.Delay(250); }

@@ -22,7 +22,13 @@ internal sealed class As100201PanelProtocol : IDisposable
     // 版 2(2026-11-13): USB と Wi-Fi の両方でつながり、電池残量 BATT: を送る。版 1 の行はそのまま。
     // 版 3(2026-11-13): ノズルは方向だけ、スペーサーは厚さと表示との差を付ける、パネルに触れたら HOLD を送る。
     // 版 4(2026-11-13): 2 画面目以降に入ったら SELECT、1 画面目に戻ったら HOME を送る(選び終わるまで測定を始めない)。
-    public const int PanelVersion = 4;
+    // 版 5(2026-11-26): 操作の行の後ろに :MOVED(測定中に動かした)が付く。PC は直前の記録(取消の対象)を LAST: で知らせる。
+    public const int PanelVersion = 5;
+    // 直前の記録(取消の対象)の知らせ。LAST:M:<測定の説明> / LAST:O:<操作の説明> / LAST:(取り消せるものなし)。返事は求めない。
+    public const string LastPrefix = "LAST:";
+    public static string Last(As100201UndoTarget? target) => target is null
+        ? LastPrefix
+        : LastPrefix + (target.IsMeasurement ? "M:" : "O:") + target.Description;
     // パネルが操作を選んでいる途中(2 画面目以降)・1 画面目にいる。ページを移ったときと、PC の確認に答えた直後に送られる。
     public const string SelectingLine = "SELECT";
     public const string HomeLine = "HOME";

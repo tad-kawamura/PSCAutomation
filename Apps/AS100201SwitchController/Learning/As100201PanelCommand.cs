@@ -30,12 +30,19 @@ internal enum As100201Operation
 // 版 3(2026-11-13、人の指示): ノズルは程度を選ばず方向だけ(IN=近づける、OUT=離す)。
 // スペーサーは向きのあとに厚さ(箱の表示、mm。例 0.450)と、表示との差(μm。例 +2 / -1 / 0、測っていなければ NA)を選ぶ。
 // 台帳に書く言葉(操作・方向・程度・厚さ)はここで決める。スペーサーの差は「程度」の列に書く(列を増やさないため。仮決め)。
+// 版 5(2026-11-26、人の決定): どの操作の行にも、後ろに :MOVED(測定中に動かした)が付くことがある。
 internal readonly record struct As100201PanelCommand(
     string Line, As100201PanelCommandKind Kind, As100201Operation? Operation, string Direction, string Degree, string Thickness = "")
 {
     // 表示との差として受け付ける範囲(μm)。パネルが出すのは ±3 程度だが、パネル側の選択肢を広げても PC を直さなくてよいようにする。
     public const int MaxThicknessDifferenceMicrometers = 50;
     public const string NotMeasured = "NA";
+    // 版 5(2026-11-26): 「測定中に動かした」の印。操作の行の後ろに付く(例 ACT:NOZZLE:P:IN:MOVED)。
+    public const string MovedSuffix = ":MOVED";
+    public const string MovedText = "測定中に動かした";
+
+    // 測定中に動かした(パネルを押す前に、測定したまま手を動かした)印が付いている(版 5)。
+    public bool Moved { get; init; }
 
     public string OperationText => Operation switch
     {
@@ -58,7 +65,7 @@ internal readonly record struct As100201PanelCommand(
             if (Kind == As100201PanelCommandKind.Hold) return "パネルに触れた";
             string name = Operation is As100201Operation.NozzleP or As100201Operation.NozzleR
                 or As100201Operation.SpacerP or As100201Operation.SpacerR ? OperationText + " 側" : OperationText;
-            string details = string.Join("・", new[] { Direction, Thickness, Degree }.Where(s => s.Length > 0));
+            string details = string.Join("・", new[] { Direction, Thickness, Degree, Moved ? MovedText : "" }.Where(s => s.Length > 0));
             return details.Length == 0 ? name : $"{name}（{details}）";
         }
     }
@@ -85,6 +92,14 @@ internal readonly record struct As100201PanelCommand(
             return true;
         }
         if (!line.StartsWith("ACT:", StringComparison.Ordinal)) return false;
+        // 版 5: 後ろの :MOVED は印。外した残りを今までどおり読み、読めたら印を付ける。
+        if (line.EndsWith(MovedSuffix, StringComparison.Ordinal))
+        {
+            string body = line[..^MovedSuffix.Length];
+            if (body.EndsWith(MovedSuffix, StringComparison.Ordinal) || !TryParse(body, out var inner)) return false;
+            result = inner with { Line = line, Moved = true };
+            return true;
+        }
         string[] parts = line.Split(':');
         switch (parts[1])
         {

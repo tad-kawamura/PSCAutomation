@@ -5,7 +5,7 @@ namespace PSCAutomation.Apps.AS100201SwitchController;
 //   - 測定の行は LOGGER が止まった時点で書き(sw4 / 操作ボタン)、xdt は LOGGER の状態が停止に戻った時点で保存する
 //     (停止直後はデータの読み出し中のことがあるため)。LOGGER が自動で止まったときは、停止に戻った時点で行と xdt を一緒に書く
 //   - 完了のあとに操作が来たら「完了の取消」(同じ個体の続き)。測定の行がないのに操作が来たら「直前の測定なし」
-//   - 取消は直前の操作 1 件だけ。操作のあとに測定・完了があれば取り消せない
+//   - 取消は直前の測定か操作の 1 件だけ(測定は版 5、2026-11-26 から)。完了・番号のあとと、取り消したあとは取り消せない
 //   - 台帳や xdt に書けなかったら止まる(Blocked)。測定の行と xdt は覚えておいて「再試行」で書き直す。
 //     操作ボタンには NAK を返し、記録しない(再試行のあとに押し直してもらう)
 //   - 2026-11-26 からシリアル番号で個体を分ける(SPEC_調整操作の記録.md「シリアル番号で管理する」)。番号は PC の画面で入れ、
@@ -20,11 +20,10 @@ internal sealed class As100201LearningSession
     private readonly Action<string> _createDirectory;
     private readonly List<PendingWrite> _pending = [];
     private string? _armedXdtPath;
-    private UndoTarget? _undoable;
+    private As100201UndoTarget? _undoable;
     private bool _lastEventIsMeasurement;
 
     private sealed record PendingWrite(string Description, Action Write);
-    private sealed record UndoTarget(As100201LedgerRow Row, bool MeasurementBefore);
 
     public const string StopBySwitch = "sw4";
     public const string StopByPanel = "操作ボタン";
@@ -139,8 +138,16 @@ internal sealed class As100201LearningSession
                     events.Add(row.Kind);
                     break;
                 case As100201LedgerEventKind.Undo:
-                    int index = events.LastIndexOf(As100201LedgerEventKind.Operation);
-                    if (index >= 0) { events.RemoveAt(index); operations--; }
+                    // 「ファイル」列があるのは測定の取消(版 5)、無いのは操作の取消。
+                    bool measurementUndo = row.File.Length > 0;
+                    var undone = measurementUndo ? As100201LedgerEventKind.Measurement : As100201LedgerEventKind.Operation;
+                    int index = events.LastIndexOf(undone);
+                    if (index >= 0)
+                    {
+                        events.RemoveAt(index);
+                        if (measurementUndo) measurements--;
+                        else operations--;
+                    }
                     break;
             }
         }
@@ -278,9 +285,9 @@ internal sealed class As100201LearningSession
         // 個体の区切りはシリアル番号(2026-11-26)。完了済みの番号の続きで測っても、同じ個体のまま数える
         // (それまでは「完了の次の測定から新しい個体」として数え直していた)。
         MeasurementCount++;
+        bool measurementBefore = _lastEventIsMeasurement;
         _lastEventIsMeasurement = true;
-        _undoable = null;
-        return new As100201LedgerRow(now, As100201LedgerEventKind.Measurement)
+        var row = new As100201LedgerRow(now, As100201LedgerEventKind.Measurement)
         {
             SerialNumber = SerialNumber ?? "",
             Side = side,
@@ -289,6 +296,9 @@ internal sealed class As100201LearningSession
             File = LedgerFileText(path),
             Note = side.Length == 0 ? "位相の出し直しなし" : ""
         };
+        // 版 5(2026-11-26): 直前の測定も取消で「使わない」にできる。
+        _undoable = new As100201UndoTarget(row, measurementBefore, IsMeasurement: true);
+        return row;
     }
 
     private void SaveWaveform(string path)
@@ -330,6 +340,8 @@ internal sealed class As100201LearningSession
         if (cancelsDone) notes.Add("完了の取消");
         bool measurementBefore = _lastEventIsMeasurement;
         if (!measurementBefore) notes.Add("直前の測定なし");
+        // 版 5(2026-11-26): パネルを押す前に、測定したまま手を動かした印。直前の測定は途中で弁が変わっている。
+        if (command.Moved) notes.Add(As100201PanelCommand.MovedText);
         var row = new As100201LedgerRow(_clock(), As100201LedgerEventKind.Operation)
         {
             SerialNumber = SerialNumber ?? "",
@@ -343,7 +355,7 @@ internal sealed class As100201LearningSession
         if (cancelsDone) Completed = false;
         OperationCount++;
         _lastEventIsMeasurement = false;
-        _undoable = new UndoTarget(row, measurementBefore);
+        _undoable = new As100201UndoTarget(row, measurementBefore, IsMeasurement: false);
         Log?.Invoke($"操作 {command.DisplayName} を記録" + (notes.Count == 0 ? "" : $"（{row.Note}）"));
         return As100201PanelProtocol.Ack(command);
     }
@@ -372,30 +384,42 @@ internal sealed class As100201LearningSession
 
     private string RecordUndo(As100201PanelCommand command)
     {
-        if (_undoable is not UndoTarget target)
+        if (_undoable is not As100201UndoTarget target)
         {
-            Log?.Invoke("取消：取り消せる操作がありません（直前の操作だけ取り消せます）。");
-            return As100201PanelProtocol.Nak("取り消せる操作がありません");
+            Log?.Invoke("取消：取り消せる記録がありません（直前の測定か操作だけ取り消せます。完了・番号のあとと、取り消したあとは取り消せません）。");
+            return As100201PanelProtocol.Nak("取り消せる記録がありません");
         }
-        string described = DescribeOperation(target.Row);
-        var row = new As100201LedgerRow(_clock(), As100201LedgerEventKind.Undo)
-        {
-            SerialNumber = SerialNumber ?? "",
-            Note = "取消の対象: " + described
-        };
+        // 版 5(2026-11-26): 測定の取消は「ファイル」列にその xdt を、操作の取消は「操作」などの列に対象の操作を書く
+        // (台帳だけで、どれを使わないかが分かるように)。
+        var row = target.IsMeasurement
+            ? new As100201LedgerRow(_clock(), As100201LedgerEventKind.Undo)
+            {
+                SerialNumber = SerialNumber ?? "",
+                File = target.Row.File,
+                Note = $"取消の対象: 測定 {target.Description}（使わない）"
+            }
+            : new As100201LedgerRow(_clock(), As100201LedgerEventKind.Undo)
+            {
+                SerialNumber = SerialNumber ?? "",
+                Operation = target.Row.Operation,
+                Direction = target.Row.Direction,
+                Degree = target.Row.Degree,
+                Thickness = target.Row.Thickness,
+                Note = "取消の対象: " + target.Description
+            };
         if (!TryWrite("取消の行", row, out string nak)) return nak;
-        OperationCount--;
+        if (target.IsMeasurement) MeasurementCount--;
+        else OperationCount--;
         _undoable = null;
         _lastEventIsMeasurement = target.MeasurementBefore;
-        Log?.Invoke($"取消を記録：{described} を無効にしました");
+        Log?.Invoke(target.IsMeasurement
+            ? $"取消を記録：測定 {target.Description}（{target.Row.File}）を使わないにしました"
+            : $"取消を記録：{target.Description} を無効にしました");
         return As100201PanelProtocol.Ack(command);
     }
 
-    private static string DescribeOperation(As100201LedgerRow row)
-    {
-        string details = string.Join("・", new[] { row.Direction, row.Thickness, row.Degree }.Where(s => s.Length > 0));
-        return $"{row.Time:HH:mm:ss} {row.Operation}" + (details.Length == 0 ? "" : $"（{details}）");
-    }
+    // 今、取消で取り消せる記録(パネルの確認に出す。LAST: で知らせる)。保存の停止中・番号が空の間は取り消せないので null。
+    public As100201UndoTarget? UndoTarget => Blocked || SerialNumber is null ? null : _undoable;
 
     // 操作・完了・取消の行。書けなければ止めて NAK(行は覚えない。再試行のあとに押し直してもらう)。
     private bool TryWrite(string description, As100201LedgerRow row, out string nak)
@@ -482,4 +506,21 @@ internal sealed class As100201LearningSession
     // 台帳(ファイル)と xdt(LOGGER の COM 呼び出し)の失敗。プログラムの誤り(引数など)は止めずに上へ出す。
     private static bool IsWriteFailure(Exception ex) => ex is IOException or UnauthorizedAccessException or
         InvalidOperationException or System.Runtime.InteropServices.COMException or NotSupportedException;
+}
+
+// 取消で取り消せる記録(直前の測定か操作。版 5 で測定も対象にした、2026-11-26)。
+// MeasurementBefore: その記録の前の出来事が測定だったか(取り消したあとの「直前の測定なし」の判断を元に戻すため)。
+internal sealed record As100201UndoTarget(As100201LedgerRow Row, bool MeasurementBefore, bool IsMeasurement)
+{
+    // パネルの確認とログに出す説明。測定は「10:15:03 PC（2回押し）」、操作は「10:15:03 ノズル P（近づける）」。
+    public string Description
+    {
+        get
+        {
+            string time = Row.Time.ToString("HH:mm:ss", System.Globalization.CultureInfo.InvariantCulture);
+            if (IsMeasurement) return $"{time} {(Row.Side.Length == 0 ? "側なし" : Row.Side)}";
+            string details = string.Join("・", new[] { Row.Direction, Row.Thickness, Row.Degree }.Where(s => s.Length > 0));
+            return $"{time} {Row.Operation}" + (details.Length == 0 ? "" : $"（{details}）");
+        }
+    }
 }
