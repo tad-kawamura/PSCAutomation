@@ -79,11 +79,13 @@ internal sealed partial class MainForm : Form
             Dock = DockStyle.Top,
             Padding = new Padding(10, 6, 10, 8)
         };
+        // Dock は Top(2026-11-26)。Fill だと表の高さが枠の高さに縛られ、最初の高さ(100)のまま枠も伸びず、
+        // 保存先・記録・シリアル番号の行が枠の外に切れて見えなかった(人の画面で、番号を入れる欄が出ていなかった)。
         var table = new TableLayoutPanel
         {
             AutoSize = true,
             AutoSizeMode = AutoSizeMode.GrowAndShrink,
-            Dock = DockStyle.Fill,
+            Dock = DockStyle.Top,
             ColumnCount = 3,
             RowCount = 4
         };
@@ -138,7 +140,12 @@ internal sealed partial class MainForm : Form
         group.Controls.Add(table);
         // Dock=Top の GroupBox は AutoSize が効かないので、中身の高さに合わせる。
         group.AutoSize = false;
-        void FitGroup() => group.Height = table.Height + group.Padding.Vertical + 22;
+        // 枠の見出しと余白の分(枠の高さ - 中身を置ける高さ)を足す。
+        void FitGroup()
+        {
+            int height = table.Height + (group.Height - group.DisplayRectangle.Height);
+            if (group.Height != height) group.Height = height;
+        }
         table.SizeChanged += (_, _) => FitGroup();
         FitGroup();
 
@@ -157,11 +164,13 @@ internal sealed partial class MainForm : Form
         if (_useVirtualPanel) banner.BackColor = Color.SteelBlue;
         _learningBanner = banner;
 
-        // Dock は後に足したものから配置されるので、帯が最上部、その下に記録の状態、(開発用の代わりのパネル、)残りが今までの画面。
+        // Dock は後に足したものから配置されるので、帯が最上部、その下に「次にすること」、記録の状態、
+        // (開発用の代わりのパネル、)残りが今までの画面。
         var padding = new Panel { Dock = DockStyle.Top, Height = 8 };
         Controls.Add(padding);
         if (_useVirtualPanel) Controls.Add(BuildVirtualPanelUi());
         Controls.Add(group);
+        Controls.Add(BuildNextStepLabel());
         Controls.Add(banner);
 
         _connectionStatusPanel.RowCount = 5;

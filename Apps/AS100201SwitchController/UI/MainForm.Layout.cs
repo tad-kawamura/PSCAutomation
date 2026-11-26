@@ -7,6 +7,9 @@ internal sealed partial class MainForm : Form
 {
     private readonly Button _exitButton = new();
     private readonly TableLayoutPanel _connectionStatusPanel = new();
+    private readonly Panel _layoutViewport = new();
+    private TableLayoutPanel? _layoutRoot;
+    private bool _fittingLayoutRoot;
 
     private void BuildLayout()
     {
@@ -173,8 +176,42 @@ internal sealed partial class MainForm : Form
         root.Controls.Add(BuildSwitchSettingsPanel(), 0, 8);
         root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         root.Controls.Add(_logTextBox, 0, 9);
-        Controls.Add(root);
+        // 窓に入りきらないときは縦にスクロールする(2026-11-26。学習モードで上に記録の状態と「次にすること」を足すと、
+        // 下の位相の欄とログが窓の外に切れて見えなくなったため)。入りきるときは今までどおりログが残りの高さを使う。
+        root.Dock = DockStyle.None;
+        root.Location = Point.Empty;
+        // 外側の余白があると、その分だけ横にもスクロールバーが出る。
+        root.Margin = Padding.Empty;
+        _layoutRoot = root;
+        _layoutViewport.Dock = DockStyle.Fill;
+        _layoutViewport.AutoScroll = true;
+        _layoutViewport.Controls.Add(root);
+        _layoutViewport.ClientSizeChanged += (_, _) => FitLayoutRoot();
+        Controls.Add(_layoutViewport);
+        // 学習モードでは「学習モード」の帯のすぐ下に置く(BuildLearningUi)。
+        if (!IsLearningMode) Controls.Add(BuildNextStepLabel());
+        FitLayoutRoot();
     }
+
+    // スクロールの中の画面の大きさを合わせる。幅は見えている幅、高さはログ以外の行 + ログの最低の高さと、見えている高さの大きいほう。
+    private void FitLayoutRoot()
+    {
+        if (_layoutRoot is not TableLayoutPanel root || _fittingLayoutRoot) return;
+        _fittingLayoutRoot = true;
+        try
+        {
+            Size view = _layoutViewport.ClientSize;
+            if (root.Width != view.Width) root.Width = view.Width;
+            int[] heights = root.GetRowHeights();
+            int content = root.Padding.Vertical + LogMinimumHeight;
+            for (int i = 0; i < heights.Length - 1; i++) content += heights[i];
+            int height = Math.Max(content, view.Height);
+            if (root.Height != height) root.Height = height;
+        }
+        finally { _fittingLayoutRoot = false; }
+    }
+
+    private const int LogMinimumHeight = 160;
 
     private void AddConnectionStatusRow(TableLayoutPanel panel, int row, string caption, Label valueLabel)
     {

@@ -35,5 +35,8 @@ internal sealed partial class MainForm : Form
         _deleteTemplateButton.Enabled = !_operationInProgress && !_waveformRestartInProgress && _templateLoaded;
         _getStateButton.Enabled = !_operationInProgress && !_waveformRestartInProgress && initialized;
         UpdateLearningControls();
+        UpdateNextStep();
+        // 文字が変わって行の高さが変わったら、スクロールの中の大きさを合わせ直す。
+        FitLayoutRoot();
     }
 }

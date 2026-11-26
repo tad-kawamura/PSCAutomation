@@ -16,6 +16,7 @@ internal static class LearningChecks
         SessionFlowChecks();
         WriteFailureChecks();
         PressedRowChecks();
+        NextStepChecks();
         await PanelOutageChecks();
         await PanelPathAndBatteryChecks();
         await UsbReturnChecks();
@@ -78,15 +79,16 @@ internal static class LearningChecks
         Check(panel.InputReady && link.Press("DONE") && received[^1].Kind == As100201PanelCommandKind.Done, "not usable after replug");
 
         // 代わりのパネルは --virtual-panel のときだけ。画面にはタイトル・帯・代わりのボタンが加わる。
+        // 2026-11-26 から、どちらのモードも「次にすること」の分だけ 1 つ多い。
         Check(As100201VirtualPanelLink.CommandLineSwitch == "--virtual-panel", "command line switch");
         using (var learning = new MainForm(As100201StartupMode.Learning))
-            Check(!learning.UsesVirtualPanel && learning.Controls.Count == 4, "virtual panel shown without the switch");
+            Check(!learning.UsesVirtualPanel && learning.Controls.Count == 5, "virtual panel shown without the switch");
         using (var normal = new MainForm(As100201StartupMode.Normal, virtualPanel: true))
-            Check(!normal.UsesVirtualPanel && !normal.IsLearningMode && normal.Controls.Count == 1, "virtual panel in normal mode");
+            Check(!normal.UsesVirtualPanel && !normal.IsLearningMode && normal.Controls.Count == 2, "virtual panel in normal mode");
         using (var dev = new MainForm(As100201StartupMode.Learning, virtualPanel: true))
         {
             Check(dev.UsesVirtualPanel && dev.IsLearningMode && dev.Text == As100201Application.LearningWindowTitle + As100201Application.VirtualPanelTitleSuffix, "virtual panel title");
-            Check(dev.Controls.Count == 5 && FindLabels(dev).Any(l => l.Text.StartsWith("パネルへの返事")), "virtual panel controls missing");
+            Check(dev.Controls.Count == 6 && FindLabels(dev).Any(l => l.Text.StartsWith("パネルへの返事")), "virtual panel controls missing");
         }
         Pass("virtual panel (--virtual-panel, dev only): 14 panel lines, same protocol path, 250 ms frames -> ready, ACK/NAK shown, pause -> stale + NAK, unplug/replug reconnect, only with the switch in learning mode");
     }
@@ -968,21 +970,133 @@ internal static class LearningChecks
         Check(As100201Application.GetWindowTitle(As100201StartupMode.Normal) == As100201Application.WindowTitle &&
             As100201Application.WindowTitle == "AS100-201 スイッチ制御" &&
             As100201Application.GetWindowTitle(As100201StartupMode.Learning).Contains("学習モード"), "window titles");
+        // 2026-11-26 から、どちらのモードも画面上部に「次にすること」が 1 つ増え、今までの画面はスクロールの枠に入った。
         using (var normal = new MainForm(As100201StartupMode.Normal))
         {
             Check(!normal.IsLearningMode && normal.Text == As100201Application.WindowTitle, "normal form marked as learning");
-            Check(normal.Controls.Count == 1, "normal form gained learning controls");
+            Check(normal.Controls.Count == 2, "normal form gained learning controls");
             Check(FindLabels(normal).All(l => !l.Text.Contains("学習モード") && !l.Text.Contains("タッチパネル")), "learning text shown in normal mode");
+            Check(FindLabels(normal).Any(l => l.Text.StartsWith(As100201NextStep.Prefix)), "normal form has no next step");
         }
         using (var learning = new MainForm(As100201StartupMode.Learning))
         {
             Check(learning.IsLearningMode && learning.Text == As100201Application.LearningWindowTitle, "learning form title");
-            Check(learning.Controls.Count == 4 && FindLabels(learning).Any(l => l.Text.StartsWith("学習モード")) && FindLabels(learning).Any(l => l.Text == "タッチパネル："), "learning controls missing");
+            Check(learning.Controls.Count == 5 && FindLabels(learning).Any(l => l.Text.StartsWith("学習モード")) && FindLabels(learning).Any(l => l.Text == "タッチパネル："), "learning controls missing");
+            // 帯のすぐ下に「次にすること」。起動直後(接続前)は赤で直し方を出す。
+            var next = FindLabels(learning).Single(l => l.Text.StartsWith(As100201NextStep.Prefix));
+            Check(learning.Controls.IndexOf(next) == learning.Controls.Count - 2, "next step is not right below the banner");
+            // シリアル番号の入力欄が記録の状態の枠の中に見えている(2026-11-26: 表を Fill にしていて枠が伸びず、欄が枠の外に切れていた)。
+            learning.ClientSize = new Size(850, 820);
+            learning.CreateControl();
+            learning.PerformLayout();
+            var serialBox = FindControls(learning).OfType<TextBox>().Single(t => t.MaxLength == 8);
+            // 窓を出さないので画面の座標は使わず、親までの位置を足していく。
+            Control group = serialBox;
+            var inGroup = new Rectangle(Point.Empty, serialBox.Size);
+            while (group is not GroupBox)
+            {
+                inGroup.Offset(group.Location);
+                group = group.Parent!;
+            }
+            Check(group.ClientRectangle.Contains(inGroup), $"serial box is cut off by the group ({inGroup} / {group.ClientRectangle})");
+            // 入りきらない分は縦にだけスクロールし、ログには最低の高さを残す。
+            var viewport = FindControls(learning).OfType<Panel>().Single(p => p.AutoScroll && p.Dock == DockStyle.Fill);
+            var log = FindControls(viewport).OfType<TextBox>().Single(t => t.Multiline);
+            Check(!viewport.HorizontalScroll.Visible && viewport.Controls[0].Width == viewport.ClientSize.Width && log.Height >= 150,
+                $"scroll layout (horizontal {viewport.HorizontalScroll.Visible}, width {viewport.Controls[0].Width}/{viewport.ClientSize.Width}, log {log.Height})");
+            if (Environment.GetEnvironmentVariable("AS100201_SNAPSHOT") is string snapshot && snapshot.Length > 0)
+            {
+                // 画面の見た目を画像に出す(開発用。窓は出さないので、並べた部品を 1 つずつ描く)。
+                using var bitmap = new Bitmap(learning.ClientSize.Width, learning.ClientSize.Height);
+                void Draw(Control parent, Point origin, Rectangle clip)
+                {
+                    for (int i = parent.Controls.Count - 1; i >= 0; i--)
+                    {
+                        Control part = parent.Controls[i];
+                        var at = new Rectangle(origin.X + part.Left, origin.Y + part.Top, part.Width, part.Height);
+                        var visible = Rectangle.Intersect(at, clip);
+                        if (visible.Width <= 0 || visible.Height <= 0) continue;
+                        using (var piece = new Bitmap(part.Width, part.Height))
+                        {
+                            part.DrawToBitmap(piece, new Rectangle(Point.Empty, part.Size));
+                            using var g = Graphics.FromImage(bitmap);
+                            g.SetClip(visible);
+                            g.DrawImage(piece, at.Location);
+                        }
+                        var inner = part.DisplayRectangle;
+                        Draw(part, new Point(at.X + (part is ScrollableControl ? inner.X : 0), at.Y + (part is ScrollableControl ? inner.Y : 0)),
+                            Rectangle.Intersect(visible, new Rectangle(at.Location, part.ClientSize)));
+                    }
+                }
+                Draw(learning, Point.Empty, new Rectangle(Point.Empty, learning.ClientSize));
+                bitmap.Save(snapshot);
+            }
         }
         // 異常ログ: 通常モードの異常種別はそのまま。パネルの種別は学習モードだけで起きる。
         foreach (var kind in new[] { "HEARTBEAT_STALE", "FRAME_GAP", "PROTOCOL_RECOVERY", "PANEL_HEARTBEAT_STALE", "PANEL_FRAME_GAP", "PANEL_RECOVERY" })
             Check(PSCAutomation.Wrappers.Arduino.ArduinoDiagnosticLog.IsIncident(kind), "incident kind missing: " + kind);
         Pass("normal mode: default/× -> Normal, same title, no learning controls or text; learning mode adds banner, panel row and title");
+    }
+
+    // 11. 画面上部の「次にすること」(2026-11-26、人の要望)。準備完了 LED が消えている理由のうち、先に片付けるものを 1 つ出す
+    private static void NextStepChecks()
+    {
+        var ready = new As100201NextStepState
+        {
+            Learning = true, LoggerReady = true, ArduinoReady = true, Wf1973Ready = true, TemplateLoaded = true,
+            PanelReady = true, ReadyLedOn = true
+        };
+        (string Text, As100201NextStepKind Kind) Next(As100201NextStepState s) => As100201NextStep.Describe(s);
+
+        Check(Next(ready) is { Kind: As100201NextStepKind.Ready } r && r.Text.Contains("F8") && r.Text.Contains("タッチパネル"), "learning ready");
+        Check(Next(ready with { Learning = false }) is { Kind: As100201NextStepKind.Ready } n && !n.Text.Contains("タッチパネル"), "normal ready mentions panel");
+        // 今回の人の画面: 接続も雛形もそろい、番号だけが無い → 番号を入れるよう出す
+        Check(Next(ready with { SerialMissing = true, ReadyLedOn = false }) is { Kind: As100201NextStepKind.Action } s && s.Text.Contains("シリアル番号"), "serial missing");
+        // 片付ける順: 接続確認中 → LOGGER → 発振器 → Arduino → パネル → 保存 → 雛形 → 番号の確認の窓 → 番号 → 選んでいる途中 → 処理中
+        var all = ready with
+        {
+            LoggerReady = false, Wf1973Ready = false, ArduinoReady = false, PanelReady = false, SaveBlocked = true, TemplateLoaded = false,
+            SerialDialogOpen = true, SerialMissing = true, PanelSelecting = true, Busy = true, ReadyLedOn = false
+        };
+        Check(Next(all with { CheckingConnections = true }).Kind == As100201NextStepKind.Wait, "checking connections");
+        Check(Next(all with { LoggerAppMissing = true }).Text.Contains("WAVE LOGGER がこの PC に入っていません"), "logger app missing");
+        string[] expected = ["NR-500", "WF1973", "Arduino", "Tab5", "再試行", "雛形", "確認の窓", "シリアル番号を入れて", "戻る", "処理中"];
+        var state = all;
+        foreach (string word in expected)
+        {
+            var (text, kind) = Next(state);
+            Check(text.Contains(word), $"expected '{word}' but got '{text}'");
+            Check(kind == (word == "処理中" ? As100201NextStepKind.Wait : As100201NextStepKind.Action), "kind for " + word);
+            state = word switch
+            {
+                "NR-500" => state with { LoggerReady = true },
+                "WF1973" => state with { Wf1973Ready = true },
+                "Arduino" => state with { ArduinoReady = true },
+                "Tab5" => state with { PanelReady = true },
+                "再試行" => state with { SaveBlocked = false },
+                "雛形" => state with { TemplateLoaded = true },
+                "確認の窓" => state with { SerialDialogOpen = false },
+                "シリアル番号を入れて" => state with { SerialMissing = false },
+                "戻る" => state with { PanelSelecting = false },
+                _ => state with { Busy = false }
+            };
+        }
+        Check(Next(state).Kind == As100201NextStepKind.Wait && Next(state).Text.Contains("準備完了 LED"), "led not on");
+        // 通常モードでは学習モードだけの理由(パネル・保存・番号・選んでいる途中)を出さない
+        var normalBlocked = all with { Learning = false, LoggerReady = true, Wf1973Ready = true, ArduinoReady = true, TemplateLoaded = true, Busy = false };
+        Check(Next(normalBlocked).Kind == As100201NextStepKind.Wait && Next(normalBlocked).Text.Contains("準備完了 LED"), "normal mode shows learning reasons");
+        // 測定中は止め方(パネルが途切れていても sw4 で止められる)
+        Check(Next(all with { Measuring = true }) is { Kind: As100201NextStepKind.Ready } m && m.Text.Contains("sw4"), "measuring");
+        Pass("next step: one reason at a time in fixing order (connections, panel, save, template, serial, selecting), measuring shows how to stop, normal mode has no learning reasons");
+    }
+
+    private static IEnumerable<Control> FindControls(Control root)
+    {
+        foreach (Control child in root.Controls)
+        {
+            yield return child;
+            foreach (var nested in FindControls(child)) yield return nested;
+        }
     }
 
     private static IEnumerable<Label> FindLabels(Control root)
