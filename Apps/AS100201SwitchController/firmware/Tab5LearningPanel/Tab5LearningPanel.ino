@@ -367,7 +367,8 @@ void handleLine(Path from, const String& line) {
     if (currentPath != from) {
       currentPath = from;
       lostShown = false;
-      setMessage(MSG_INFO, String("PC のアプリと ") + pathName(from) + " でつながりました", "操作する前にボタンを押してください");
+      // つながったときは下の帯に何も出さない(2026-11-25、人の指示)。つながっていることは上の帯で分かる。
+      setMessage(MSG_INFO, "", "");
     }
     sendBattery(from);
     if (from == PATH_USB) {
@@ -489,6 +490,12 @@ const int HEADER_H = 80;
 const int FOOTER_H = 110;
 const int GAP = 20;
 
+// 下の帯(知らせ)を出すか。スペーサーの厚さのページは厚さが多くて窮屈なので出さず、その高さを厚さのボタンに使う
+// (2026-11-25、人の指示)。このページのボタン(タブ・厚さ)は PC に何も送らないので、知らせは次の差のページで見られる。
+bool footerShown() {
+  return screen != SPACER_PICK;
+}
+
 void addButton(int x, int y, int w, int h, ButtonId id, const char* label, uint16_t color, bool selected = false, int value = -1) {
   if (buttonCount >= MAX_BUTTONS) return;
   buttons[buttonCount++] = {(int16_t)x, (int16_t)y, (int16_t)w, (int16_t)h, id, label, color, selected, (int8_t)value};
@@ -500,7 +507,7 @@ void layoutButtons() {
   const int W = M5.Display.width();
   const int H = M5.Display.height();
   const int top = HEADER_H + GAP;
-  const int bottom = H - FOOTER_H - GAP;
+  const int bottom = footerShown() ? H - FOOTER_H - GAP : H - GAP;
   const int rightW = 300;
   const int rightX = W - GAP - rightW;
   const int leftW = rightX - GAP - GAP;   // 左の領域の幅
@@ -609,7 +616,8 @@ void drawButton(const Button& b) {
   M5.Display.fillRoundRect(b.x, b.y, b.w, b.h, 18, bg);
   if (b.selected) M5.Display.drawRoundRect(b.x, b.y, b.w, b.h, 18, TFT_WHITE);
   M5.Display.setFont(&fonts::lgfxJapanGothicP_40);
-  M5.Display.setTextSize(b.h >= 200 ? 1.25f : 1.0f);
+  // 厚さのボタンは、下の帯をなくして高くなった分だけ数字も大きくする(2026-11-25)。
+  M5.Display.setTextSize(b.h >= 200 || (b.id == B_THICK && b.h >= 110) ? 1.25f : 1.0f);
   drawLabel(b.label, b.x + b.w / 2, b.y + b.h / 2, fg);
   M5.Display.setTextSize(1.0f);
 }
@@ -654,16 +662,28 @@ void drawFooter() {
   M5.Display.fillRect(0, H - FOOTER_H, W, FOOTER_H, bg);
   M5.Display.setTextColor(C_TEXT);
   M5.Display.setTextDatum(middle_left);
-  M5.Display.setTextSize(1.0f);
+  if (messageTitle.length() == 0) return;   // ふだん(つながっていて知らせがない)は文字を出さない
+  // 2026-11-25(人の指示): 文字を大きくした。前は 1 行のとき 40、2 行のとき 36 と 28。
+  // 帯の幅に入らない長い知らせは、入る大きさまで小さくする。
+  const int maxW = W - GAP * 2;
   if (messageDetail.length() == 0) {
-    M5.Display.setFont(&fonts::lgfxJapanGothicP_40);
-    M5.Display.drawString(messageTitle, GAP, H - FOOTER_H / 2);
+    drawFittedString(messageTitle, &fonts::lgfxJapanGothicP_40, 1.25f, GAP, H - FOOTER_H / 2, maxW);
     return;
   }
-  M5.Display.setFont(&fonts::lgfxJapanGothicP_36);
-  M5.Display.drawString(messageTitle, GAP, H - FOOTER_H + 32);
-  M5.Display.setFont(&fonts::lgfxJapanGothicP_28);
-  M5.Display.drawString(messageDetail, GAP, H - FOOTER_H + 80);
+  drawFittedString(messageTitle, &fonts::lgfxJapanGothicP_40, 1.0f, GAP, H - FOOTER_H + 32, maxW);
+  drawFittedString(messageDetail, &fonts::lgfxJapanGothicP_32, 1.0f, GAP, H - FOOTER_H + 82, maxW);
+}
+
+// 左寄せで 1 行書く。maxW に入らなければ入る大きさまで縮める(読めなくならないよう 0.6 倍までに留める)。
+void drawFittedString(const String& text, const lgfx::IFont* font, float scale, int x, int y, int maxW) {
+  M5.Display.setFont(font);
+  M5.Display.setTextSize(1.0f);
+  int width = M5.Display.textWidth(text.c_str());
+  if (width > 0 && width * scale > maxW) scale = (float)maxW / width;
+  if (scale < 0.6f) scale = 0.6f;
+  M5.Display.setTextSize(scale);
+  M5.Display.drawString(text, x, y);
+  M5.Display.setTextSize(1.0f);
 }
 
 void drawTitle(const String& text) {
@@ -708,7 +728,7 @@ void drawScreen() {
   }
 
   for (int i = 0; i < buttonCount; ++i) drawButton(buttons[i]);
-  drawFooter();
+  if (footerShown()) drawFooter();
   M5.Display.endWrite();
   dirty = false;
 }
