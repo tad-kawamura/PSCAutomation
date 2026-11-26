@@ -257,9 +257,18 @@ internal static class LearningChecks
             Check(MainForm.FindLearningTemplate(templates, out reason) == first && reason == "", "single template not found");
             File.WriteAllText(Path.Combine(templates, "別の雛形.xdt"), "");
             Check(MainForm.FindLearningTemplate(templates, out reason) is null && reason.Contains("2 つ"), "two templates accepted");
+
+            // 参照波形(2026-11-26): 同じ「雛形」フォルダーの .xyb がちょうど 1 つのときだけ。xdt は数えない。
+            Check(MainForm.FindLearningReference(Path.Combine(root, "無い"), out reason) is null && reason.Contains("雛形フォルダーがありません"), "missing reference folder");
+            Check(MainForm.FindLearningReference(templates, out reason) is null && reason.Contains(".xyb）がありません"), "no reference");
+            string reference = Path.Combine(templates, "参照ﾃﾞｰﾀ_AS100-201_盲栓PC+CR_SN149.xyb");
+            File.WriteAllText(reference, "");
+            Check(MainForm.FindLearningReference(templates, out reason) == reference && reason == "", "single reference not found");
+            File.WriteAllText(Path.Combine(templates, "別の参照.xyb"), "");
+            Check(MainForm.FindLearningReference(templates, out reason) is null && reason.Contains("2 つ"), "two references accepted");
         }
         finally { try { Directory.Delete(root, true); } catch (IOException) { } }
-        Pass("ledger rows: 12 columns (serial after time), RFC4180 quoting + read back, serial format SN + 3 digits, CSV file with BOM + header once, append-only, locked/missing folder -> exception; save folder next to exe, created on first row; history read back after restart; old-format ledger blocks until moved; template folder needs exactly one xdt");
+        Pass("ledger rows: 12 columns (serial after time), RFC4180 quoting + read back, serial format SN + 3 digits, CSV file with BOM + header once, append-only, locked/missing folder -> exception; save folder next to exe, created on first row; history read back after restart; old-format ledger blocks until moved; template folder needs exactly one xdt and one xyb (reference)");
     }
 
     private sealed class FakeLedger : IAs100201LearningLedger
@@ -1044,7 +1053,7 @@ internal static class LearningChecks
         var ready = new As100201NextStepState
         {
             Learning = true, LoggerReady = true, ArduinoReady = true, Wf1973Ready = true, TemplateLoaded = true,
-            PanelReady = true, ReadyLedOn = true
+            PanelReady = true, ReferenceLoaded = true, ReadyLedOn = true
         };
         (string Text, As100201NextStepKind Kind) Next(As100201NextStepState s) => As100201NextStep.Describe(s);
 
@@ -1056,17 +1065,17 @@ internal static class LearningChecks
         var all = ready with
         {
             LoggerReady = false, Wf1973Ready = false, ArduinoReady = false, PanelReady = false, SaveBlocked = true, TemplateLoaded = false,
-            SerialDialogOpen = true, SerialMissing = true, PanelSelecting = true, Busy = true, ReadyLedOn = false
+            ReferenceLoaded = false, ReferenceProblem = "雛形フォルダーに参照波形（.xyb）がありません", SerialDialogOpen = true, SerialMissing = true, PanelSelecting = true, Busy = true, ReadyLedOn = false
         };
         Check(Next(all with { CheckingConnections = true }).Kind == As100201NextStepKind.Wait, "checking connections");
         Check(Next(all with { LoggerAppMissing = true }).Text.Contains("WAVE LOGGER がこの PC に入っていません"), "logger app missing");
-        string[] expected = ["NR-500", "WF1973", "Arduino", "Tab5", "再試行", "雛形", "確認の窓", "シリアル番号を入れて", "戻る", "処理中"];
+        string[] expected = ["NR-500", "WF1973", "Arduino", "Tab5", "再試行", "雛形", "参照波形を読み込めません", "参照波形を読み込んでいます", "確認の窓", "シリアル番号を入れて", "戻る", "処理中"];
         var state = all;
         foreach (string word in expected)
         {
             var (text, kind) = Next(state);
             Check(text.Contains(word), $"expected '{word}' but got '{text}'");
-            Check(kind == (word == "処理中" ? As100201NextStepKind.Wait : As100201NextStepKind.Action), "kind for " + word);
+            Check(kind == (word is "処理中" or "参照波形を読み込んでいます" ? As100201NextStepKind.Wait : As100201NextStepKind.Action), "kind for " + word);
             state = word switch
             {
                 "NR-500" => state with { LoggerReady = true },
@@ -1075,6 +1084,8 @@ internal static class LearningChecks
                 "Tab5" => state with { PanelReady = true },
                 "再試行" => state with { SaveBlocked = false },
                 "雛形" => state with { TemplateLoaded = true },
+                "参照波形を読み込めません" => state with { ReferenceProblem = null },
+                "参照波形を読み込んでいます" => state with { ReferenceLoaded = true },
                 "確認の窓" => state with { SerialDialogOpen = false },
                 "シリアル番号を入れて" => state with { SerialMissing = false },
                 "戻る" => state with { PanelSelecting = false },

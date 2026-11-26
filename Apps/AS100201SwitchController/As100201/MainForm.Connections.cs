@@ -202,7 +202,9 @@ internal sealed partial class MainForm : Form
 
                 KeepPreparationInFront();
                 // 学習モードは決まった雛形を自動で読み込む(2026-11-10)。通常モードは今までどおりドロップを待つ。
+                // 学習モードは続けて参照波形も 1 回読み込む(2026-11-26)。
                 string template = IsLearningMode ? LoadLearningTemplate() : "雛形待ち";
+                if (IsLearningMode && _templateLoaded) template += " / " + await LoadLearningReferenceAsync();
                 return $"正常終了 / 本体={_detectedHardwareName} / {template}";
             });
         }

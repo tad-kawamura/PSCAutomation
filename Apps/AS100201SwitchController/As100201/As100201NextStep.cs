@@ -27,6 +27,9 @@ internal sealed record As100201NextStepState
     // 学習モードだけ
     public bool PanelReady { get; init; }
     public bool SaveBlocked { get; init; }
+    // 参照波形を読み込めた(2026-11-26)。読み込めなかった理由は ReferenceProblem。
+    public bool ReferenceLoaded { get; init; }
+    public string? ReferenceProblem { get; init; }
     public bool SerialMissing { get; init; }
     public bool SerialDialogOpen { get; init; }
     public bool PanelSelecting { get; init; }
@@ -65,6 +68,12 @@ internal static class As100201NextStep
             return (s.Learning
                 ? "雛形を読み込めませんでした。雛形（xdt）を下の枠にドラッグしてください"
                 : "雛形（xdt）を下の枠にドラッグしてください", As100201NextStepKind.Action);
+        // 学習モードの参照波形(2026-11-26)。読み込み中は下の「処理中」、読み込めなかったら直し方。
+        if (s.Learning && !s.ReferenceLoaded && s.ReferenceProblem is not null)
+            return ("参照波形を読み込めません。「雛形」フォルダーに参照波形（.xyb）を 1 つ置いて「確認」を押してください（" + s.ReferenceProblem + "）",
+                As100201NextStepKind.Action);
+        if (s.Learning && !s.ReferenceLoaded)
+            return ("参照波形を読み込んでいます。終わるまでお待ちください", As100201NextStepKind.Wait);
         if (s.Learning && s.SerialDialogOpen)
             return ("シリアル番号の確認の窓に答えてください", As100201NextStepKind.Action);
         if (s.Learning && s.SerialMissing)

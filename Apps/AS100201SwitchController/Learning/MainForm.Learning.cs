@@ -36,9 +36,10 @@ internal sealed partial class MainForm : Form
     private bool _panelSelecting;
 
     // 学習モードで測定を始めてよいか。パネルが途切れている間、台帳・xdt に書けない間、パネルで操作を選んでいる途中、
-    // シリアル番号が入っていない間・番号の確認の窓を出している間は始めない。
+    // シリアル番号が入っていない間・番号の確認の窓を出している間、参照波形を読み込めていない間(2026-11-26)は始めない。
     private bool LearningReady => !IsLearningMode ||
-        (_panel is { InputReady: true } && _learning is { Blocked: false, SerialNumber: not null } && !_panelSelecting && !_serialDialogOpen);
+        (_panel is { InputReady: true } && _learning is { Blocked: false, SerialNumber: not null } && !_panelSelecting && !_serialDialogOpen &&
+         _referenceLoaded);
 
     private void InitializeLearningMode()
     {

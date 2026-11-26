@@ -12,13 +12,17 @@ internal sealed partial class MainForm : Form
             File.Exists(paths[0]) ? DragDropEffects.Copy : DragDropEffects.None;
     }
 
-    private void TemplateDragDrop(object? sender, DragEventArgs e)
+    private async void TemplateDragDrop(object? sender, DragEventArgs e)
     {
         if (!ConnectionsReady || _templateLoaded || _operationInProgress ||
             e.Data?.GetData(DataFormats.FileDrop) is not string[] { Length: 1 } paths)
             return;
 
-        RunOperation("雛形読み込み", () => LoadTemplate(paths[0]));
+        if (IsLearningMode)
+            // 学習モードでドロップした雛形にも、続けて参照波形を読み込む(2026-11-26)。
+            await RunOperationAsync("雛形読み込み", async () => LoadTemplate(paths[0]) + " / " + await LoadLearningReferenceAsync());
+        else
+            RunOperation("雛形読み込み", () => LoadTemplate(paths[0]));
     }
 
     // 雛形を LOGGER で開いて登録する。ドロップと、学習モードの自動読み込み(MainForm.Learning.cs)で使う。
@@ -61,6 +65,7 @@ internal sealed partial class MainForm : Form
         _templateLoaded = false;
         _templatePath = null;
         ClearLiveCaptureTemplate();
+        ResetLearningReference();
         _measurementState.State = null;
         _measurementState.MeasurementStarted = false;
         _measurementState.ReadAfter = 0;

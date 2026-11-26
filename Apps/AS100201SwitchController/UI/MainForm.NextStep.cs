@@ -30,6 +30,8 @@ internal sealed partial class MainForm : Form
             TemplateLoaded = _templateLoaded,
             PanelReady = _panel is { InputReady: true },
             SaveBlocked = _learning is { Blocked: true },
+            ReferenceLoaded = _referenceLoaded,
+            ReferenceProblem = _referenceProblem,
             SerialMissing = _learning is { SerialNumber: null },
             SerialDialogOpen = _serialDialogOpen,
             PanelSelecting = _panelSelecting,
