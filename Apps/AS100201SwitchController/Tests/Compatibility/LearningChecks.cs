@@ -142,16 +142,32 @@ internal static class LearningChecks
     private static void LedgerRowChecks()
     {
         var time = new DateTime(2026, 11, 9, 13, 5, 7);
-        Check(As100201LedgerRow.HeaderLine == "日時,種類,側,位相,停止のきっかけ,操作,方向,程度,厚さ,ファイル,備考", "header columns");
-        var measurement = new As100201LedgerRow(time, As100201LedgerEventKind.Measurement) { Side = "PC（2回押し）", Phase = "75", StopTrigger = "sw4", File = "20261109_130507_PC2.xdt" };
-        Check(measurement.ToCsvLine() == "2026-11-09 13:05:07,測定,PC（2回押し）,75,sw4,,,,,20261109_130507_PC2.xdt,", "measurement row");
-        var operation = new As100201LedgerRow(time, As100201LedgerEventKind.Operation) { Operation = "ノズル P", Direction = "近づける", Degree = "", Note = "完了の取消、直前の測定なし" };
-        Check(operation.ToCsvLine() == "2026-11-09 13:05:07,操作,,,,ノズル P,近づける,,,,完了の取消、直前の測定なし", "operation row");
-        Check(new As100201LedgerRow(time, As100201LedgerEventKind.Done).KindText == "完了" && new As100201LedgerRow(time, As100201LedgerEventKind.Undo).KindText == "取消", "kind text");
-        // 保存先は exe の隣の「学習データ」(2026-11-10。雛形のフォルダーではない)。台帳の「ファイル」列は日付フォルダー付き。
+        // 2026-11-26: 「日時」の次に「シリアル番号」の列。
+        Check(As100201LedgerRow.HeaderLine == "日時,シリアル番号,種類,側,位相,停止のきっかけ,操作,方向,程度,厚さ,ファイル,備考", "header columns");
+        var measurement = new As100201LedgerRow(time, As100201LedgerEventKind.Measurement) { SerialNumber = "SN145", Side = "PC（2回押し）", Phase = "75", StopTrigger = "sw4", File = @"SN145\20261109_130507_SN145_PC2.xdt" };
+        Check(measurement.ToCsvLine() == @"2026-11-09 13:05:07,SN145,測定,PC（2回押し）,75,sw4,,,,,SN145\20261109_130507_SN145_PC2.xdt,", "measurement row");
+        var operation = new As100201LedgerRow(time, As100201LedgerEventKind.Operation) { SerialNumber = "SN145", Operation = "ノズル P", Direction = "近づける", Degree = "", Note = "完了の取消、直前の測定なし" };
+        Check(operation.ToCsvLine() == "2026-11-09 13:05:07,SN145,操作,,,,ノズル P,近づける,,,,完了の取消、直前の測定なし", "operation row");
+        Check(new As100201LedgerRow(time, As100201LedgerEventKind.Done).KindText == "完了" && new As100201LedgerRow(time, As100201LedgerEventKind.Undo).KindText == "取消" &&
+            new As100201LedgerRow(time, As100201LedgerEventKind.SerialSet).KindText == "番号", "kind text");
+        // 保存先は exe の隣の「学習データ」(2026-11-10。雛形のフォルダーではない)。台帳の「ファイル」列は番号のフォルダー付き(2026-11-26)。
         Check(MainForm.LearningDataDirectory(@"C:\apps\AS100201") == @"C:\apps\AS100201\学習データ" && MainForm.LedgerFileName == "調整記録.csv" &&
             MainForm.TemplateFolderName == "雛形", "save directory is not next to the exe");
-        Check(As100201LearningSession.LedgerFileText(@"C:\apps\学習データ\20261110\20261110_133028_PC.xdt") == @"20261110\20261110_133028_PC.xdt", "ledger file column without date folder");
+        Check(As100201LearningSession.LedgerFileText(@"C:\apps\学習データ\SN145\20261110_133028_SN145_PC.xdt") == @"SN145\20261110_133028_SN145_PC.xdt", "ledger file column without serial folder");
+        // 読み戻し: 書いた行と同じになる(引用符・カンマ・改行を含む備考も)。列の数が違う・種類が読めない行は null。
+        var quoted = operation with { Note = "a,\"b\"\r\nc" };
+        foreach (var row in new[] { measurement, operation, quoted, new As100201LedgerRow(time, As100201LedgerEventKind.SerialSet) { SerialNumber = "SN001", Note = "新規" } })
+        {
+            var parsed = As100201LedgerRow.ParseCsv(row.ToCsvLine() + "\r\n");
+            Check(parsed.Count == 1 && As100201LedgerRow.FromFields(parsed[0]) == row, "ledger row round trip: " + row.ToCsvLine());
+        }
+        Check(As100201LedgerRow.FromFields(As100201LedgerRow.ParseCsv("2026-11-09 13:05:07,測定,PC,0,sw4,,,,,a.xdt,")[0]) is null &&
+            As100201LedgerRow.FromFields(As100201LedgerRow.ParseCsv("2026-11-09 13:05:07,SN1,なにか,,,,,,,,,")[0]) is null, "bad ledger rows parsed");
+        // シリアル番号の形: 数字だけ(SN は付けても付けなくても)、3 桁にそろえる。0・6 桁以上・数字以外は受け付けない。
+        foreach (var (input, expected) in new[] { ("145", "SN145"), ("7", "SN007"), (" 045 ", "SN045"), ("SN122", "SN122"), ("sn 9", "SN009"), ("1000", "SN1000"), ("99999", "SN99999") })
+            Check(As100201LearningSession.TryFormatSerial(input, out string serial, out _) && serial == expected, $"serial {input} -> {expected}");
+        foreach (string bad in new[] { "", " ", "SN", "0", "000", "12a", "１２３", "-1", "1.5", "100000", "SN-1" })
+            Check(!As100201LearningSession.TryFormatSerial(bad, out _, out string error) && error.Length > 0, "serial accepted: " + bad);
         Check(As100201LedgerRow.Quote("a,b") == "\"a,b\"" && As100201LedgerRow.Quote("say \"hi\"") == "\"say \"\"hi\"\"\"" && As100201LedgerRow.Quote("plain") == "plain" &&
             As100201LedgerRow.Quote("x\ny") == "\"x\ny\"", "CSV quoting");
         Check(measurement.ToFields().Length == As100201LedgerRow.Columns.Length, "field count differs from columns");
@@ -189,8 +205,31 @@ internal static class LearningChecks
 
             // 記録の状態は、保存先フォルダーが無ければ作ってから台帳に書く(2026-11-10。exe の隣の「学習データ」を最初の 1 行で作る)。
             string data = Path.Combine(root, "学習データ");
-            var real = new As100201LearningSession(new As100201CsvLedger(Path.Combine(data, "調整記録.csv")), _ => 0) { SaveDirectory = data };
-            Check(real.HandleCommand(As100201PanelCommand.Parse("ACT:MAG")) == "ACK:ACT:MAG" && File.Exists(Path.Combine(data, "調整記録.csv")) && !real.Blocked, "save folder not created on first row");
+            string ledgerPath = Path.Combine(data, "調整記録.csv");
+            var real = new As100201LearningSession(new As100201CsvLedger(ledgerPath), _ => 0) { SaveDirectory = data };
+            Check(real.CheckLedger() && real.FindSerial("SN145") is null, "missing ledger not readable as empty");
+            Check(real.SelectSerial("SN145", null) && File.Exists(ledgerPath) && !real.Blocked, "save folder not created on first row");
+            Check(real.HandleCommand(As100201PanelCommand.Parse("ACT:MAG")) == "ACK:ACT:MAG", "operation after serial");
+            // 書いた台帳を読み戻して、番号の記録を数える(起動し直したあとの続き)。
+            var reread = new As100201LearningSession(new As100201CsvLedger(ledgerPath), _ => 0) { SaveDirectory = data };
+            Check(reread.CheckLedger() && reread.FindSerial("SN145") is { MeasurementCount: 0, OperationCount: 1, Completed: false } && reread.FindSerial("SN146") is null,
+                "ledger history after restart");
+
+            // 列の形が違う台帳(番号の列を足す前): 読めない・書き足さない。起動時に止め、台帳を移して「再試行」で再開する(2026-11-26)。
+            string oldData = Path.Combine(root, "旧");
+            Directory.CreateDirectory(oldData);
+            string oldLedger = Path.Combine(oldData, "調整記録.csv");
+            File.WriteAllText(oldLedger, "日時,種類,側,位相,停止のきっかけ,操作,方向,程度,厚さ,ファイル,備考\r\n2026-11-10 13:30:28,測定,PC,0,sw4,,,,,a.xdt,\r\n", new UTF8Encoding(true));
+            var old = new As100201LearningSession(new As100201CsvLedger(oldLedger), _ => 0) { SaveDirectory = oldData };
+            var oldLogs = new List<string>();
+            old.Log += oldLogs.Add;
+            Check(!old.CheckLedger() && old.Blocked && old.BlockReason!.Contains("列の形が今の作りと違います"), "old ledger accepted");
+            try { new As100201CsvLedger(oldLedger).Append(measurement); throw new Exception("appended to old ledger"); }
+            catch (As100201LedgerFormatException) { }
+            Check(!old.Retry() && old.Blocked && File.ReadAllLines(oldLedger).Length == 2, "retry passed with old ledger");
+            File.Move(oldLedger, Path.Combine(oldData, "調整記録_旧.csv"));
+            Check(old.Retry() && !old.Blocked && old.SelectSerial("SN001", null) && File.ReadAllLines(oldLedger)[0].TrimStart('﻿') == As100201LedgerRow.HeaderLine,
+                "not resumed after the old ledger was moved");
 
             // 自動で読み込む雛形: 「雛形」フォルダーの xdt がちょうど 1 つのときだけ。
             string templates = Path.Combine(root, "雛形");
@@ -205,7 +244,7 @@ internal static class LearningChecks
             Check(MainForm.FindLearningTemplate(templates, out reason) is null && reason.Contains("2 つ"), "two templates accepted");
         }
         finally { try { Directory.Delete(root, true); } catch (IOException) { } }
-        Pass("ledger rows: 11 columns, RFC4180 quoting, CSV file with BOM + header once, append-only, locked/missing folder -> exception; save folder next to exe, created on first row; template folder needs exactly one xdt");
+        Pass("ledger rows: 12 columns (serial after time), RFC4180 quoting + read back, serial format SN + 3 digits, CSV file with BOM + header once, append-only, locked/missing folder -> exception; save folder next to exe, created on first row; history read back after restart; old-format ledger blocks until moved; template folder needs exactly one xdt");
     }
 
     private sealed class FakeLedger : IAs100201LearningLedger
@@ -215,20 +254,31 @@ internal static class LearningChecks
         public string Location => @"C:\fake\調整記録.csv";
         public void Append(As100201LedgerRow row) { if (Fail) throw new IOException("fake ledger failure"); Rows.Add(row); }
         public void EnsureWritable() { if (Fail) throw new IOException("fake ledger failure"); }
+        public IReadOnlyList<As100201LedgerRow> ReadRows() { if (Fail) throw new IOException("fake ledger failure"); return Rows.ToList(); }
     }
 
+    // シリアル番号 SN001 を決めた状態で始める(2026-11-26 から、番号が無いと記録しない)。番号の行は消して、行の数を今までと同じに数える。
+    // 時計は番号の行で 1 回進むので、1 秒前から始めて、そのあとの時刻を今までと同じにする。
     private static (As100201LearningSession Session, FakeLedger Ledger, List<string> Saved, List<string> Logs, Func<long> SaveResult) NewSession(DateTime start, List<string>? created = null)
     {
         var ledger = new FakeLedger();
         var saved = new List<string>();
         var logs = new List<string>();
         long saveResult = 0;
-        DateTime now = start;
+        DateTime now = start.AddSeconds(-1);
         var session = new As100201LearningSession(ledger, path => { if (saveResult != 0) return saveResult; saved.Add(path); return 0; },
             () => now = now.AddSeconds(1), path => saved.Contains(path), path => created?.Add(path))
         { SaveDirectory = @"C:\fake" };
         session.Log += logs.Add;
+        StartSerial(session, ledger);
         return (session, ledger, saved, logs, () => saveResult);
+    }
+
+    private static void StartSerial(As100201LearningSession session, FakeLedger ledger, string serial = "SN001")
+    {
+        Check(session.SelectSerial(serial, null) && session.SerialNumber == serial && ledger.Rows[^1] is { Kind: As100201LedgerEventKind.SerialSet, Note: "新規" },
+            "serial not selected: " + serial);
+        ledger.Rows.Clear();
     }
 
     // 3. 完了・取消・完了の取消(1 個体の流れ)
@@ -242,34 +292,43 @@ internal static class LearningChecks
         var undo = As100201PanelCommand.Parse("UNDO");
 
         // 起動直後に操作: 「直前の測定なし」。測定: sw4 で止めて行、停止に戻ってから xdt。
-        Check(s.HandleCommand(mag) == "ACK:ACT:MAG" && ledger.Rows[^1].Kind == As100201LedgerEventKind.Operation && ledger.Rows[^1].Note == "直前の測定なし", "first operation without measurement");
+        Check(s.HandleCommand(mag) == "ACK:ACT:MAG" && ledger.Rows[^1] is { Kind: As100201LedgerEventKind.Operation, SerialNumber: "SN001", Note: "直前の測定なし" }, "first operation without measurement");
         s.MeasurementStopped("PC", "PC", "0", As100201LearningSession.StopBySwitch);
-        Check(ledger.Rows[^1] is { Kind: As100201LedgerEventKind.Measurement, Side: "PC", Phase: "0", StopTrigger: "sw4", File: @"20261109\20261109_090002_PC.xdt", Note: "" } && s.HasArmedWaveform && saved.Count == 0,
+        Check(ledger.Rows[^1] is { Kind: As100201LedgerEventKind.Measurement, SerialNumber: "SN001", Side: "PC", Phase: "0", StopTrigger: "sw4", File: @"SN001\20261109_090002_SN001_PC.xdt", Note: "" } && s.HasArmedWaveform && saved.Count == 0,
             "measurement row at stop, xdt not yet saved");
         s.MeasurementCompleted("PC", "PC", "0");
-        Check(!s.HasArmedWaveform && saved.SequenceEqual(new[] { @"C:\fake\20261109\20261109_090002_PC.xdt" }) && ledger.Rows.Count == 2, "xdt saved at completion, no extra row");
-        // 台帳の前に保存先を、xdt の前に日付フォルダーを作る(2026-11-10)。
-        Check(created.Contains(@"C:\fake") && created[^1] == @"C:\fake\20261109", "save folder / date folder not created before writing");
+        Check(!s.HasArmedWaveform && saved.SequenceEqual(new[] { @"C:\fake\SN001\20261109_090002_SN001_PC.xdt" }) && ledger.Rows.Count == 2, "xdt saved at completion, no extra row");
+        // 台帳の前に保存先を、xdt の前に番号のフォルダーを作る(2026-11-10。番号のフォルダーは 2026-11-26 から)。
+        Check(created.Contains(@"C:\fake") && created[^1] == @"C:\fake\SN001", "save folder / serial folder not created before writing");
         // 操作 → 測定(操作ボタンで止めた) → 操作 → 測定(LOGGER が自動で止まった: 行と xdt を一緒に)
         Check(s.HandleCommand(nozzle) == "ACK:ACT:NOZZLE:P:IN" && ledger.Rows[^1] is { Operation: "ノズル P", Direction: "近づける", Degree: "", Thickness: "", Note: "" }, "operation after measurement");
         s.MeasurementStopped("CR（2回押し）", "CR2", "250", As100201LearningSession.StopByPanel);
         s.MeasurementCompleted("CR（2回押し）", "CR2", "250");
-        Check(ledger.Rows[^1] is { Kind: As100201LedgerEventKind.Measurement, Side: "CR（2回押し）", Phase: "250", StopTrigger: "操作ボタン", File: @"20261109\20261109_090004_CR2.xdt" }, "measurement stopped by panel");
+        Check(ledger.Rows[^1] is { Kind: As100201LedgerEventKind.Measurement, Side: "CR（2回押し）", Phase: "250", StopTrigger: "操作ボタン", File: @"SN001\20261109_090004_SN001_CR2.xdt" }, "measurement stopped by panel");
         Check(s.HandleCommand(As100201PanelCommand.Parse("ACT:DEMAG:TAP")) == "ACK:ACT:DEMAG:TAP", "demag");
         s.MeasurementCompleted("CR", "CR", "140");
-        Check(ledger.Rows[^1] is { Kind: As100201LedgerEventKind.Measurement, StopTrigger: "LOGGER の停止", File: @"20261109\20261109_090006_CR.xdt" } && saved[^1].EndsWith("20261109_090006_CR.xdt"), "auto-stopped measurement: row and xdt together");
+        Check(ledger.Rows[^1] is { Kind: As100201LedgerEventKind.Measurement, StopTrigger: "LOGGER の停止", File: @"SN001\20261109_090006_SN001_CR.xdt" } && saved[^1].EndsWith("20261109_090006_SN001_CR.xdt"), "auto-stopped measurement: row and xdt together");
         Check(s.MeasurementCount == 3 && s.OperationCount == 3 && !s.Completed, "counts");
 
-        // 完了: 件数を備考に。2 回目は何もしない(NAK、行なし)。
+        // 完了: 件数を備考に。番号は空になり(2026-11-26)、入れるまで操作・完了・取消は NAK(行なし)。
         int before = ledger.Rows.Count;
-        Check(s.HandleCommand(done) == "ACK:DONE" && ledger.Rows[^1] is { Kind: As100201LedgerEventKind.Done, Note: "この個体の測定 3 回・操作 3 回" } && s.Completed, "done row");
-        Check(s.HandleCommand(done).StartsWith("NAK:") && ledger.Rows.Count == before + 1, "second done recorded");
+        Check(s.HandleCommand(done) == "ACK:DONE" && ledger.Rows[^1] is { Kind: As100201LedgerEventKind.Done, SerialNumber: "SN001", Note: "この個体の測定 3 回・操作 3 回" } &&
+            s.Completed && s.SerialNumber is null && s.StateText.Contains("シリアル番号を入れてください"), "done row clears the serial");
+        Check(s.HandleCommand(mag) == "NAK:" + As100201LearningSession.NakNoSerial && s.HandleCommand(done).StartsWith("NAK:") && s.HandleCommand(undo).StartsWith("NAK:") &&
+            s.HandleCommand(As100201PanelCommand.Parse("HOLD")) == "ACK:HOLD" && ledger.Rows.Count == before + 1, "commands recorded without a serial");
+        // 同じ番号を続きとして入れ直す(カバーを付けて NG など): 台帳から数え直し、完了済みのまま。
+        var history = s.FindSerial("SN001");
+        Check(history is { MeasurementCount: 3, OperationCount: 3, Completed: true, LastIsMeasurement: false }, "history of the completed serial");
+        Check(s.SelectSerial("SN001", history) && ledger.Rows[^1] is { Kind: As100201LedgerEventKind.SerialSet, SerialNumber: "SN001", Note: "続き（完了済み）" } &&
+            s.Completed && s.MeasurementCount == 3 && s.OperationCount == 3 && s.SerialNumber == "SN001", "continue the completed serial");
+        before = ledger.Rows.Count;
+        Check(s.HandleCommand(done).StartsWith("NAK:完了は記録済み") && ledger.Rows.Count == before, "second done recorded");
         // 完了の後の取消: 取り消せる操作がない。
-        Check(s.HandleCommand(undo).StartsWith("NAK:") && ledger.Rows.Count == before + 1 && logs[^1].Contains("取り消せる操作がありません"), "undo after done");
+        Check(s.HandleCommand(undo).StartsWith("NAK:") && ledger.Rows.Count == before && logs[^1].Contains("取り消せる操作がありません"), "undo after done");
         // 完了のあとに操作: 「完了の取消」+「直前の測定なし」、同じ個体の続き。
         Check(s.HandleCommand(mag) == "ACK:ACT:MAG" && ledger.Rows[^1].Note == "完了の取消、直前の測定なし" && !s.Completed && s.OperationCount == 4, "operation after done cancels done");
         // 取消: 直前の操作 1 件だけ。2 回目は NAK。取消のあと操作は「直前の測定なし」のまま(取り消した操作の前の状態に戻る)。
-        Check(s.HandleCommand(undo) == "ACK:UNDO" && ledger.Rows[^1] is { Kind: As100201LedgerEventKind.Undo } && ledger.Rows[^1].Note.StartsWith("取消の対象: 09:00:") &&
+        Check(s.HandleCommand(undo) == "ACK:UNDO" && ledger.Rows[^1] is { Kind: As100201LedgerEventKind.Undo, SerialNumber: "SN001" } && ledger.Rows[^1].Note.StartsWith("取消の対象: 09:00:") &&
             ledger.Rows[^1].Note.EndsWith(" 着磁") && s.OperationCount == 3, "undo row");
         Check(s.HandleCommand(undo).StartsWith("NAK:"), "second undo");
         Check(s.HandleCommand(nozzle) == "ACK:ACT:NOZZLE:P:IN" && ledger.Rows[^1].Note == "直前の測定なし", "state restored after undo");
@@ -280,16 +339,28 @@ internal static class LearningChecks
         Check(s.HandleCommand(As100201PanelCommand.Parse("ACT:SPACER:R:DOWN:0.450:+2")) == "ACK:ACT:SPACER:R:DOWN:0.450:+2" && ledger.Rows[^1] is { Operation: "スペーサー R", Direction: "下げる", Thickness: "0.450", Degree: "差+2μm", Note: "" }, "spacer after measurement");
         Check(s.HandleCommand(As100201PanelCommand.Parse("HOLD")) == "ACK:HOLD" && ledger.Rows[^1].Operation == "スペーサー R", "hold wrote a ledger row");
         Check(s.HandleCommand(undo) == "ACK:UNDO" && ledger.Rows[^1].Note.EndsWith(" スペーサー R（下げる・0.450・差+2μm）"), "undo spacer");
-        // 完了 → 測定: 新しい個体(件数を 0 から)。
-        Check(s.HandleCommand(done) == "ACK:DONE", "done 2");
+        Check(s.HandleCommand(done) == "ACK:DONE" && s.SerialNumber is null, "done 2");
+        // 台帳からの数え直し: 取消は直前の操作を消す。番号の行・押した行は数えない。
+        Check(s.FindSerial("SN001") is { MeasurementCount: 4, OperationCount: 4, Completed: true, LastIsMeasurement: false }, "history with undo rows");
+        // 新しい番号: 件数を 0 から。xdt は番号のフォルダーに、名前にも番号が入る。
+        Check(s.SelectSerial("SN002", null) && ledger.Rows[^1].Note == "新規", "new serial after done");
         s.MeasurementStopped("", "", "", As100201LearningSession.StopBySwitch);
-        Check(ledger.Rows[^1] is { Side: "", Phase: "", Note: "位相の出し直しなし", File: @"20261109\20261109_090015.xdt" } && s.MeasurementCount == 1 && s.OperationCount == 0 && !s.Completed, "new individual after done");
-        // 同じ秒に 2 つ目の xdt は _2。日付フォルダーは止めた時刻の日付(日をまたいだら次の日のフォルダー)。
+        Check(ledger.Rows[^1] is { SerialNumber: "SN002", Side: "", Phase: "", Note: "位相の出し直しなし", File: @"SN002\20261109_090017_SN002.xdt" } && s.MeasurementCount == 1 && s.OperationCount == 0 && !s.Completed,
+            "new individual: " + ledger.Rows[^1].File);
+        // 同じ秒に 2 つ目の xdt は _2。日をまたいでも同じ番号のフォルダー。
         s.MeasurementCompleted("", "", "");
-        Check(s.BuildXdtPath(new DateTime(2026, 11, 9, 9, 0, 15), "") == @"C:\fake\20261109\20261109_090015_2.xdt", "duplicate name suffix");
-        Check(s.BuildXdtPath(new DateTime(2026, 11, 10, 0, 0, 1), "PC") == @"C:\fake\20261110\20261110_000001_PC.xdt", "date folder after midnight");
-        Check(ledger.Rows.All(r => r.KindText is "測定" or "操作" or "完了" or "取消") && !s.Blocked, "unexpected kinds or blocked");
-        Pass("learning flow: first-op note, row at stop + xdt at completion, panel/auto stop triggers, done counts, double done, done-cancel note, single undo with state restore, new individual");
+        Check(s.BuildXdtPath(new DateTime(2026, 11, 9, 9, 0, 17), "") == @"C:\fake\SN002\20261109_090017_SN002_2.xdt", "duplicate name suffix");
+        Check(s.BuildXdtPath(new DateTime(2026, 11, 10, 0, 0, 1), "PC") == @"C:\fake\SN002\20261110_000001_SN002_PC.xdt", "serial folder after midnight");
+        // 完了せずに次の番号へ: そのまま切り替え、番号の行とログに残す。
+        Check(s.SelectSerial("SN003", null) && ledger.Rows[^1] is { SerialNumber: "SN003", Note: "新規、前の番号 SN002 は完了せず切り替え" } &&
+            logs.Any(l => l.Contains("SN002 は完了せずに")), "switch without done");
+        // 未完了の番号の続き: 最後が測定なら、次の操作に「直前の測定なし」は付かない。
+        var unfinished = s.FindSerial("SN002");
+        Check(unfinished is { MeasurementCount: 1, OperationCount: 0, Completed: false, LastIsMeasurement: true }, "history of the unfinished serial");
+        Check(s.SelectSerial("SN002", unfinished) && ledger.Rows[^1].Note == "続き（未完了）、前の番号 SN003 は完了せず切り替え" &&
+            s.HandleCommand(mag) == "ACK:ACT:MAG" && ledger.Rows[^1] is { SerialNumber: "SN002", Note: "" }, "continue the unfinished serial");
+        Check(ledger.Rows.All(r => r.KindText is "測定" or "操作" or "完了" or "取消" or "番号") && !s.Blocked, "unexpected kinds or blocked");
+        Pass("learning flow: serial on every row, first-op note, row at stop + xdt at completion in the serial folder, panel/auto stop triggers, done counts and clears the serial, NAK without serial, continue a completed/unfinished serial from the ledger, switch without done noted, single undo with state restore");
     }
 
     // 4. 書けないときの停止と再試行
@@ -299,12 +370,14 @@ internal static class LearningChecks
         var saved = new List<string>();
         var logs = new List<string>();
         long saveResult = 0;
-        DateTime now = new(2026, 11, 9, 10, 0, 0);
+        // 番号の行で時計が 1 回進むので 1 秒前から(そのあとの時刻は今までと同じ)。
+        DateTime now = new(2026, 11, 9, 9, 59, 59);
         bool folderFails = false;
         var s = new As100201LearningSession(ledger, path => { if (saveResult != 0) return saveResult; saved.Add(path); return 0; }, () => now = now.AddSeconds(1),
             createDirectory: _ => { if (folderFails) throw new UnauthorizedAccessException("fake folder failure"); })
         { SaveDirectory = @"C:\fake" };
         s.Log += logs.Add;
+        StartSerial(s, ledger);
         var mag = As100201PanelCommand.Parse("ACT:MAG");
 
         // 操作の行が書けない: NAK、止まる、行も件数も増えない。
@@ -320,8 +393,8 @@ internal static class LearningChecks
         Check(!s.Retry() && s.Blocked && s.PendingCount == 2, "retry without fix");
         // 直して再試行: 待っていた行と xdt を順に書いて再開。
         ledger.Fail = false;
-        Check(s.Retry() && !s.Blocked && s.PendingCount == 0 && ledger.Rows.Count == 1 && ledger.Rows[0] is { Kind: As100201LedgerEventKind.Measurement, File: @"20261109\20261109_100002_PC.xdt" } &&
-            saved.SequenceEqual(new[] { @"C:\fake\20261109\20261109_100002_PC.xdt" }), "retry writes pending in order");
+        Check(s.Retry() && !s.Blocked && s.PendingCount == 0 && ledger.Rows.Count == 1 && ledger.Rows[0] is { Kind: As100201LedgerEventKind.Measurement, File: @"SN001\20261109_100002_SN001_PC.xdt" } &&
+            saved.SequenceEqual(new[] { @"C:\fake\SN001\20261109_100002_SN001_PC.xdt" }), "retry writes pending in order");
         Check(s.HandleCommand(mag) == "ACK:ACT:MAG" && ledger.Rows[^1].Note == "", "resumed after retry");
 
         // xdt が保存できない(LOGGER の戻り値が 0 以外): 行は書けていて、xdt だけ待つ。再試行で SaveXdt し直す。
@@ -332,7 +405,7 @@ internal static class LearningChecks
         Check(s.Blocked && s.PendingCount == 1 && s.BlockReason!.Contains("戻り値 -5") && saved.Count == 1, "xdt save failure blocks");
         Check(s.HandleCommand(mag).StartsWith("NAK:"), "operation NAK while xdt pending");
         saveResult = 0;
-        Check(s.Retry() && !s.Blocked && saved[^1].EndsWith("20261109_100004_CR.xdt") && saved.Count == 2, "retry re-saves xdt");
+        Check(s.Retry() && !s.Blocked && saved[^1].EndsWith("20261109_100004_SN001_CR.xdt") && saved.Count == 2, "retry re-saves xdt");
         // 測定の行の書き込みそのものが失敗: 行を覚えて止める。xdt も後ろに並ぶ。再試行で行 → xdt の順。
         ledger.Fail = true;
         s.MeasurementStopped("PC", "PC", "0", As100201LearningSession.StopBySwitch);
@@ -342,7 +415,7 @@ internal static class LearningChecks
         ledger.Fail = false;
         int rows = ledger.Rows.Count;
         Check(s.Retry() && ledger.Rows.Count == rows + 1 && saved.Count == 3 && saved[^1].EndsWith(ledger.Rows[^1].File), "row then xdt on retry");
-        // 保存先・日付フォルダーを作れない(2026-11-10): 台帳の行も xdt も書かずに止め、作れるようになったら再試行で書く。
+        // 保存先・番号のフォルダーを作れない(2026-11-10): 台帳の行も xdt も書かずに止め、作れるようになったら再試行で書く。
         folderFails = true;
         rows = ledger.Rows.Count;
         Check(s.HandleCommand(mag).StartsWith("NAK:台帳に書けません") && s.Blocked && s.BlockReason!.Contains("fake folder failure") && ledger.Rows.Count == rows, "folder failure did not block");
@@ -375,7 +448,7 @@ internal static class LearningChecks
         s.WaveformRestarted("CR（2回押し）", "250", 12.3456, 1234);
         Check(ledger.Rows[^1] is { Kind: As100201LedgerEventKind.Pressed, Side: "CR（2回押し）", Phase: "250" } &&
             ledger.Rows[^1].Note == "09:00:02.000、F8 から 12.346 秒、点数 1234（xdt の 1235 点目から後）", "pressed row while measuring: " + ledger.Rows[^1].Note);
-        Check(ledger.Rows[^1].ToCsvLine() == "2026-11-12 09:00:02,押した,CR（2回押し）,250,,,,,,,09:00:02.000、F8 から 12.346 秒、点数 1234（xdt の 1235 点目から後）",
+        Check(ledger.Rows[^1].ToCsvLine() == "2026-11-12 09:00:02,SN001,押した,CR（2回押し）,250,,,,,,,09:00:02.000、F8 から 12.346 秒、点数 1234（xdt の 1235 点目から後）",
             "pressed row CSV: " + ledger.Rows[^1].ToCsvLine());
         // 点数を読めなかった: 理由を残す。
         s.WaveformRestarted("PC", "0", 3.5, null, "fake COM");
@@ -504,9 +577,12 @@ internal static class LearningChecks
             Check(!As100201LearningGate.Allows(button, true, true, true, saveBlocked: true, true, out refusal) && refusal == As100201LearningGate.SaveBlocked, button + " allowed while blocked");
             Check(!As100201LearningGate.Allows(button, true, true, true, false, readyLedOn: false, out _), button + " allowed with LED off");
             Check(!As100201LearningGate.Allows(button, true, true, true, false, true, out refusal, panelSelecting: true) && refusal == As100201LearningGate.PanelSelecting, button + " allowed while selecting on the panel");
+            // シリアル番号が入っていない間は測定を始めない(2026-11-26)。
+            Check(!As100201LearningGate.Allows(button, true, true, true, false, true, out refusal, serialMissing: true) && refusal == As100201LearningGate.NoSerial, button + " allowed without a serial");
             Check(As100201LearningGate.Allows(button, true, true, true, false, true, out _), button + " refused when all ready");
         }
-        Pass("panel outage: warm-up 1 s, stale after 1 s -> NAK + status, recovery 1 s, reconnect after drop, version check, DIAG_BOOT reset, SELECT / HOME before warm-up without reply, HOLD dropped silently; gate lets only sw4 through (also while selecting)");
+        Check(As100201LearningGate.Allows("sw4", true, true, true, false, false, out _, serialMissing: true), "sw4 refused without a serial");
+        Pass("panel outage: warm-up 1 s, stale after 1 s -> NAK + status, recovery 1 s, reconnect after drop, version check, DIAG_BOOT reset, SELECT / HOME before warm-up without reply, HOLD dropped silently; gate lets only sw4 through (also while selecting / without a serial)");
     }
 
     // 8. タッチパネルの USB と Wi-Fi の 2 本(2026-11-13 承認)と電池残量

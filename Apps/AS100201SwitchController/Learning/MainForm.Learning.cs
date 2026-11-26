@@ -23,15 +23,22 @@ internal sealed partial class MainForm : Form
     private readonly Label _learningStateLabel = new();
     private readonly Label _saveDirectoryLabel = new();
     private readonly Button _retryButton = new();
+    private readonly TextBox _serialTextBox = new();
+    private readonly Button _serialButton = new();
+    private readonly Label _serialValueLabel = new();
+    private Label? _learningBanner;
+    // シリアル番号の確認の窓を出している(2026-11-26)。出している間は測定を始めず、パネルの操作も受け付けない。
+    private bool _serialDialogOpen;
 
     public bool IsLearningMode => _mode == As100201StartupMode.Learning;
 
     // パネルが 2 画面目以降(操作を選んでいる途中)にいる(版 4、2026-11-13 人の指示)。パネルの SELECT / HOME で変わる。
     private bool _panelSelecting;
 
-    // 学習モードで測定を始めてよいか。パネルが途切れている間、台帳・xdt に書けない間、パネルで操作を選んでいる途中は始めない。
+    // 学習モードで測定を始めてよいか。パネルが途切れている間、台帳・xdt に書けない間、パネルで操作を選んでいる途中、
+    // シリアル番号が入っていない間・番号の確認の窓を出している間は始めない。
     private bool LearningReady => !IsLearningMode ||
-        (_panel is { InputReady: true } && _learning is { Blocked: false } && !_panelSelecting);
+        (_panel is { InputReady: true } && _learning is { Blocked: false, SerialNumber: not null } && !_panelSelecting && !_serialDialogOpen);
 
     private void InitializeLearningMode()
     {
@@ -51,7 +58,10 @@ internal sealed partial class MainForm : Form
         _learning.Log += AppendLog;
         InitializeLiveCapture();
         AppendLog("学習モードで起動しました。タッチパネルの操作を記録し、測定のたびに xdt と台帳を保存します。");
-        AppendLog($"学習モードの保存先：{directory}（台帳 {LedgerFileName}、xdt は日付フォルダー yyyyMMdd\\yyyyMMdd_HHmmss_側.xdt）");
+        AppendLog($"学習モードの保存先：{directory}（台帳 {LedgerFileName}、xdt はシリアル番号のフォルダー SN145\\yyyyMMdd_HHmmss_SN145_側.xdt）");
+        // 台帳の列の形が今と違う(番号の列を足す前の台帳)・読めないときは、書き足さずに止める(2026-11-26)。
+        if (_learning.CheckLedger())
+            AppendLog("シリアル番号を画面の「シリアル番号」に入れて「決定」を押してください。入れるまで測定とパネルの操作を受け付けません。");
         if (_useVirtualPanel)
             AppendLog("開発用：タッチパネルの代わりを画面に出しています（" + As100201VirtualPanelLink.CommandLineSwitch + "）。COM ポートのタッチパネルは探しません。");
     }
@@ -75,7 +85,7 @@ internal sealed partial class MainForm : Form
             AutoSizeMode = AutoSizeMode.GrowAndShrink,
             Dock = DockStyle.Fill,
             ColumnCount = 3,
-            RowCount = 3
+            RowCount = 4
         };
         table.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
         table.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
@@ -98,6 +108,33 @@ internal sealed partial class MainForm : Form
         _retryButton.Click += (_, _) => RetryLearningWrites();
         table.Controls.Add(_retryButton, 2, 1);
         table.SetRowSpan(_retryButton, 2);
+        // シリアル番号(2026-11-26 人の決定): PC の画面に数字を入れて「決定」(Enter でも決定)。
+        table.Controls.Add(new Label { AutoSize = true, Font = new Font(Font, FontStyle.Bold), Text = "シリアル番号：", Margin = new Padding(0, 10, 8, 4) }, 0, 3);
+        var serialRow = new FlowLayoutPanel { AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, WrapContents = false, Margin = new Padding(0, 2, 0, 2) };
+        serialRow.Controls.Add(new Label { AutoSize = true, Text = "SN", Font = new Font(Font.FontFamily, 12, FontStyle.Bold), Margin = new Padding(0, 8, 2, 0) });
+        _serialTextBox.Width = 110;
+        _serialTextBox.MaxLength = 8;
+        _serialTextBox.Font = new Font(Font.FontFamily, 12);
+        _serialTextBox.Margin = new Padding(0, 4, 8, 4);
+        _serialTextBox.KeyDown += (_, e) =>
+        {
+            if (e.KeyCode != Keys.Enter) return;
+            e.SuppressKeyPress = true;
+            DecideSerial();
+        };
+        serialRow.Controls.Add(_serialTextBox);
+        _serialButton.AutoSize = true;
+        _serialButton.MinimumSize = new Size(90, 34);
+        _serialButton.Text = "決定";
+        _serialButton.Margin = new Padding(0, 2, 16, 2);
+        _serialButton.Click += (_, _) => DecideSerial();
+        serialRow.Controls.Add(_serialButton);
+        _serialValueLabel.AutoSize = true;
+        _serialValueLabel.Font = new Font(Font.FontFamily, 14, FontStyle.Bold);
+        _serialValueLabel.Margin = new Padding(0, 6, 0, 0);
+        serialRow.Controls.Add(_serialValueLabel);
+        table.Controls.Add(serialRow, 1, 3);
+        table.SetColumnSpan(serialRow, 2);
         group.Controls.Add(table);
         // Dock=Top の GroupBox は AutoSize が効かないので、中身の高さに合わせる。
         group.AutoSize = false;
@@ -118,6 +155,7 @@ internal sealed partial class MainForm : Form
                 : "　タッチパネルで調整操作を記録し、測定のたびに xdt と台帳を保存します")
         };
         if (_useVirtualPanel) banner.BackColor = Color.SteelBlue;
+        _learningBanner = banner;
 
         // Dock は後に足したものから配置されるので、帯が最上部、その下に記録の状態、(開発用の代わりのパネル、)残りが今までの画面。
         var padding = new Panel { Dock = DockStyle.Top, Height = 8 };
@@ -142,10 +180,86 @@ internal sealed partial class MainForm : Form
         _panelValueLabel.Text = _panel.InputReady ? "タッチパネル　接続済み" + suffix
             : _panel.IsConnected ? "定期応答の確認中" + suffix : "接続待ち（USB / Wi-Fi を自動再確認）";
         _panelValueLabel.ForeColor = _panel.InputReady ? Color.DarkGreen : Color.DarkRed;
-        _saveDirectoryLabel.Text = _learning is null ? "未設定" : _learning.SaveDirectory + "　台帳：" + Path.GetFileName(_learning.LedgerLocation) + "　xdt：日付フォルダー";
+        _saveDirectoryLabel.Text = _learning is null ? "未設定" : _learning.SaveDirectory + "　台帳：" + Path.GetFileName(_learning.LedgerLocation) + "　xdt：シリアル番号のフォルダー";
         _learningStateLabel.Text = _learning?.StateText ?? "記録できません";
-        _learningStateLabel.ForeColor = _learning is { Blocked: false } ? Color.DarkGreen : Color.DarkRed;
-        _retryButton.Enabled = _learning is { Blocked: true } && !_operationInProgress;
+        _learningStateLabel.ForeColor = _learning is { Blocked: false, SerialNumber: not null } ? Color.DarkGreen : Color.DarkRed;
+        _retryButton.Enabled = _learning is { Blocked: true } && !_operationInProgress && !_serialDialogOpen;
+        string? serial = _learning?.SerialNumber;
+        _serialValueLabel.Text = serial is null ? "今の番号：なし（入れるまで測定できません）" : "今の番号：" + serial;
+        _serialValueLabel.ForeColor = serial is null ? Color.DarkRed : Color.DarkGreen;
+        bool serialEditable = SerialInputAllowed;
+        _serialTextBox.Enabled = serialEditable;
+        _serialButton.Enabled = serialEditable;
+        if (_learningBanner is not null)
+        {
+            string head = As100201Application.LearningModeLabel + "　" + (serial ?? "シリアル番号なし");
+            _learningBanner.Text = head + (_useVirtualPanel
+                ? "（開発用：タッチパネルの代わり）　xdt と台帳は本番と同じく保存します"
+                : "　タッチパネルで調整操作を記録し、測定のたびに xdt と台帳を保存します");
+        }
+    }
+
+    // シリアル番号を変えてよいか。測定中・パネルで選んでいる途中・ほかの処理中・保存の停止中・確認の窓を出している間は変えない
+    // (番号を記録の途中で変えないため。AI の仮決め)。
+    private bool SerialInputAllowed =>
+        _learning is { Blocked: false } && !_measurementStarted && !_panelSelecting &&
+        !_operationInProgress && !_waveformRestartInProgress && !_serialDialogOpen && !_closing;
+
+    // 「決定」(Enter)。数字をシリアル番号にし、台帳にもうある番号なら続きにするか確かめてから決める(2026-11-26 人の決定)。
+    private void DecideSerial()
+    {
+        if (_learning is null || !SerialInputAllowed) return;
+        if (!As100201LearningSession.TryFormatSerial(_serialTextBox.Text, out string serial, out string error))
+        {
+            AppendLog(error);
+            ErrorNotification.Show(this, error, "シリアル番号", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            _serialTextBox.Focus();
+            _serialTextBox.SelectAll();
+            return;
+        }
+        if (serial == _learning.SerialNumber)
+        {
+            AppendLog($"シリアル番号は {serial} のままです。");
+            _serialTextBox.Clear();
+            return;
+        }
+        _serialDialogOpen = true;
+        RefreshReadyLed();
+        UpdateControls();
+        try
+        {
+            As100201LearningSession.SerialHistory? history;
+            try { history = _learning.FindSerial(serial); }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                AppendLog($"台帳を読めないため、シリアル番号 {serial} を決められません：{ex.Message}");
+                ErrorNotification.Show(this, $"台帳を読めないため、シリアル番号を決められません。\r\n\r\n{ex.Message}", "シリアル番号", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                return;
+            }
+            if (history is not null)
+            {
+                var culture = System.Globalization.CultureInfo.InvariantCulture;
+                var answer = ErrorNotification.Show(this,
+                    $"{serial} は前に記録があります。\r\n\r\n" +
+                    $"{(history.Completed ? "完了済み" : "未完了")}・測定 {history.MeasurementCount} 回・操作 {history.OperationCount} 回" +
+                    $"（最後の記録 {history.LastTime.ToString("yyyy-MM-dd HH:mm", culture)}）\r\n\r\n" +
+                    "続きとして記録しますか？\r\n「いいえ」で番号を入れ直せます。",
+                    "シリアル番号の確認", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
+                if (answer != DialogResult.Yes)
+                {
+                    AppendLog($"{serial} の続きにするのをやめました。番号を入れ直してください。");
+                    _serialTextBox.Focus();
+                    _serialTextBox.SelectAll();
+                    return;
+                }
+            }
+            if (_learning.SelectSerial(serial, history)) _serialTextBox.Clear();
+        }
+        finally
+        {
+            _serialDialogOpen = false;
+            AfterLearningChange();
+        }
     }
 
     // 接続確認。Arduino の確認が終わってから行う(2 台が同時に同じ COM ポートを開かないため)。失敗理由を返す。
@@ -306,6 +420,13 @@ internal sealed partial class MainForm : Form
             _panel.TrySend(As100201PanelProtocol.Nak("記録できません"));
             return;
         }
+        if (_serialDialogOpen && command.Kind != As100201PanelCommandKind.Hold)
+        {
+            // 番号の確認の窓を出している間は、どの番号で記録するか決まっていないので受け付けない(2026-11-26)。
+            AppendLog($"シリアル番号の確認中のため、{command.DisplayName} は記録しません。");
+            _panel.TrySend(As100201PanelProtocol.Nak("PC でシリアル番号を確認中です"));
+            return;
+        }
         try
         {
             if (_measurementStarted && _logger.IsInitialized && _templateLoaded)
@@ -464,13 +585,14 @@ internal sealed partial class MainForm : Form
             hasSession: _learning is not null,
             saveBlocked: _learning is { Blocked: true },
             readyLedOn: _readyLedOn, out refusal,
-            panelSelecting: _panelSelecting);
+            panelSelecting: _panelSelecting,
+            serialMissing: _learning is { SerialNumber: null });
     }
 
     // 台帳のファイル名(2026-11-09 人の決定)。
     public const string LedgerFileName = "調整記録.csv";
     // 保存先: exe の隣の「学習データ」(2026-11-10 人の決定。それまでは雛形と同じフォルダー)。
-    // 台帳はこの直下に 1 つ、xdt は日付フォルダー(As100201LearningSession.BuildXdtPath)。
+    // 台帳はこの直下に 1 つ、xdt はシリアル番号のフォルダー(As100201LearningSession.BuildXdtPath。2026-11-26 から)。
     public const string LearningDataFolderName = "学習データ";
     // 学習モードで自動で読み込む雛形の置き場: exe の隣の「雛形」(exe に入れない。人が差し替える)。
     public const string TemplateFolderName = "雛形";

@@ -8,6 +8,9 @@ namespace PSCAutomation.Apps.AS100201SwitchController;
 //   - 取消は直前の操作 1 件だけ。操作のあとに測定・完了があれば取り消せない
 //   - 台帳や xdt に書けなかったら止まる(Blocked)。測定の行と xdt は覚えておいて「再試行」で書き直す。
 //     操作ボタンには NAK を返し、記録しない(再試行のあとに押し直してもらう)
+//   - 2026-11-26 からシリアル番号で個体を分ける(SPEC_調整操作の記録.md「シリアル番号で管理する」)。番号は PC の画面で入れ、
+//     起動直後と完了のあとは空。空の間は操作・完了・取消に NAK を返す(測定の開始は MainForm が止める)。
+//     同じ番号をもう一度入れたら、台帳から数え直して続きにする。完了済みの番号の続きは、次の操作で「完了の取消」
 internal sealed class As100201LearningSession
 {
     private readonly IAs100201LearningLedger _ledger;
@@ -28,6 +31,8 @@ internal sealed class As100201LearningSession
     public const string StopByLogger = "LOGGER の停止";
     // 測定中の取り込みに失敗して、アプリが LOGGER を止めた(SPEC_測定中の取り込み.md、2026-11-11)。
     public const string StopByCapture = "取り込み異常";
+    // 番号が空の間にパネルの操作・完了・取消が届いたときの返事(Tab5 の下の帯に出る)。
+    public const string NakNoSerial = "シリアル番号を入れてください";
 
     public As100201LearningSession(IAs100201LearningLedger ledger, Func<string, long> saveXdt,
         Func<DateTime>? clock = null, Func<string, bool>? fileExists = null, Action<string>? createDirectory = null)
@@ -40,7 +45,8 @@ internal sealed class As100201LearningSession
     }
 
     // 保存先フォルダー。exe の隣の「学習データ」(2026-11-10 人の決定。それまでは雛形と同じフォルダー)。
-    // 台帳はこの直下(呼び出し側が ledger に渡す)、xdt は日付フォルダー SaveDirectory\yyyyMMdd\ に置く。無ければ作る。
+    // 台帳はこの直下(呼び出し側が ledger に渡す)、xdt はシリアル番号のフォルダー SaveDirectory\SN145\ に置く
+    // (2026-11-26。それまでは日付フォルダー)。無ければ作る。
     public string SaveDirectory { get; init; } = "";
     public string LedgerLocation => _ledger.Location;
 
@@ -55,25 +61,146 @@ internal sealed class As100201LearningSession
     public int OperationCount { get; private set; }
     public bool Completed { get; private set; }
     public int PendingCount => _pending.Count;
+    // 今の個体のシリアル番号(SN145 の形)。起動直後と完了のあとは null(入れるまで測定・操作を受け付けない)。
+    public string? SerialNumber { get; private set; }
 
     public string StateText => Blocked
         ? $"保存できず停止中：{BlockReason}"
-        : $"記録中：この個体の測定 {MeasurementCount} 回・操作 {OperationCount} 回" + (Completed ? "（完了済み）" : "");
+        : SerialNumber is null
+            ? "シリアル番号を入れてください（入れるまで測定・操作を受け付けません）"
+            : $"記録中：{SerialNumber}　この個体の測定 {MeasurementCount} 回・操作 {OperationCount} 回" + (Completed ? "（完了済み）" : "");
 
-    // ファイル名: yyyyMMdd_HHmmss_<側>.xdt(側は PC / CR、2 回押しは PC2 / CR2。側が無ければ日時だけ)。
+    // 番号が無いときの xdt の置き場(番号を入れずに LOGGER が止まったときなど。ふだんは使わない。AI の仮決め)。
+    public const string NoSerialFolderName = "番号なし";
+
+    // 入れた文字をシリアル番号にする: 数字だけ(先頭の SN は付けても付けなくてもよい)。3 桁にそろえ、1000 以上はそのまま。
+    // 0 と 6 桁以上は受け付けない(打ち間違いとみなす。AI の仮決め)。
+    public static bool TryFormatSerial(string? input, out string serial, out string error)
+    {
+        serial = "";
+        string text = (input ?? "").Trim();
+        if (text.StartsWith("SN", StringComparison.OrdinalIgnoreCase)) text = text[2..].Trim();
+        if (text.Length == 0) { error = "シリアル番号を数字で入れてください。"; return false; }
+        if (!text.All(char.IsAsciiDigit)) { error = "シリアル番号は数字だけで入れてください（SN は自動で付きます）：" + input; return false; }
+        string digits = text.TrimStart('0');
+        if (digits.Length == 0) { error = "シリアル番号に 0 は使えません。"; return false; }
+        if (digits.Length > 5) { error = "シリアル番号の桁が多すぎます：" + input; return false; }
+        serial = "SN" + digits.PadLeft(3, '0');
+        error = "";
+        return true;
+    }
+
+    // ファイル名: yyyyMMdd_HHmmss_<番号>_<側>.xdt(側は PC / CR、2 回押しは PC2 / CR2。側が無ければ側を付けない)。
     // 同じ秒に 2 つできたら _2, _3 … を付ける(2026-11-09 人の決定。台帳の行と 1 対 1)。
-    // 置き場は日付フォルダー SaveDirectory\yyyyMMdd\(2026-11-10 人の決定。日付は止めた時刻の日付)。
+    // 置き場はシリアル番号のフォルダー SaveDirectory\SN145\(2026-11-26 人の決定。それまでは日付フォルダー)。
     public string BuildXdtPath(DateTime time, string sideCode)
     {
         var culture = System.Globalization.CultureInfo.InvariantCulture;
-        string directory = Path.Combine(SaveDirectory, time.ToString("yyyyMMdd", culture));
-        string stem = time.ToString("yyyyMMdd_HHmmss", culture) + (sideCode.Length == 0 ? "" : "_" + sideCode);
+        string directory = Path.Combine(SaveDirectory, SerialNumber ?? NoSerialFolderName);
+        string stem = time.ToString("yyyyMMdd_HHmmss", culture) + (SerialNumber is null ? "" : "_" + SerialNumber) +
+            (sideCode.Length == 0 ? "" : "_" + sideCode);
         string path = Path.Combine(directory, stem + ".xdt");
         for (int n = 2; _fileExists(path); n++) path = Path.Combine(directory, $"{stem}_{n}.xdt");
         return path;
     }
 
-    // 台帳の「ファイル」列: 台帳のフォルダーからの相対パス(日付フォルダー\ファイル名)。
+    // 台帳にある、ある番号の今までの記録(続きとして数え直すため)。
+    public sealed record SerialHistory(string SerialNumber, int MeasurementCount, int OperationCount, bool Completed,
+        bool LastIsMeasurement, DateTime LastTime);
+
+    // 台帳からその番号の記録を探す。無ければ null。台帳を読めなければ例外(呼び出し側で知らせる)。
+    public SerialHistory? FindSerial(string serial) => BuildHistory(_ledger.ReadRows(), serial);
+
+    // 台帳の行から、その番号の測定・操作の回数と完了かどうかを数える。取消は直前の操作を消す(押した・番号の行は数えない)。
+    public static SerialHistory? BuildHistory(IEnumerable<As100201LedgerRow> rows, string serial)
+    {
+        var events = new List<As100201LedgerEventKind>();
+        int measurements = 0, operations = 0;
+        bool completed = false, found = false;
+        DateTime last = default;
+        foreach (var row in rows)
+        {
+            if (row.SerialNumber != serial) continue;
+            found = true;
+            last = row.Time;
+            switch (row.Kind)
+            {
+                case As100201LedgerEventKind.Measurement:
+                    measurements++;
+                    events.Add(row.Kind);
+                    break;
+                case As100201LedgerEventKind.Operation:
+                    operations++;
+                    completed = false;
+                    events.Add(row.Kind);
+                    break;
+                case As100201LedgerEventKind.Done:
+                    completed = true;
+                    events.Add(row.Kind);
+                    break;
+                case As100201LedgerEventKind.Undo:
+                    int index = events.LastIndexOf(As100201LedgerEventKind.Operation);
+                    if (index >= 0) { events.RemoveAt(index); operations--; }
+                    break;
+            }
+        }
+        if (!found) return null;
+        return new SerialHistory(serial, measurements, operations, completed,
+            events.Count > 0 && events[^1] == As100201LedgerEventKind.Measurement, last);
+    }
+
+    // 台帳を読めるか・列の形が合うかを確かめる(起動時)。読めなければ止めて理由を出す(「再試行」で確かめ直す)。
+    public bool CheckLedger()
+    {
+        try
+        {
+            _ledger.ReadRows();
+            return true;
+        }
+        catch (Exception ex) when (IsWriteFailure(ex))
+        {
+            Block("台帳を読めません：" + ex.Message);
+            return false;
+        }
+    }
+
+    // PC の画面でシリアル番号を決めた。番号の行を書き、台帳の記録から回数と完了かどうかを引き継ぐ。
+    // history: FindSerial の結果(新しい番号なら null)。続きにするかの確認は呼び出し側(画面)で済ませておく。
+    // 書けなければ止めて false(番号は変えない)。
+    public bool SelectSerial(string serial, SerialHistory? history)
+    {
+        if (Blocked)
+        {
+            Log?.Invoke($"シリアル番号 {serial} は、保存できるまで決められません（{BlockReason}）。");
+            return false;
+        }
+        var notes = new List<string>
+        {
+            history is null ? "新規" : history.Completed ? "続き（完了済み）" : "続き（未完了）"
+        };
+        string? previous = SerialNumber;
+        bool previousUnfinished = previous is not null && previous != serial && !Completed;
+        if (previousUnfinished) notes.Add($"前の番号 {previous} は完了せず切り替え");
+        var row = new As100201LedgerRow(_clock(), As100201LedgerEventKind.SerialSet)
+        {
+            SerialNumber = serial,
+            Note = string.Join("、", notes)
+        };
+        if (!TryWrite("番号の行", row, out _)) return false;
+        SerialNumber = serial;
+        MeasurementCount = history?.MeasurementCount ?? 0;
+        OperationCount = history?.OperationCount ?? 0;
+        Completed = history?.Completed ?? false;
+        _lastEventIsMeasurement = history?.LastIsMeasurement ?? false;
+        _undoable = null;
+        if (previousUnfinished) Log?.Invoke($"{previous} は完了せずに次の番号へ切り替えました。");
+        Log?.Invoke(history is null
+            ? $"シリアル番号 {serial} を記録します（新規）。"
+            : $"シリアル番号 {serial} の続きを記録します（{(history.Completed ? "完了済み" : "未完了")}、これまでの測定 {history.MeasurementCount} 回・操作 {history.OperationCount} 回）。");
+        return true;
+    }
+
+    // 台帳の「ファイル」列: 台帳のフォルダーからの相対パス(番号のフォルダー\ファイル名)。
     public static string LedgerFileText(string xdtPath) =>
         Path.Combine(Path.GetFileName(Path.GetDirectoryName(xdtPath)) ?? "", Path.GetFileName(xdtPath));
 
@@ -126,6 +253,7 @@ internal sealed class As100201LearningSession
         else if (countProblem is not null) notes.Add("点数を読めず：" + countProblem);
         var row = new As100201LedgerRow(now, As100201LedgerEventKind.Pressed)
         {
+            SerialNumber = SerialNumber ?? "",
             Side = side,
             Phase = phase,
             Note = string.Join("、", notes)
@@ -147,18 +275,14 @@ internal sealed class As100201LearningSession
 
     private As100201LedgerRow BuildMeasurementRow(DateTime now, string side, string phase, string trigger, string path)
     {
-        if (Completed)
-        {
-            // 完了の次の測定から新しい個体。
-            Completed = false;
-            MeasurementCount = 0;
-            OperationCount = 0;
-        }
+        // 個体の区切りはシリアル番号(2026-11-26)。完了済みの番号の続きで測っても、同じ個体のまま数える
+        // (それまでは「完了の次の測定から新しい個体」として数え直していた)。
         MeasurementCount++;
         _lastEventIsMeasurement = true;
         _undoable = null;
         return new As100201LedgerRow(now, As100201LedgerEventKind.Measurement)
         {
+            SerialNumber = SerialNumber ?? "",
             Side = side,
             Phase = phase,
             StopTrigger = trigger,
@@ -186,6 +310,11 @@ internal sealed class As100201LearningSession
             Log?.Invoke($"{command.DisplayName} を受信しましたが、保存できるまで記録を止めています（{BlockReason}）。");
             return As100201PanelProtocol.Nak("保存できるまで記録を止めています。再試行してください");
         }
+        if (SerialNumber is null)
+        {
+            Log?.Invoke($"{command.DisplayName} を受信しましたが、シリアル番号が入っていないため記録しません（PC の画面で入れてください）。");
+            return As100201PanelProtocol.Nak(NakNoSerial);
+        }
         return command.Kind switch
         {
             As100201PanelCommandKind.Operation => RecordOperation(command),
@@ -203,6 +332,7 @@ internal sealed class As100201LearningSession
         if (!measurementBefore) notes.Add("直前の測定なし");
         var row = new As100201LedgerRow(_clock(), As100201LedgerEventKind.Operation)
         {
+            SerialNumber = SerialNumber ?? "",
             Operation = command.OperationText,
             Direction = command.Direction,
             Degree = command.Degree,
@@ -227,13 +357,16 @@ internal sealed class As100201LearningSession
         }
         var row = new As100201LedgerRow(_clock(), As100201LedgerEventKind.Done)
         {
+            SerialNumber = SerialNumber ?? "",
             Note = $"この個体の測定 {MeasurementCount} 回・操作 {OperationCount} 回"
         };
         if (!TryWrite("完了の行", row, out string nak)) return nak;
         Completed = true;
         _lastEventIsMeasurement = false;
         _undoable = null;
-        Log?.Invoke($"完了を記録（{row.Note}）");
+        Log?.Invoke($"完了を記録：{SerialNumber}（{row.Note}）。次の個体のシリアル番号を PC の画面で入れてください。");
+        // 完了したら番号を空にする。次の個体の番号を入れるまで測定・操作を受け付けない(2026-11-26 人の決定)。
+        SerialNumber = null;
         return As100201PanelProtocol.Ack(command);
     }
 
@@ -247,6 +380,7 @@ internal sealed class As100201LearningSession
         string described = DescribeOperation(target.Row);
         var row = new As100201LedgerRow(_clock(), As100201LedgerEventKind.Undo)
         {
+            SerialNumber = SerialNumber ?? "",
             Note = "取消の対象: " + described
         };
         if (!TryWrite("取消の行", row, out string nak)) return nak;

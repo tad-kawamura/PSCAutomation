@@ -197,22 +197,23 @@ internal static class LiveCaptureChecks
             var session = new As100201LearningSession(new As100201CsvLedger(Path.Combine(data, "調整記録.csv")),
                 path => { order.Add("xdt"); File.WriteAllText(path, "x"); return 0; }, () => new DateTime(2026, 11, 11, 10, 15, 30))
             { SaveDirectory = data };
+            Check(session.SelectSerial("SN145", null), "serial not selected");
             var table = new As100201FeatureTable(["取り込み回", "点数"], [["1", "20"], ["2", "a,b"]]);
             session.MeasurementStopped("PC", "PC", "0", As100201LearningSession.StopByCapture);
             session.MeasurementCompleted("PC", "PC", "0", table);
-            string csv = Path.Combine(data, "20261111", "20261111_101530_PC.csv");
+            string csv = Path.Combine(data, "SN145", "20261111_101530_SN145_PC.csv");
             Check(File.Exists(csv) && order.SequenceEqual(new[] { "xdt" }) && !session.Blocked, "csv not saved next to xdt");
             byte[] bytes = File.ReadAllBytes(csv);
             Check(bytes.Length > 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF, "csv without BOM");
             Check(File.ReadAllText(csv) == "取り込み回,点数\r\n1,20\r\n2,\"a,b\"\r\n", "csv content");
             string ledger = File.ReadAllText(Path.Combine(data, "調整記録.csv"));
-            Check(ledger.Contains(",取り込み異常,") && ledger.Contains(@"20261111\20261111_101530_PC.xdt"), "ledger stop trigger for capture failure");
+            Check(ledger.Contains(",取り込み異常,") && ledger.Contains(@"SN145\20261111_101530_SN145_PC.xdt"), "ledger stop trigger for capture failure");
             // 測定の行が無い取り込み(取り込まなかった)なら CSV は作らない。
             session.MeasurementCompleted("CR", "CR", "140");
-            Check(!File.Exists(Path.Combine(data, "20261111", "20261111_101530_CR.csv")), "csv written without capture");
+            Check(!File.Exists(Path.Combine(data, "SN145", "20261111_101530_SN145_CR.csv")), "csv written without capture");
 
             // CSV を書けない(同じ名前のフォルダーがある)→ 止まって再試行で書く。
-            string blocked = Path.Combine(data, "20261111", "20261111_101530_PC_2.csv");
+            string blocked = Path.Combine(data, "SN145", "20261111_101530_SN145_PC_2.csv");
             Directory.CreateDirectory(blocked);
             session.MeasurementStopped("PC", "PC", "0", As100201LearningSession.StopBySwitch);
             session.MeasurementCompleted("PC", "PC", "0", table);
