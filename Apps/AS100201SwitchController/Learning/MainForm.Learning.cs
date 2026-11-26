@@ -87,31 +87,29 @@ internal sealed partial class MainForm : Form
             AutoSizeMode = AutoSizeMode.GrowAndShrink,
             Dock = DockStyle.Top,
             ColumnCount = 3,
-            RowCount = 4
+            RowCount = 3
         };
         table.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
         table.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         table.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-        var instruction = new Label { AutoSize = true, MaximumSize = new Size(760, 0), Text = As100201Application.LearningInstructions, Margin = new Padding(0, 2, 8, 6) };
-        table.Controls.Add(instruction, 0, 0);
-        table.SetColumnSpan(instruction, 2);
-        table.Controls.Add(new Label { AutoSize = true, Font = new Font(Font, FontStyle.Bold), Text = "保存先：", Margin = new Padding(0, 6, 8, 4) }, 0, 1);
+        // 上の説明文(雛形の自動読み込み・操作ボタン・保存のしかた)は、人の指示でなくした(2026-11-26)。
+        table.Controls.Add(new Label { AutoSize = true, Font = new Font(Font, FontStyle.Bold), Text = "保存先：", Margin = new Padding(0, 6, 8, 4) }, 0, 0);
         _saveDirectoryLabel.AutoSize = true;
         _saveDirectoryLabel.Margin = new Padding(0, 6, 8, 4);
-        table.Controls.Add(_saveDirectoryLabel, 1, 1);
-        table.Controls.Add(new Label { AutoSize = true, Font = new Font(Font, FontStyle.Bold), Text = "記録：", Margin = new Padding(0, 6, 8, 4) }, 0, 2);
+        table.Controls.Add(_saveDirectoryLabel, 1, 0);
+        table.Controls.Add(new Label { AutoSize = true, Font = new Font(Font, FontStyle.Bold), Text = "記録：", Margin = new Padding(0, 6, 8, 4) }, 0, 1);
         _learningStateLabel.AutoSize = true;
         _learningStateLabel.Margin = new Padding(0, 6, 8, 4);
-        table.Controls.Add(_learningStateLabel, 1, 2);
+        table.Controls.Add(_learningStateLabel, 1, 1);
         _retryButton.AutoSize = true;
         _retryButton.MinimumSize = new Size(110, 36);
         _retryButton.Text = "再試行";
         _retryButton.Margin = new Padding(8, 2, 0, 2);
         _retryButton.Click += (_, _) => RetryLearningWrites();
-        table.Controls.Add(_retryButton, 2, 1);
+        table.Controls.Add(_retryButton, 2, 0);
         table.SetRowSpan(_retryButton, 2);
         // シリアル番号(2026-11-26 人の決定): PC の画面に数字を入れて「決定」(Enter でも決定)。
-        table.Controls.Add(new Label { AutoSize = true, Font = new Font(Font, FontStyle.Bold), Text = "シリアル番号：", Margin = new Padding(0, 10, 8, 4) }, 0, 3);
+        table.Controls.Add(new Label { AutoSize = true, Font = new Font(Font, FontStyle.Bold), Text = "シリアル番号：", Margin = new Padding(0, 10, 8, 4) }, 0, 2);
         var serialRow = new FlowLayoutPanel { AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, WrapContents = false, Margin = new Padding(0, 2, 0, 2) };
         serialRow.Controls.Add(new Label { AutoSize = true, Text = "SN", Font = new Font(Font.FontFamily, 12, FontStyle.Bold), Margin = new Padding(0, 8, 2, 0) });
         _serialTextBox.Width = 110;
@@ -135,7 +133,7 @@ internal sealed partial class MainForm : Form
         _serialValueLabel.Font = new Font(Font.FontFamily, 14, FontStyle.Bold);
         _serialValueLabel.Margin = new Padding(0, 6, 0, 0);
         serialRow.Controls.Add(_serialValueLabel);
-        table.Controls.Add(serialRow, 1, 3);
+        table.Controls.Add(serialRow, 1, 2);
         table.SetColumnSpan(serialRow, 2);
         group.Controls.Add(table);
         // Dock=Top の GroupBox は AutoSize が効かないので、中身の高さに合わせる。
