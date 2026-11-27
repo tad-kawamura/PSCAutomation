@@ -50,7 +50,7 @@ internal static class As100201NextStep
         // 測定中は止め方だけ出す(PC の画面の「測定停止」は保存の停止中・パネルが途切れていても受け付ける)。
         if (s.Measuring)
             return (s.Learning
-                ? "測定中です。手を動かす前にタッチパネルの「バルブを動かす」を押してください（止まります）"
+                ? "測定中です。手を動かす前にタッチパネルの「バルブを動かす」を押してください（止まります。止めるだけなら「測定停止」）"
                 : "測定中です。止めるときはタッチパネルか PC の画面の「測定停止」", As100201NextStepKind.Ready);
         if (s.CheckingConnections)
             return ("接続を確認しています。終わるまでお待ちください", As100201NextStepKind.Wait);

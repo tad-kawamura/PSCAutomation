@@ -189,7 +189,7 @@ internal sealed partial class MainForm : Form
             ? "番号を入れて「決定」（Enter でも決定）"
             : serialEditable
                 ? "打ち間違えたら：正しい番号を入れ直して「決定」で切り替わります（間違えた番号で測った記録は、その番号のフォルダーと台帳に残ります）"
-                : "番号を変えるには：測定を止めて、Tab5 を 1 画面目に戻してください（測っている間・操作を選んでいる間は変えられません）";
+                : "番号を変えるには：Tab5 か PC の「測定停止」で止めて、Tab5 を 1 画面目に戻してください（測っている間・操作を選んでいる間は変えられません）";
         if (_learningBanner is not null)
         {
             string head = As100201Application.LearningModeLabel + "　" + (serial ?? "シリアル番号なし");

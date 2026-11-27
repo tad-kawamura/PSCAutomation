@@ -174,7 +174,8 @@ internal static class LearningChecks
             As100201PanelProtocol.TryParseScreen("NOZZLE:R", out screen) && screen == As100201PanelScreen.NozzleR &&
             !As100201PanelProtocol.TryParseScreen("NOZZLE:X", out _) && !As100201PanelProtocol.TryParseScreen("home", out _), "screen lines");
         Check(As100201PanelProtocol.State(true, "PC2", false, As100201SwitchSettings.Defaults) == "STATE:L:PC2:0:0U:255U:136D:-238D" &&
-            As100201PanelProtocol.State(false, null, true, As100201SwitchSettings.Defaults with { CrSinglePhaseDegrees = 145 }) == "STATE:N:-:1:0U:255U:119D:-238D", "STATE line");
+            As100201PanelProtocol.State(false, null, true, As100201SwitchSettings.Defaults with { CrSinglePhaseDegrees = 145 }) == "STATE:N:-:1:0U:255U:119D:-238D" &&
+            As100201PanelProtocol.State(true, "M", false, As100201SwitchSettings.Defaults).StartsWith("STATE:L:M:0:", StringComparison.Ordinal), "STATE line");
         // 位相の点の電流(版 7。三角波 10.2Vpp・5V = 30mA。0° は 0 から上り、90° が山、270° が谷)。
         static bool Near((double Milliamps, bool Rising) actual, double milliamps, bool rising) =>
             Math.Abs(actual.Milliamps - milliamps) < 1e-6 && actual.Rising == rising;

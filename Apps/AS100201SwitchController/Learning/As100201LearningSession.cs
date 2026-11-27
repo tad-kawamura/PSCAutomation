@@ -37,7 +37,8 @@ internal sealed class As100201LearningSession
     public const string StopByRemeasure = "測り直す";
     public const string StopByAligned = "合わせた";
     public const string StopByNozzleBack = "戻る";
-    public const string StopByPanelStop = "パネルの測定停止";
+    // Tab5 の「測定停止」(版 6 は通常モードだけ。版 7 で学習モードの 1 画面目にも置いた。2026-11-27 人の決定)。
+    public const string StopByPanelStop = "Tab5 の測定停止";
     public const string StopByLogger = "LOGGER の停止";
     // 測定中の取り込みに失敗して、アプリが LOGGER を止めた(SPEC_測定中の取り込み.md、2026-11-11)。
     public const string StopByCapture = "取り込み異常";

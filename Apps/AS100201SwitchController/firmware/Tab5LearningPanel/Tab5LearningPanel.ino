@@ -57,7 +57,10 @@
 //
 // 版 7(2026-11-27、人の要望): 発振器のボタンの下に、位相(°)の代わりに電流(mA)と向き(上り ↑ / 下り ↓)を出す
 //   - PC が STATE: の位相 4 つの所で、mA の 10 倍(符号付き)と向き U / D を送る(例 255U = +25.5mA の上り)。
-//     換算(指令 5V = 30mA)と三角波の形は PC が持つ。パネルは届いた値をそのまま出すだけ
+//     換算(指令 5V = 30mA)と三角波の形は PC が持つ。パネルは届いた値をそのまま出すだけ。4 つとも同じ文字の大きさ
+//   - 学習モードの 1 画面目の下の段を「バルブを動かす」と「測定停止」に分ける(測っている間だけ押せる。STOP を送り、1 画面目のまま)。
+//     PC は位相を出し直さずに測っているとき、STATE: の測っている位相の所に M を送る
+//   - 「測定中に動かした」を入れたら、操作の画面の題名と下の帯で、次に測定中にしてしまった操作を選ぶよう案内する
 //
 // PC とのやり取り(LF の行単位。USB-C の内蔵 USB シリアル、または Wi-Fi の TCP。どちらも同じ行):
 //   PC → パネル  AS100201_PANEL_PING           → パネルは AS100201_PANEL_READY:7 を返す(この道が今の道になる)
@@ -233,6 +236,7 @@ String lastRecordText;
 // 版 6: PC が STATE: で知らせる今の状態。届くまでは学習モード・止まっている・電流は初期値(PC の位相の初期値 0° / 75° / 140° / 250° の値)。
 char panelMode = 'L';          // 'L' 学習モード / 'N' 通常モード
 int measuringPhase = -1;       // 測っている位相のボタン(PHASE_CODES の番号。止まっていれば -1)
+bool pcMeasuring = false;      // 測っている(位相を出し直さずに始めたとき PC は M を送る。版 7)
 bool pcBusy = false;           // PC の処理中(PC / CR で区切って測り直すなど)。この間はボタンを押せない
 // 版 7: 位相の点の電流(mA の 10 倍、符号付き)と、そこから上るか(PC が換算して送る)。
 int phaseTenthsMilliamps[PHASE_COUNT] = {0, 255, 136, -238};
@@ -446,11 +450,12 @@ void handleState(const String& line) {
   int measuring = -1;
   for (int i = 0; i < PHASE_COUNT; ++i) if (parts[1] == PHASE_CODES[i]) measuring = i;
   bool busy = parts[2] == "1";
+  bool measuringAny = parts[1] != "-";
   int tenths[PHASE_COUNT];
   bool rising[PHASE_COUNT];
   for (int i = 0; i < PHASE_COUNT; ++i)
     if (!parsePhaseCurrent(parts[3 + i], tenths[i], rising[i])) return;
-  bool changed = panelMode != parts[0][0] || measuring != measuringPhase || busy != pcBusy;
+  bool changed = panelMode != parts[0][0] || measuring != measuringPhase || measuringAny != pcMeasuring || busy != pcBusy;
   for (int i = 0; i < PHASE_COUNT; ++i)
     changed = changed || tenths[i] != phaseTenthsMilliamps[i] || rising[i] != phaseRising[i];
   if (!changed) return;
@@ -458,6 +463,7 @@ void handleState(const String& line) {
   if (parts[0][0] == 'N' && panelMode != 'N') screen = HOME;
   panelMode = parts[0][0];
   measuringPhase = measuring;
+  pcMeasuring = measuringAny;
   pcBusy = busy;
   for (int i = 0; i < PHASE_COUNT; ++i) {
     phaseTenthsMilliamps[i] = tenths[i];
@@ -699,9 +705,12 @@ void layoutButtons() {
   }
   if (screen == HOME) {
     // 学習モードの 1 画面目(版 6): 上の段に発振器の 4 つ、下の段に横長の「バルブを動かす」。右の列は上が完了、下が取消。
+    // 版 7: 下の段の右に「測定停止」(測っている間だけ押せる。止めて保存し、1 画面目のまま。2026-11-27 人の決定)。
     int ch = (bottom - top - GAP) / 2;
     addPhaseButtons(GAP, top, leftW, ch);
-    addButton(GAP, top + ch + GAP, leftW, ch, B_VALVE, "バルブを動かす", C_VALVE);
+    const int stopW = 280;
+    addButton(GAP, top + ch + GAP, leftW - stopW - GAP, ch, B_VALVE, "バルブを動かす", C_VALVE);
+    addButton(GAP + leftW - stopW, top + ch + GAP, stopW, ch, B_STOP, "測定停止", C_YES);
     addButton(rightX, top, rightW, ch, B_DONE, "完了", C_DONE);
     addButton(rightX, top + ch + GAP, rightW, ch, B_UNDO, "取消", C_UNDO);
     return;
@@ -799,6 +808,8 @@ bool buttonEnabled(const Button& b) {
   if (b.id == B_YES && (!lastRecordKnown || lastRecordKind == 0)) return false;
   // ノズルの画面では、合わせている側でない方の発振器は押し間違いなので押せない(版 6、人の決定)。
   if (b.id == B_PHASE && screen == NOZZLE && (b.value < 2) != (side == 'P')) return false;
+  // 学習モードの「測定停止」は測っている間だけ(版 7)。通常モードはいつでも押せる(版 6 のまま)。
+  if (b.id == B_STOP && panelMode == 'L' && !pcMeasuring) return false;
   return currentPath != PATH_NONE && pathAlive(currentPath) && pendingLine.length() == 0 && !pcBusy;
 }
 
@@ -828,11 +839,17 @@ void drawButton(const Button& b) {
   // 厚さのボタンは、下の帯をなくして高くなった分だけ数字も大きくする(2026-11-25)。
   float textSize = b.h >= 200 || (b.id == B_THICK && b.h >= 110) ? 1.25f : 1.0f;
   // 発振器のボタンは電流の文字(例 "+25.5mA↑")が長いので、ボタンの幅に収まるまで小さくする(版 7)。
+  // 4 つとも同じ大きさにする(短い "0.0mA↑" だけ大きく見えたため。2026-11-27 人の指摘)。いちばん長い名前で決める。
   if (b.id == B_PHASE) {
     M5.Display.setTextSize(1.0f);
-    const char* nl = strchr(b.label, '\n');
-    int widest = nl ? max(M5.Display.textWidth(String(b.label).substring(0, nl - b.label)), M5.Display.textWidth(nl + 1))
-                    : M5.Display.textWidth(b.label);
+    int widest = 0;
+    for (int i = 0; i < PHASE_COUNT; ++i) {
+      const char* label = phaseLabels[i];
+      const char* nl = strchr(label, '\n');
+      int w = nl ? max(M5.Display.textWidth(String(label).substring(0, nl - label)), M5.Display.textWidth(nl + 1))
+                 : M5.Display.textWidth(label);
+      widest = max(widest, w);
+    }
     int room = b.w - 24;
     if (widest > 0 && widest * textSize > room) textSize = (float)room / widest;
   }
@@ -932,7 +949,8 @@ void drawScreen() {
 
   // 「測定中に動かした」の印が入っていれば、操作を選ぶページの題名に出す(版 5)。
   String moved = movedMark ? "（測定中に動かした）" : "";
-  if (screen == OPS) drawTitle("バルブを動かす：操作を選んでください" + moved);
+  // 版 7: 印が入っているときは、何を選ぶのかを題名で言う。
+  if (screen == OPS) drawTitle(movedMark ? String("測定中にしてしまった操作を選んでください") : String("バルブを動かす：操作を選んでください"));
   else if (screen == DEMAG) drawTitle("減磁：程度を押すと記録します" + moved);
   else if (screen == SPACER) drawTitle(String("スペーサー ") + side + " 側：向きを選んでください" + moved);
   else if (screen == NOZZLE) drawTitle(String(side) + " 側の立ち上がりを合わせています");
@@ -1009,7 +1027,15 @@ void activate(const Button& b) {
     case B_ALIGNED: sendOperation(String("ACT:NOZZLE:") + side + ":DONE", HOME); break;
     case B_MAG:   sendOperation("ACT:MAG", HOME); break;
     // 測定中に動かした印の切り替え(版 5。版 6 で操作の画面へ移した)。
-    case B_MOVED: movedMark = !movedMark; break;
+    // 版 7: 入れたあとに何をするかを下の帯に出す(2026-11-27 人の指摘「そのあと何をするのか分かりづらい」)。
+    case B_MOVED:
+      movedMark = !movedMark;
+      if (movedMark)
+        setMessage(MSG_WARN, "次に、測定中にしてしまった操作を選んでください",
+                   "例：測定中に減磁をしたら、ここで「減磁」を選んで記録します。その記録に「測定中に動かした」が付きます");
+      else
+        setMessage(MSG_INFO, "「測定中に動かした」を外しました", "");
+      break;
     case B_DEMAG: screen = DEMAG; break;
     // ノズルを選んだ時点で合わせ始めを記録し、合わせる画面へ(版 6)。
     case B_NOZ_P: side = 'P'; sendOperation("ACT:NOZZLE:P:START", NOZZLE); break;

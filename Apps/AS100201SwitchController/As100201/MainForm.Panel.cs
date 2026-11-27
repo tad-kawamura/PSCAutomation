@@ -70,7 +70,8 @@ internal sealed partial class MainForm : Form
     private void SendPanelState(bool force = false)
     {
         if (_panel is null || _closing || IsDisposed) return;
-        string? measuring = _measurementStarted && _lastWaveform is (As100201Switch press, _) ? PanelButtonCode(press) : null;
+        // 測っているが位相を出し直していない(PC の「測定開始（確認用）」だけで始めた)ときは M(版 7。Tab5 の測定停止を押せるように)。
+        string? measuring = !_measurementStarted ? null : _lastWaveform is (As100201Switch press, _) ? PanelButtonCode(press) : "M";
         bool busy = PanelBusy || _operationInProgress || _checkingConnections;
         string line = As100201PanelProtocol.State(IsLearningMode, measuring, busy, _switchSettings);
         if (!force && line == _lastPanelStateLine) return;
@@ -274,7 +275,9 @@ internal sealed partial class MainForm : Form
                 break;
             case As100201PanelCommandKind.Stop:
                 _panel.TrySend(As100201PanelProtocol.Ack(command));
+                // 版 7 から学習モードの 1 画面目にもある(止めて保存し、1 画面目のまま。停止のきっかけ「Tab5 の測定停止」)。
                 StopMeasurement(As100201LearningSession.StopByPanelStop, "タッチパネルの測定停止");
+                if (IsLearningMode) AfterLearningChange();
                 ShowLoggerForPanel("タッチパネルの測定停止");
                 break;
             default:
