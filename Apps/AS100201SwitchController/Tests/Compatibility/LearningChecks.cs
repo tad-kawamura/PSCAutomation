@@ -160,7 +160,8 @@ internal static class LearningChecks
         // 直前の記録の知らせ(版 5)。
         Check(As100201PanelProtocol.Last(null) == "LAST:", "LAST none");
         // 版 6(2026-11-27、Arduino のスイッチを Tab5 にまとめた)。版 5 までのスケッチは書き込み直しを求める。
-        Check(As100201PanelProtocol.CheckHello("AS100201_PANEL_READY:6") is null, "panel version 6 rejected");
+        Check(As100201PanelProtocol.CheckHello("AS100201_PANEL_READY:7") is null, "panel version 7 rejected");
+        Check(As100201PanelProtocol.CheckHello("AS100201_PANEL_READY:6")?.Contains("版 6") == true, "panel version 6 accepted");
         Check(As100201PanelProtocol.CheckHello("AS100201_PANEL_READY:5")?.Contains("版 5") == true, "panel version 5 accepted");
         Check(As100201PanelProtocol.CheckHello("AS100201_PANEL_READY:4")?.Contains("版 4") == true, "panel version 4 accepted");
         Check(As100201PanelProtocol.CheckHello("AS100201_PANEL_READY:3")?.Contains("版 3") == true, "panel version 3 accepted");
@@ -172,8 +173,14 @@ internal static class LearningChecks
             As100201PanelProtocol.TryParseScreen("NOZZLE:P", out screen) && screen == As100201PanelScreen.NozzleP &&
             As100201PanelProtocol.TryParseScreen("NOZZLE:R", out screen) && screen == As100201PanelScreen.NozzleR &&
             !As100201PanelProtocol.TryParseScreen("NOZZLE:X", out _) && !As100201PanelProtocol.TryParseScreen("home", out _), "screen lines");
-        Check(As100201PanelProtocol.State(true, "PC2", false, As100201SwitchSettings.Defaults) == "STATE:L:PC2:0:0:75:140:250" &&
-            As100201PanelProtocol.State(false, null, true, As100201SwitchSettings.Defaults with { CrSinglePhaseDegrees = 145 }) == "STATE:N:-:1:0:75:145:250", "STATE line");
+        Check(As100201PanelProtocol.State(true, "PC2", false, As100201SwitchSettings.Defaults) == "STATE:L:PC2:0:0U:255U:136D:-238D" &&
+            As100201PanelProtocol.State(false, null, true, As100201SwitchSettings.Defaults with { CrSinglePhaseDegrees = 145 }) == "STATE:N:-:1:0U:255U:119D:-238D", "STATE line");
+        // 位相の点の電流(版 7。三角波 10.2Vpp・5V = 30mA。0° は 0 から上り、90° が山、270° が谷)。
+        static bool Near((double Milliamps, bool Rising) actual, double milliamps, bool rising) =>
+            Math.Abs(actual.Milliamps - milliamps) < 1e-6 && actual.Rising == rising;
+        Check(Near(As100201WaveformSettings.CurrentAtPhase(0), 0, true) && Near(As100201WaveformSettings.CurrentAtPhase(90), 30.6, false) &&
+            Near(As100201WaveformSettings.CurrentAtPhase(180), 0, false) && Near(As100201WaveformSettings.CurrentAtPhase(270), -30.6, true) &&
+            Near(As100201WaveformSettings.CurrentAtPhase(359), -0.34, true) && Near(As100201WaveformSettings.CurrentAtPhase(-90), -30.6, true), "current at phase");
         Check(As100201PanelProtocol.GotoNozzle('R') == "GOTO:NOZZLE:R" && As100201PanelProtocol.Message('E', "x") == "MSG:E:x", "GOTO / MSG lines");
         Check(As100201PanelProtocol.CheckHello("AS100201_PANEL_READY:2")?.Contains("版 2") == true, "panel version 2 accepted");
         Check(As100201PanelProtocol.CheckHello("AS100201_PANEL_READY:1")?.Contains("版 1") == true, "panel version 1 accepted");
@@ -618,7 +625,7 @@ internal static class LearningChecks
         public event Action<string>? LineReceived;
         public event Action? Disconnected;
         public bool IsConnected { get; private set; }
-        public string HelloReply = "AS100201_PANEL_READY:6";
+        public string HelloReply = "AS100201_PANEL_READY:7";
         public bool Fail;
         public List<string> Sent { get; } = new();
         public List<string> Requests { get; } = new();
@@ -695,7 +702,7 @@ internal static class LearningChecks
         await panel.MaintainAsync();
         Check(!panel.IsConnected && statuses[^1].Contains("版 9"), "wrong version accepted");
         // 起動通知で古い状態を捨てる。
-        link.HelloReply = "AS100201_PANEL_READY:6";
+        link.HelloReply = "AS100201_PANEL_READY:7";
         await Task.Delay(2100);
         await panel.MaintainAsync();
         for (int i = 0; i < 6; i++) { link.Receive($"DIAG_FRAME:{seq}:{seq * 250}"); seq++; await Task.Delay(250); }

@@ -27,6 +27,7 @@ internal sealed partial class MainForm : Form
     private readonly TextBox _serialTextBox = new();
     private readonly Button _serialButton = new();
     private readonly Label _serialValueLabel = new();
+    private readonly Label _serialHintLabel = new();
     private Label? _learningBanner;
     // シリアル番号の確認の窓を出している(2026-11-26)。出している間は測定を始めず、パネルの操作も受け付けない。
     private bool _serialDialogOpen;
@@ -80,7 +81,7 @@ internal sealed partial class MainForm : Form
             AutoSizeMode = AutoSizeMode.GrowAndShrink,
             Dock = DockStyle.Top,
             ColumnCount = 3,
-            RowCount = 3
+            RowCount = 4
         };
         table.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
         table.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
@@ -128,6 +129,12 @@ internal sealed partial class MainForm : Form
         serialRow.Controls.Add(_serialValueLabel);
         table.Controls.Add(serialRow, 1, 2);
         table.SetColumnSpan(serialRow, 2);
+        // 打ち間違えたときの直し方(2026-11-27 人の決定「案内だけ」)。変えられる・変えられないで文を替える(UpdateLearningControls)。
+        _serialHintLabel.AutoSize = true;
+        _serialHintLabel.ForeColor = Color.DimGray;
+        _serialHintLabel.Margin = new Padding(0, 0, 0, 4);
+        table.Controls.Add(_serialHintLabel, 1, 3);
+        table.SetColumnSpan(_serialHintLabel, 2);
         group.Controls.Add(table);
         // Dock=Top の GroupBox は AutoSize が効かないので、中身の高さに合わせる。
         group.AutoSize = false;
@@ -178,6 +185,11 @@ internal sealed partial class MainForm : Form
         bool serialEditable = SerialInputAllowed;
         _serialTextBox.Enabled = serialEditable;
         _serialButton.Enabled = serialEditable;
+        _serialHintLabel.Text = serial is null
+            ? "番号を入れて「決定」（Enter でも決定）"
+            : serialEditable
+                ? "打ち間違えたら：正しい番号を入れ直して「決定」で切り替わります（間違えた番号で測った記録は、その番号のフォルダーと台帳に残ります）"
+                : "番号を変えるには：測定を止めて、Tab5 を 1 画面目に戻してください（測っている間・操作を選んでいる間は変えられません）";
         if (_learningBanner is not null)
         {
             string head = As100201Application.LearningModeLabel + "　" + (serial ?? "シリアル番号なし");

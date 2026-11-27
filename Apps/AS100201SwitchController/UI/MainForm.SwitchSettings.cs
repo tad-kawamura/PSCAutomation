@@ -10,13 +10,15 @@ internal sealed partial class MainForm : Form
     private readonly NumericUpDown _crSinglePhaseInput = new();
     private readonly NumericUpDown _crDoublePhaseInput = new();
     private readonly Button _resetSwitchSettingsButton = new();
+    // 位相の右に、Tab5 のボタンに出る電流(例 °（Tab5：+25.5mA↑）)を出す(版 7、2026-11-27)。入力は ° のまま(人の決定)。
+    private readonly Label[] _phaseUnitLabels = new Label[4];
     private bool _showingSwitchSettings;
 
     private Control BuildSwitchSettingsPanel()
     {
         var group = new GroupBox
         {
-            Text = "出し直しの位相（タッチパネルの PC / CR のボタン。ボタンの名前にも出ます）",
+            Text = "出し直しの位相（タッチパネルの PC / CR のボタン。ボタンには電流で出ます）",
             AutoSize = true,
             AutoSizeMode = AutoSizeMode.GrowAndShrink,
             Dock = DockStyle.Fill,
@@ -36,10 +38,10 @@ internal sealed partial class MainForm : Form
         foreach (var input in new[] { _pcSinglePhaseInput, _pcDoublePhaseInput, _crSinglePhaseInput, _crDoublePhaseInput })
             ConfigureNumber(input, 0, 1, As100201SwitchSettings.MinPhaseDegrees, As100201SwitchSettings.MaxPhaseDegrees);
 
-        AddSetting(panel, 0, 0, "PC 位相1", _pcSinglePhaseInput, "°");
-        AddSetting(panel, 0, 3, "PC 位相2", _pcDoublePhaseInput, "°");
-        AddSetting(panel, 1, 0, "CR 位相1", _crSinglePhaseInput, "°");
-        AddSetting(panel, 1, 3, "CR 位相2", _crDoublePhaseInput, "°");
+        _phaseUnitLabels[0] = AddSetting(panel, 0, 0, "PC 位相1", _pcSinglePhaseInput, "°");
+        _phaseUnitLabels[1] = AddSetting(panel, 0, 3, "PC 位相2", _pcDoublePhaseInput, "°");
+        _phaseUnitLabels[2] = AddSetting(panel, 1, 0, "CR 位相1", _crSinglePhaseInput, "°");
+        _phaseUnitLabels[3] = AddSetting(panel, 1, 3, "CR 位相2", _crDoublePhaseInput, "°");
 
         _resetSwitchSettingsButton.AutoSize = true;
         _resetSwitchSettingsButton.Text = "初期値に戻す";
@@ -65,7 +67,7 @@ internal sealed partial class MainForm : Form
         input.ValueChanged += SwitchSettingInputChanged;
     }
 
-    private static void AddSetting(TableLayoutPanel panel, int row, int column, string caption, NumericUpDown input, string unit)
+    private static Label AddSetting(TableLayoutPanel panel, int row, int column, string caption, NumericUpDown input, string unit)
     {
         panel.Controls.Add(new Label
         {
@@ -75,7 +77,9 @@ internal sealed partial class MainForm : Form
             Margin = new Padding(column == 0 ? 0 : 16, 6, 6, 0)
         }, column, row);
         panel.Controls.Add(input, column + 1, row);
-        panel.Controls.Add(new Label { AutoSize = true, Text = unit, Anchor = AnchorStyles.Left, Margin = new Padding(0, 6, 0, 0) }, column + 2, row);
+        var unitLabel = new Label { AutoSize = true, Text = unit, Anchor = AnchorStyles.Left, Margin = new Padding(0, 6, 0, 0) };
+        panel.Controls.Add(unitLabel, column + 2, row);
+        return unitLabel;
     }
 
     // 設定値を入力欄に出す(ValueChanged での保存はしない)。
@@ -88,6 +92,10 @@ internal sealed partial class MainForm : Form
             _pcDoublePhaseInput.Value = _switchSettings.PcDoublePhaseDegrees;
             _crSinglePhaseInput.Value = _switchSettings.CrSinglePhaseDegrees;
             _crDoublePhaseInput.Value = _switchSettings.CrDoublePhaseDegrees;
+            int[] degrees = [_switchSettings.PcSinglePhaseDegrees, _switchSettings.PcDoublePhaseDegrees,
+                _switchSettings.CrSinglePhaseDegrees, _switchSettings.CrDoublePhaseDegrees];
+            for (int i = 0; i < degrees.Length; i++)
+                if (_phaseUnitLabels[i] is { } label) label.Text = "°（Tab5：" + As100201WaveformSettings.CurrentText(degrees[i]) + "）";
         }
         finally { _showingSwitchSettings = false; }
     }

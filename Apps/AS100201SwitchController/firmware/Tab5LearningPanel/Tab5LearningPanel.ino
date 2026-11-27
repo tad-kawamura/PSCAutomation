@@ -55,8 +55,12 @@
 //   - 触れても測定は止めない(HOLD をなくした)。測っている間とノズルの画面にいる間は画面を暗くしない
 //   - 測っている位相のボタンには黄色の枠と「測定中」を出す(PC が STATE: で知らせる)。PC の処理中はボタンを押せない
 //
+// 版 7(2026-11-27、人の要望): 発振器のボタンの下に、位相(°)の代わりに電流(mA)と向き(上り ↑ / 下り ↓)を出す
+//   - PC が STATE: の位相 4 つの所で、mA の 10 倍(符号付き)と向き U / D を送る(例 255U = +25.5mA の上り)。
+//     換算(指令 5V = 30mA)と三角波の形は PC が持つ。パネルは届いた値をそのまま出すだけ
+//
 // PC とのやり取り(LF の行単位。USB-C の内蔵 USB シリアル、または Wi-Fi の TCP。どちらも同じ行):
-//   PC → パネル  AS100201_PANEL_PING           → パネルは AS100201_PANEL_READY:6 を返す(この道が今の道になる)
+//   PC → パネル  AS100201_PANEL_PING           → パネルは AS100201_PANEL_READY:7 を返す(この道が今の道になる)
 //   パネル → PC  DIAG_FRAME:<連番>:<millis>     250ms ごと(PC はこれが 1 秒止まると操作を受け付けない)
 //   パネル → PC  DIAG_BOOT:1                    起動通知(USB)
 //   パネル → PC  BATT:<残量%>:<電圧mV>:<充電中 0/1>  30 秒ごと(電池が無いときは残量 -1)
@@ -67,7 +71,8 @@
 //   PC → パネル  ACK:<受け取った行> / NAK:<理由>(理由は日本語 UTF-8)
 //   PC → パネル  LAST:M:<説明> / LAST:O:<説明> / LAST:  直前の記録(測定 / 操作 / 取り消せるものなし。版 5)。
 //               記録が変わったときと、画面の位置を受けるたび(1 秒ごと)に届く
-//   PC → パネル  STATE:<L|N>:<測っている位相 PC1 など、止まっていれば ->:<処理中 0|1>:<位相 4 つ>(版 6)
+//   PC → パネル  STATE:<L|N>:<測っている位相 PC1 など、止まっていれば ->:<処理中 0|1>:<電流 4 つ 例 255U / -238D>
+//               (版 6 から。電流は mA の 10 倍と向き U 上り / D 下り。版 6 は位相°だった)
 //   PC → パネル  GOTO:NOZZLE:P|R(「合わせた」を取り消したとき、ノズルの画面へ戻す)/ MSG:<E|W|I>:<文>(後から分かった知らせ)
 //   Arduino 向けの AS100201_PING や知らない行は無視する。
 //
@@ -84,7 +89,7 @@
 
 // ---- 取り決め ----------------------------------------------------------
 static const char* const HELLO_REQUEST = "AS100201_PANEL_PING";
-static const char* const HELLO_REPLY = "AS100201_PANEL_READY:6";   // 版 6。PC 側 As100201PanelProtocol.PanelVersion と揃える
+static const char* const HELLO_REPLY = "AS100201_PANEL_READY:7";   // 版 7。PC 側 As100201PanelProtocol.PanelVersion と揃える
 static const char* const MOVED_SUFFIX = ":MOVED";                   // 測定中に動かした印(版 5)
 
 // スペーサーの箱の表示(厚さ mm)。2026-11-13 に箱の写真 3 枚から読み取った(手書きの札は読み違いがありうる。実物で確かめる)。
@@ -225,12 +230,14 @@ bool lastRecordKnown = false;
 char lastRecordKind = 0;
 String lastRecordText;
 
-// 版 6: PC が STATE: で知らせる今の状態。届くまでは学習モード・止まっている・位相は初期値(PC の初期値と同じ)。
+// 版 6: PC が STATE: で知らせる今の状態。届くまでは学習モード・止まっている・電流は初期値(PC の位相の初期値 0° / 75° / 140° / 250° の値)。
 char panelMode = 'L';          // 'L' 学習モード / 'N' 通常モード
 int measuringPhase = -1;       // 測っている位相のボタン(PHASE_CODES の番号。止まっていれば -1)
 bool pcBusy = false;           // PC の処理中(PC / CR で区切って測り直すなど)。この間はボタンを押せない
-int phaseDegrees[PHASE_COUNT] = {0, 75, 140, 250};
-char phaseLabels[PHASE_COUNT][24];   // ボタンの名前(例 "PC\n75°")
+// 版 7: 位相の点の電流(mA の 10 倍、符号付き)と、そこから上るか(PC が換算して送る)。
+int phaseTenthsMilliamps[PHASE_COUNT] = {0, 255, 136, -238};
+bool phaseRising[PHASE_COUNT] = {true, true, false, false};
+char phaseLabels[PHASE_COUNT][24];   // ボタンの名前(例 "PC\n+25.5mA↑")
 
 enum MessageKind : uint8_t { MSG_INFO, MSG_OK, MSG_WARN, MSG_ERROR };
 MessageKind messageKind = MSG_INFO;
@@ -398,13 +405,33 @@ void reportSelection(unsigned long now) {
   lastSelectionAt = now;
 }
 
-// 発振器のボタンの名前を位相の値から作る(例 "PC\n75°")。
+// 発振器のボタンの名前を電流から作る(版 7。例 "PC\n+25.5mA↑"。0 には符号を付けない)。
 void updatePhaseLabels() {
-  for (int i = 0; i < PHASE_COUNT; ++i)
-    snprintf(phaseLabels[i], sizeof(phaseLabels[i]), "%.2s\n%d°", PHASE_CODES[i], phaseDegrees[i]);
+  for (int i = 0; i < PHASE_COUNT; ++i) {
+    int tenths = phaseTenthsMilliamps[i];
+    int size = abs(tenths);
+    const char* sign = tenths > 0 ? "+" : tenths < 0 ? "-" : "";
+    snprintf(phaseLabels[i], sizeof(phaseLabels[i]), "%.2s\n%s%d.%dmA%s", PHASE_CODES[i], sign, size / 10, size % 10,
+             phaseRising[i] ? "↑" : "↓");
+  }
 }
 
-// PC の今の状態(版 6)。STATE:<L|N>:<PC1 など / ->:<0|1>:<位相 4 つ>。形が違えば何もしない。
+// STATE: の電流の 1 つ(版 7。例 255U / -238D / 0U)を読む。形が違えば false。
+bool parsePhaseCurrent(const String& text, int& tenths, bool& rising) {
+  int n = text.length();
+  if (n < 2) return false;
+  char direction = text[n - 1];
+  if (direction != 'U' && direction != 'D') return false;
+  String number = text.substring(0, n - 1);
+  for (int i = 0; i < (int)number.length(); ++i)
+    if (!isDigit(number[i]) && !(i == 0 && number[i] == '-')) return false;
+  if (number.length() == 0 || number == "-") return false;
+  tenths = number.toInt();
+  rising = direction == 'U';
+  return true;
+}
+
+// PC の今の状態(版 6。版 7 で位相の所が電流になった)。STATE:<L|N>:<PC1 など / ->:<0|1>:<電流 4 つ>。形が違えば何もしない。
 void handleState(const String& line) {
   String rest = line.substring(6);
   String parts[7];
@@ -419,17 +446,23 @@ void handleState(const String& line) {
   int measuring = -1;
   for (int i = 0; i < PHASE_COUNT; ++i) if (parts[1] == PHASE_CODES[i]) measuring = i;
   bool busy = parts[2] == "1";
-  int degrees[PHASE_COUNT];
-  for (int i = 0; i < PHASE_COUNT; ++i) degrees[i] = parts[3 + i].toInt();
+  int tenths[PHASE_COUNT];
+  bool rising[PHASE_COUNT];
+  for (int i = 0; i < PHASE_COUNT; ++i)
+    if (!parsePhaseCurrent(parts[3 + i], tenths[i], rising[i])) return;
   bool changed = panelMode != parts[0][0] || measuring != measuringPhase || busy != pcBusy;
-  for (int i = 0; i < PHASE_COUNT; ++i) changed = changed || degrees[i] != phaseDegrees[i];
+  for (int i = 0; i < PHASE_COUNT; ++i)
+    changed = changed || tenths[i] != phaseTenthsMilliamps[i] || rising[i] != phaseRising[i];
   if (!changed) return;
   // 通常モードになったら、操作の画面などにいても 1 画面目へ(通常モードの画面は 1 画面目だけ)。
   if (parts[0][0] == 'N' && panelMode != 'N') screen = HOME;
   panelMode = parts[0][0];
   measuringPhase = measuring;
   pcBusy = busy;
-  for (int i = 0; i < PHASE_COUNT; ++i) phaseDegrees[i] = degrees[i];
+  for (int i = 0; i < PHASE_COUNT; ++i) {
+    phaseTenthsMilliamps[i] = tenths[i];
+    phaseRising[i] = rising[i];
+  }
   updatePhaseLabels();
   dirty = true;
 }
@@ -793,7 +826,17 @@ void drawButton(const Button& b) {
   if (b.selected) M5.Display.drawRoundRect(b.x, b.y, b.w, b.h, 18, TFT_WHITE);
   M5.Display.setFont(&fonts::lgfxJapanGothicP_40);
   // 厚さのボタンは、下の帯をなくして高くなった分だけ数字も大きくする(2026-11-25)。
-  M5.Display.setTextSize(b.h >= 200 || (b.id == B_THICK && b.h >= 110) ? 1.25f : 1.0f);
+  float textSize = b.h >= 200 || (b.id == B_THICK && b.h >= 110) ? 1.25f : 1.0f;
+  // 発振器のボタンは電流の文字(例 "+25.5mA↑")が長いので、ボタンの幅に収まるまで小さくする(版 7)。
+  if (b.id == B_PHASE) {
+    M5.Display.setTextSize(1.0f);
+    const char* nl = strchr(b.label, '\n');
+    int widest = nl ? max(M5.Display.textWidth(String(b.label).substring(0, nl - b.label)), M5.Display.textWidth(nl + 1))
+                    : M5.Display.textWidth(b.label);
+    int room = b.w - 24;
+    if (widest > 0 && widest * textSize > room) textSize = (float)room / widest;
+  }
+  M5.Display.setTextSize(textSize);
   bool measuring = b.id == B_PHASE && b.value == measuringPhase;
   drawLabel(b.label, b.x + b.w / 2, b.y + b.h / 2 - (measuring ? 18 : 0), fg);
   M5.Display.setTextSize(1.0f);

@@ -275,6 +275,7 @@ internal sealed partial class MainForm : Form
             case As100201PanelCommandKind.Stop:
                 _panel.TrySend(As100201PanelProtocol.Ack(command));
                 StopMeasurement(As100201LearningSession.StopByPanelStop, "タッチパネルの測定停止");
+                ShowLoggerForPanel("タッチパネルの測定停止");
                 break;
             default:
                 if (!IsLearningMode)
@@ -301,6 +302,7 @@ internal sealed partial class MainForm : Form
         AppendLog($"タッチパネル（{command.DisplayName}）のため WAVE LOGGER へ停止を要求しました。");
         LearningMeasurementStopped(trigger);
         RefreshLoggerState();
+        ShowLoggerForPanel($"タッチパネル（{command.DisplayName}）");
     }
 
     // PC / CR(版 6)。ノズルの画面では、合わせている側でないボタンは押し間違いなので受け付けない(2026-11-27 人の決定)。
@@ -391,6 +393,8 @@ internal sealed partial class MainForm : Form
                 SendPanelState();
                 RefreshReadiness();
                 UpdateControls();
+                // 位相の出し直し・測り始め・測り直しで LOGGER の画面が変わるので、毎回前に出す(2026-11-27 人の指示)。
+                ShowLoggerForPanel(name);
             }
         }
     }

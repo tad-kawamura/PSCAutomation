@@ -26,7 +26,8 @@ internal sealed class As100201PanelProtocol : IDisposable
     // 版 6(2026-11-27): Arduino のスイッチを Tab5 にまとめた。PHASE: / VALVE / REMEASURE / STOP、ノズルは START / DONE / CANCEL、
     //   HOLD はなくした。画面の位置に NOZZLE:P / NOZZLE:R を足した。PC は STATE: で測っている位相などを、GOTO: で戻る画面を、
     //   MSG: で後から分かった知らせを送る。
-    public const int PanelVersion = 6;
+    // 版 7(2026-11-27): STATE: の位相 4 つの所を、電流(mA の 10 倍、符号付き)と向き U / D にした(ボタンに mA で出す)。
+    public const int PanelVersion = 7;
     // 直前の記録(取消の対象)の知らせ。LAST:M:<測定の説明> / LAST:O:<操作の説明> / LAST:(取り消せるものなし)。返事は求めない。
     public const string LastPrefix = "LAST:";
     public static string Last(As100201UndoTarget? target) => target is null
@@ -51,14 +52,25 @@ internal sealed class As100201PanelProtocol : IDisposable
         }
     }
 
-    // 今の状態の知らせ(版 6)。STATE:<モード L / N>:<測っている位相 PC1 など、止まっていれば ->:<処理中 0 / 1>:<位相 4 つ>
-    // 例 STATE:L:PC2:0:0:75:140:250。パネルは測っている位相のボタンに枠を付け、処理中はボタンを押せなくし、位相をボタンの名前に出す。
+    // 今の状態の知らせ(版 6)。STATE:<モード L / N>:<測っている位相 PC1 など、止まっていれば ->:<処理中 0 / 1>:<電流 4 つ>
+    // 電流は位相の点の mA の 10 倍(符号付き)と向き U 上り / D 下り(版 7。版 6 は位相°)。
+    // 例 STATE:L:PC2:0:0U:255U:136D:-238D(位相 0° / 75° / 140° / 250°)。パネルは測っている位相のボタンに枠を付け、
+    // 処理中はボタンを押せなくし、電流をボタンの名前に出す(+25.5mA↑)。
     // 画面の位置(HOME / SELECT / NOZZLE:)を受けるたびと、変わったときに送る。返事は求めない。
     public const string StatePrefix = "STATE:";
     public static string State(bool learning, string? measuringButton, bool busy, As100201SwitchSettings phases) =>
         string.Create(System.Globalization.CultureInfo.InvariantCulture,
             $"{StatePrefix}{(learning ? 'L' : 'N')}:{(string.IsNullOrEmpty(measuringButton) ? "-" : measuringButton)}:{(busy ? 1 : 0)}:" +
-            $"{phases.PcSinglePhaseDegrees}:{phases.PcDoublePhaseDegrees}:{phases.CrSinglePhaseDegrees}:{phases.CrDoublePhaseDegrees}");
+            $"{Current(phases.PcSinglePhaseDegrees)}:{Current(phases.PcDoublePhaseDegrees)}:" +
+            $"{Current(phases.CrSinglePhaseDegrees)}:{Current(phases.CrDoublePhaseDegrees)}");
+
+    // 位相 1 つ分の電流の欄(例 255U)。
+    private static string Current(int degrees)
+    {
+        var (milliamps, rising) = As100201WaveformSettings.CurrentAtPhase(degrees);
+        long tenths = (long)Math.Round(milliamps * 10, MidpointRounding.AwayFromZero);
+        return string.Create(System.Globalization.CultureInfo.InvariantCulture, $"{tenths}{(rising ? 'U' : 'D')}");
+    }
 
     // ノズルの画面へ戻す(版 6。「合わせた」を取り消したとき)。GOTO:NOZZLE:P / GOTO:NOZZLE:R。
     public static string GotoNozzle(char side) => "GOTO:NOZZLE:" + side;

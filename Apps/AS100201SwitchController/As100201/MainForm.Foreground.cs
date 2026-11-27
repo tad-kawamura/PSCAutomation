@@ -51,4 +51,26 @@ internal sealed partial class MainForm : Form
         }
     }
 
+    // タッチパネルの操作で LOGGER の画面が変わったら(測り始め・止める・位相の出し直し)、毎回 LOGGER を前に出す(2026-11-27 人の指示)。
+    // Tab5 から呼ぶので、Windows は入力先の切り替えを断ることが多い。そのときも重なり順は上げてあるので、ログには出さない。
+    // PC の画面のボタン(測定停止・測定開始(確認用))では出さない(押した人がアプリの画面を見ているため。AI の決め)。
+    private void ShowLoggerForPanel(string operation)
+    {
+        if (_closing || IsDisposed || !_templateLoaded || !_logger.IsInitialized) return;
+        try
+        {
+            IntPtr window = _logger.GetMainWindowHandle();
+            if (!WindowActivation.BringToTop(window))
+            {
+                AppendLog($"{operation}：LOGGER を前に出せませんでした。LOGGER 画面をクリックしてください。");
+                return;
+            }
+            WindowActivation.TryActivate(window);
+        }
+        catch (Exception ex)
+        {
+            // 前に出せなくても、測定・保存は止めない。
+            AppendLog($"{operation}のLOGGER前面表示：" + ex.Message);
+        }
+    }
 }
