@@ -89,7 +89,7 @@ internal sealed partial class MainForm : Form
             _panel.TrySend(As100201PanelProtocol.LastPrefix + "M:今の測定 " + (side.Length == 0 ? "側なし" : side) + "（止めて使わない）");
             return;
         }
-        _panel.TrySend(As100201PanelProtocol.Last(_learning.UndoTarget));
+        _panel.TrySend(_learning.LastLine());
     }
 
     // 接続確認(版 6 からは Arduino を探さないので、ほかの確認と重ならない)。失敗理由を返す。
@@ -269,6 +269,13 @@ internal sealed partial class MainForm : Form
                 HandlePanelRemeasure(command);
                 break;
             case As100201PanelCommandKind.Valve:
+                // 番号が入っていない間は断る(Tab5 は 1 画面目に戻り、理由を出す。2026-11-27 人の指摘)。
+                if (IsLearningMode && _learning?.ValveRefusal(_measurementStarted) is string valveRefusal)
+                {
+                    AppendLog($"{command.DisplayName}：シリアル番号が入っていないため受け付けません（PC の画面で入れてください）。");
+                    _panel.TrySend(As100201PanelProtocol.Nak(valveRefusal));
+                    break;
+                }
                 _panel.TrySend(As100201PanelProtocol.Ack(command));
                 StopForPanel(command, As100201LearningSession.StopByValve);
                 if (IsLearningMode) AfterLearningChange();

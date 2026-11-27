@@ -334,6 +334,15 @@ internal sealed class As100201LearningSession
 
     // パネルの行を 1 つ処理し、パネルへ返す行(ACK / NAK)を返す。
     // 発振器・バルブを動かす・測り直す・測定停止(版 6)は台帳に書かない(測定の行と押した行は呼び出し側の MainForm が書く)。
+    // 「バルブを動かす」を断る理由(2026-11-27 人の指摘)。番号が入っていない間は操作を記録できないので、操作の画面へ進ませない。
+    // 測っている間は、止めて保存するのを優先して受け付ける(断ると測定が止まらない)。断らないときは null。
+    public string? ValveRefusal(bool measuring) => !measuring && SerialNumber is null ? NakNoSerial : null;
+
+    // 取消の確認に出す行(LAST:)。番号が入っていない間は、取消そのものを断る理由(LAST:X:)を出す(2026-11-27 人の指摘)。
+    public string LastLine() => !Blocked && SerialNumber is null
+        ? As100201PanelProtocol.LastRefused(NakNoSerial)
+        : As100201PanelProtocol.Last(UndoTarget);
+
     public string HandleCommand(As100201PanelCommand command)
     {
         if (command.Kind is As100201PanelCommandKind.Phase or As100201PanelCommandKind.Valve or

@@ -74,6 +74,8 @@
 //   PC → パネル  ACK:<受け取った行> / NAK:<理由>(理由は日本語 UTF-8)
 //   PC → パネル  LAST:M:<説明> / LAST:O:<説明> / LAST:  直前の記録(測定 / 操作 / 取り消せるものなし。版 5)。
 //               記録が変わったときと、画面の位置を受けるたび(1 秒ごと)に届く
+//               LAST:X:<理由> は取消そのものを受け付けない(シリアル番号が入っていない。2026-11-27 に足した)。
+//               取消を押しても確認を開かず、NAK と同じく理由を出す。番号が無いときは「バルブを動かす」も NAK で断られ、1 画面目に戻る
 //   PC → パネル  STATE:<L|N>:<測っている位相 PC1 など、止まっていれば ->:<処理中 0|1>:<電流 4 つ 例 255U / -238D>
 //               (版 6 から。電流は mA の 10 倍と向き U 上り / D 下り。版 6 は位相°だった)
 //   PC → パネル  GOTO:NOZZLE:P|R(「合わせた」を取り消したとき、ノズルの画面へ戻す)/ MSG:<E|W|I>:<文>(後から分かった知らせ)
@@ -316,6 +318,23 @@ void setMessage(MessageKind kind, const String& title, const String& detail) {
   dirty = true;
 }
 
+// 断られた理由を下の帯に大きく出す(版 7、2026-11-27 人の指摘。「記録できませんでした：ノズル P 側（合わせ始め）」のように
+// 押したボタンを大きく出しても作業者には関係なく、なぜできないか(シリアル番号が入っていない、など)を伝えたい)。
+// 理由に「（…）」があれば、前を題名、括弧の中を下の行(どうすればよいか)に出す。押したボタンの名前は出さない。
+// NAK と、取消を押したときの LAST:X:(番号が入っていない)で同じ出し方にする。
+void showRefusal(String reason, const char* fallback) {
+  String detail = "";
+  int open = reason.indexOf("（");
+  if (open > 0) {
+    int close = reason.lastIndexOf("）");
+    detail = close > open ? reason.substring(open + strlen("（"), close) : reason.substring(open + strlen("（"));
+    reason = reason.substring(0, open);
+  }
+  if (reason.endsWith("。")) reason = reason.substring(0, reason.length() - strlen("。"));
+  if (reason.length() == 0) reason = fallback;
+  setMessage(MSG_ERROR, reason, detail);
+}
+
 const char* pathName(Path path) {
   return path == PATH_USB ? "USB" : path == PATH_WIFI ? "Wi-Fi" : "なし";
 }
@@ -536,7 +555,8 @@ void handleLine(Path from, const String& line) {
     // 直前の記録(版 5)。LAST:M:<説明> / LAST:O:<説明> / LAST:。取消の確認を出しているときだけ描き直す。
     char kind = 0;
     String text;
-    if (line.length() >= 7 && line.charAt(6) == ':' && (line.charAt(5) == 'M' || line.charAt(5) == 'O')) {
+    // LAST:X:<理由> は取消そのものを受け付けない(シリアル番号が入っていない。2026-11-27 人の指摘)。
+    if (line.length() >= 7 && line.charAt(6) == ':' && (line.charAt(5) == 'M' || line.charAt(5) == 'O' || line.charAt(5) == 'X')) {
       kind = line.charAt(5);
       text = line.substring(7);
     }
@@ -579,20 +599,9 @@ void handleLine(Path from, const String& line) {
     pendingLine = "";
     // 合わせ始めを断られたら、操作の画面へ戻す(合わせている画面のまま測らないように。版 6)。
     if (target.startsWith("ACT:NOZZLE:") && target.indexOf(":START") > 0 && screen == NOZZLE) screen = OPS;
-    // 断られた理由を大きく出す(版 7、2026-11-27 人の指摘。「記録できませんでした：ノズル P 側（合わせ始め）」のように
-    // 押したボタンを大きく出しても作業者には関係なく、なぜできないか(シリアル番号が入っていない、など)を伝えたい)。
-    // 理由に「（…）」があれば、前を題名、括弧の中を下の行(どうすればよいか)に出す。押したボタンの名前は出さない。
-    String reason = line.substring(4);
-    String detail = "";
-    int open = reason.indexOf("（");
-    if (open > 0) {
-      int close = reason.lastIndexOf("）");
-      detail = close > open ? reason.substring(open + strlen("（"), close) : reason.substring(open + strlen("（"));
-      reason = reason.substring(0, open);
-    }
-    if (reason.endsWith("。")) reason = reason.substring(0, reason.length() - strlen("。"));
-    if (reason.length() == 0) reason = target.length() ? "受け付けられませんでした" : "記録できませんでした";
-    setMessage(MSG_ERROR, reason, detail);
+    // 「バルブを動かす」を断られたら(シリアル番号が入っていない、など)、1 画面目へ戻す(2026-11-27 人の指摘)。
+    if (target == "VALVE" && screen == OPS) screen = HOME;
+    showRefusal(line.substring(4), target.length() ? "受け付けられませんでした" : "記録できませんでした");
     return;
   }
   // それ以外(Arduino 向けの AS100201_PING など)は無視する。
@@ -821,7 +830,7 @@ bool buttonEnabled(const Button& b) {
                  (b.id == B_BACK && screen != NOZZLE));
   if (!sends) return true;
   // 取消の「はい」は、PC から今の取消の対象が届いていて、取り消せるものがあるときだけ(版 5)。
-  if (b.id == B_YES && (!lastRecordKnown || lastRecordKind == 0)) return false;
+  if (b.id == B_YES && (!lastRecordKnown || lastRecordKind == 0 || lastRecordKind == 'X')) return false;
   // ノズルの画面では、合わせている側でない方の発振器は押し間違いなので押せない(版 6、人の決定)。
   if (b.id == B_PHASE && screen == NOZZLE && (b.value < 2) != (side == 'P')) return false;
   // 学習モードの「測定停止」は測っている間だけ(版 7)。通常モードはいつでも押せる(版 6 のまま)。
@@ -995,6 +1004,15 @@ void drawScreen() {
     } else if (lastRecordKind == 'O') {
       M5.Display.drawString("直前の操作を取り消しますか", GAP, y);
       M5.Display.drawString("「" + lastRecordText + "」", GAP, y + 70);
+    } else if (lastRecordKind == 'X') {
+      // 確認を開いたあとに番号が空になった(完了など)。押したときと同じ理由を出す。
+      int open = lastRecordText.indexOf("（");
+      M5.Display.drawString(open > 0 ? lastRecordText.substring(0, open) : lastRecordText, GAP, y);
+      if (open > 0) {
+        M5.Display.setFont(&fonts::lgfxJapanGothicP_28);
+        M5.Display.setTextColor(C_SUBTEXT);
+        M5.Display.drawString(lastRecordText.substring(open), GAP, y + 70);
+      }
     } else {
       M5.Display.drawString("取り消せる記録がありません", GAP, y);
       M5.Display.setFont(&fonts::lgfxJapanGothicP_28);
@@ -1060,7 +1078,12 @@ void activate(const Button& b) {
     case B_SPC_R: screen = SPACER; side = 'R'; break;
     case B_DONE:  sendCommand("DONE", HOME); break;
     // 取消の確認を開いたら、PC から今の対象が届くまで「はい」を押せなくする(古い対象を出さないため)。
-    case B_UNDO:  lastRecordKnown = false; screen = UNDO_CONFIRM; break;
+    // シリアル番号が入っていない(PC が LAST:X: で知らせている)ときは確認を開かず、ほかの断りと同じく理由を出す(2026-11-27 人の指摘)。
+    case B_UNDO:
+      if (lastRecordKnown && lastRecordKind == 'X') { showRefusal(lastRecordText, "取り消せません"); break; }
+      lastRecordKnown = false;
+      screen = UNDO_CONFIRM;
+      break;
     case B_BACK:
       // ノズルの画面の「戻る」は押し間違い: 合わせ始めを取り消して操作の画面へ(版 6)。
       if (screen == NOZZLE) { sendCommand(String("ACT:NOZZLE:") + side + ":CANCEL", OPS); break; }

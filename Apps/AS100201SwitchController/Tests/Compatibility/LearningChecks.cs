@@ -380,6 +380,9 @@ internal static class LearningChecks
         Check(s.HandleCommand(mag) == "NAK:" + As100201LearningSession.NakNoSerial && s.HandleCommand(done).StartsWith("NAK:") && s.HandleCommand(undo).StartsWith("NAK:") &&
             s.HandleCommand(As100201PanelCommand.Parse("PHASE:PC1")) == "ACK:PHASE:PC1" && s.HandleCommand(As100201PanelCommand.Parse("VALVE")) == "ACK:VALVE" &&
             ledger.Rows.Count == before + 1, "commands recorded without a serial");
+        // 番号が無い間は、取消を押しても確認を開かず、バルブを動かすも断る(同じ文言。2026-11-27 人の指摘)。測っていればバルブは受け付ける。
+        Check(s.LastLine() == "LAST:X:" + As100201LearningSession.NakNoSerial, "LAST without a serial: " + s.LastLine());
+        Check(s.ValveRefusal(measuring: false) == As100201LearningSession.NakNoSerial && s.ValveRefusal(measuring: true) is null, "valve without a serial");
         // 同じ番号を続きとして入れ直す(カバーを付けて NG など): 台帳から数え直し、完了済みのまま。
         var history = s.FindSerial("SN001");
         Check(history is { MeasurementCount: 3, OperationCount: 3, Completed: true, LastIsMeasurement: false }, "history of the completed serial");
@@ -389,6 +392,7 @@ internal static class LearningChecks
         Check(s.HandleCommand(done).StartsWith("NAK:完了は記録済み") && ledger.Rows.Count == before, "second done recorded");
         // 完了の後の取消: 取り消せる操作がない。
         Check(s.HandleCommand(undo).StartsWith("NAK:") && ledger.Rows.Count == before && logs[^1].Contains("取り消せる記録がありません") && s.UndoTarget is null, "undo after done");
+        Check(s.LastLine() == "LAST:" && s.ValveRefusal(measuring: false) is null, "LAST / valve with a serial again: " + s.LastLine());
         // 完了のあとに操作: 「完了の取消」+「直前の測定なし」、同じ個体の続き。
         Check(s.HandleCommand(mag) == "ACK:ACT:MAG" && ledger.Rows[^1].Note == "完了の取消、直前の測定なし" && !s.Completed && s.OperationCount == 4, "operation after done cancels done");
         // 取消: 直前の操作 1 件だけ。2 回目は NAK。取消のあと操作は「直前の測定なし」のまま(取り消した操作の前の状態に戻る)。

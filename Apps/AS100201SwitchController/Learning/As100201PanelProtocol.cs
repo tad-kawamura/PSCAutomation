@@ -33,6 +33,9 @@ internal sealed class As100201PanelProtocol : IDisposable
     public static string Last(As100201UndoTarget? target) => target is null
         ? LastPrefix
         : LastPrefix + (target.IsMeasurement ? "M:" : "O:") + target.Description;
+    // 取消そのものを受け付けない理由(版 7 に追加、2026-11-27 人の指摘)。LAST:X:<理由>。シリアル番号が入っていないとき。
+    // パネルは「取消」を押したときに確認を開かず、NAK と同じ形で理由を出す。この行を知らない Tab5 は「取り消せるものなし」と同じに扱う。
+    public static string LastRefused(string reason) => LastPrefix + "X:" + reason;
     // パネルが操作を選んでいる途中(2 画面目以降)・1 画面目・ノズルの立ち上がりを合わせる画面(版 6)にいる。
     // ページを移ったとき・1 秒ごと・PC の確認に答えた直後に送られる。
     public const string SelectingLine = "SELECT";

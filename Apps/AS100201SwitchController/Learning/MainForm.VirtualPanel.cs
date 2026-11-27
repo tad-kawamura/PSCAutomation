@@ -195,7 +195,8 @@ internal sealed partial class MainForm : Form
                 _virtualLastLine = line;
                 string body = line[As100201PanelProtocol.LastPrefix.Length..];
                 _virtualLastLabel.Text = "直前の記録：" + (body.Length == 0 ? "取り消せるものなし"
-                    : body.StartsWith("M:", StringComparison.Ordinal) ? "測定 " + body[2..] : "操作 " + body[2..]);
+                    : body.StartsWith("M:", StringComparison.Ordinal) ? "測定 " + body[2..]
+                    : body.StartsWith("X:", StringComparison.Ordinal) ? "取消できない（" + body[2..] + "）" : "操作 " + body[2..]);
                 return;
             }
             _virtualReplyLabel.Text = "パネルへの返事：" + line;
