@@ -106,7 +106,7 @@ internal sealed partial class MainForm : Form
         AppendLog($"処理時間：タッチパネル接続確認 = {timer.Elapsed.TotalSeconds:F3} 秒" + (error is null ? "（成功）" : "（失敗）"));
         return error is null ? null : "タッチパネル: " + error.Message + "（タッチパネルがないと測定できません。" +
             "Tab5 の電源、USB ケーブル、または PC の Wi-Fi 子機が Tab5 の Wi-Fi につながっているかを確かめてください。" +
-            "Tab5 が無いまま試すときは、起動の窓で「学習モード（開発用：タッチパネルの代わり…）」を選んでください）";
+            "Tab5 が無いまま試すときは、引数 " + As100201VirtualPanelLink.CommandLineSwitch + " で起動してください。開発用）";
     }
 
     // 確認が通った道が前回と違う(最初につながったときも)。両方つながっていれば USB、切れたらもう一方へ移る(2026-11-13 承認)。

@@ -43,7 +43,8 @@ internal sealed class As100201LearningSession
     // 測定中の取り込みに失敗して、アプリが LOGGER を止めた(SPEC_測定中の取り込み.md、2026-11-11)。
     public const string StopByCapture = "取り込み異常";
     // 番号が空の間にパネルの操作・完了・取消が届いたときの返事(Tab5 の下の帯に出る)。
-    public const string NakNoSerial = "シリアル番号を入れてください";
+    // Tab5 は「（」の前を大きく、括弧の中を下の行に出す(版 7、2026-11-27 人の指摘: 押したボタンより、番号が無いから操作できないと伝える)。
+    public const string NakNoSerial = "シリアル番号が入っていないため、操作できません（PC の画面の「シリアル番号」に番号を入れて「決定」を押してください）";
 
     public As100201LearningSession(IAs100201LearningLedger ledger, Func<string, long> saveXdt,
         Func<DateTime>? clock = null, Func<string, bool>? fileExists = null, Action<string>? createDirectory = null)

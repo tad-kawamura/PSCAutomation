@@ -142,6 +142,7 @@ const unsigned long WIFI_CHIP_BOOT_MS = 500;       // 入れてから Wi-Fi を�
 const unsigned long BATTERY_INTERVAL_MS = 30000;   // 電池残量を読んで送る間隔
 const int LOW_BATTERY_LEVEL = 20;                  // これ以下で画面の残量を警告の色にする(PC のログと同じ値)
 const int BATTERY_MIN_PRESENT_MV = 4000;           // これ未満の電圧は電池なし(PC の As100201PanelBattery.MinPresentMillivolts と揃える)
+const int BATTERY_MIN_PLAUSIBLE_MV = 6000;         // 4000 以上でこれ未満は 2 セルではありえないので読み違いとして捨てる(版 7)
 const unsigned long DIM_AFTER_MS = 60000;          // 触らなければ画面を暗くするまで(AI の仮決め。実物で決める)
 const uint8_t DIM_BRIGHTNESS = 24;                 // 暗いときの明るさ(0〜255。状態は読める程度。実物で決める)
 const unsigned long FRAME_INTERVAL_MS = 250;
@@ -479,6 +480,10 @@ void readBattery() {
   int level = -1, millivolts = 0;
   bool charging = false;
   int raw = M5.Power.getBatteryVoltage();
+  // 2 セルの電池ではありえない電圧(4.0〜6.0V)は読み違いとして捨て、前の値のままにする(版 7、2026-11-27)。
+  // 実機のログで、8.39V(100%)と 4.03〜4.07V(0%)が 30 秒ごとに入れ替わり、画面の残量が 0% と 100% を行き来していた
+  // (4.0V 台は 8.4V の約半分。2 セルの電池は空でも約 6V より下がらないので、4.0V 台は読み違い)。
+  if (raw >= BATTERY_MIN_PRESENT_MV && raw < BATTERY_MIN_PLAUSIBLE_MV) return;
   // 電池を付けていない Tab5 は「付いている・約 1100mV・残量 0」と読めた(2026-11-13 実機)。2 セルの電池は空でも
   // BATTERY_MIN_PRESENT_MV を下回らないので、それ未満は電池なし(-1)にする(2026-11-17)。
   if (M5.Power.getBatteryPresence() != m5::battery_presence_t::absent && raw >= BATTERY_MIN_PRESENT_MV) {
@@ -574,9 +579,20 @@ void handleLine(Path from, const String& line) {
     pendingLine = "";
     // 合わせ始めを断られたら、操作の画面へ戻す(合わせている画面のまま測らないように。版 6)。
     if (target.startsWith("ACT:NOZZLE:") && target.indexOf(":START") > 0 && screen == NOZZLE) screen = OPS;
-    String title = quietReply(target) ? "受け付けられませんでした：" + describe(target)
-                 : target.length() ? "記録できませんでした：" + describe(target) : "記録できませんでした";
-    setMessage(MSG_ERROR, title, line.substring(4));
+    // 断られた理由を大きく出す(版 7、2026-11-27 人の指摘。「記録できませんでした：ノズル P 側（合わせ始め）」のように
+    // 押したボタンを大きく出しても作業者には関係なく、なぜできないか(シリアル番号が入っていない、など)を伝えたい)。
+    // 理由に「（…）」があれば、前を題名、括弧の中を下の行(どうすればよいか)に出す。押したボタンの名前は出さない。
+    String reason = line.substring(4);
+    String detail = "";
+    int open = reason.indexOf("（");
+    if (open > 0) {
+      int close = reason.lastIndexOf("）");
+      detail = close > open ? reason.substring(open + strlen("（"), close) : reason.substring(open + strlen("（"));
+      reason = reason.substring(0, open);
+    }
+    if (reason.endsWith("。")) reason = reason.substring(0, reason.length() - strlen("。"));
+    if (reason.length() == 0) reason = target.length() ? "受け付けられませんでした" : "記録できませんでした";
+    setMessage(MSG_ERROR, reason, detail);
     return;
   }
   // それ以外(Arduino 向けの AS100201_PING など)は無視する。

@@ -2,16 +2,14 @@ namespace PSCAutomation.Apps.AS100201SwitchController;
 
 // 起動時に「通常モード / 学習モード」を選ぶ窓(SPEC_調整操作の記録.md「モード」)。
 // 初期選択は通常モード。× で閉じたときも通常モード(今までと同じ動きになる)。途中で変えるには起動し直す。
+// 2026-11-27(人の指示「もういらない」): 開発用の「タッチパネルの代わり」の項目を窓から外した。
+// 開発で使うときは、引数 --virtual-panel で起動する(窓を出さずに学習モードにして代わりを出す。2026-11-10 からの作り)。
 internal sealed class StartupModeDialog : Form
 {
     private readonly RadioButton _normal = new();
     private readonly RadioButton _learning = new();
-    private readonly RadioButton _learningVirtual = new();
 
     public As100201StartupMode SelectedMode { get; private set; } = As100201StartupMode.Normal;
-
-    // 開発用: Tab5 の代わりを画面に出す学習モード(--virtual-panel と同じ。2026-11-10 人の指摘で起動の窓にも出す)。
-    public bool SelectedVirtualPanel { get; private set; }
 
     public StartupModeDialog()
     {
@@ -42,35 +40,29 @@ internal sealed class StartupModeDialog : Form
             Margin = new Padding(0, 0, 0, 12)
         });
 
-        _normal.Text = "通常モード（今までどおり：スイッチで位相の出し直しと測定の開始・停止）";
+        // 版 6 から、通常モードもタッチパネルの発振器のボタンで位相の出し直しと測定の開始・停止をする(スイッチ箱はない)。
+        _normal.Text = "通常モード（タッチパネルで位相の出し直しと測定の開始・停止。記録はしない）";
         _learning.Text = "学習モード（タッチパネルで調整操作を記録し、測定のたびに xdt と台帳を保存）";
-        _learningVirtual.Text = "学習モード（開発用：タッチパネルの代わりを画面に出す。Tab5 が無くても試せます）";
-        _learningVirtual.ForeColor = Color.SteelBlue;
-        foreach (var radio in new[] { _normal, _learning, _learningVirtual })
+        foreach (var radio in new[] { _normal, _learning })
         {
             radio.AutoSize = true;
             radio.Margin = new Padding(4, 4, 4, 4);
             layout.Controls.Add(radio);
         }
-        _learningVirtual.Margin = new Padding(4, 12, 4, 4);
         _normal.Checked = true;
 
         layout.Controls.Add(new Label
         {
             AutoSize = true,
             ForeColor = SystemColors.GrayText,
-            Text = "学習モードはタッチパネル（M5Stack Tab5、USB）がつながっていないと動きません。\r\n" +
+            Text = "どちらのモードもタッチパネル（M5Stack Tab5、USB か Wi-Fi）がつながっていないと動きません。\r\n" +
                 "途中でモードを変えるにはアプリを起動し直してください。",
             Margin = new Padding(4, 8, 4, 12)
         });
 
         var buttons = new FlowLayoutPanel { AutoSize = true, FlowDirection = FlowDirection.RightToLeft, Dock = DockStyle.Fill };
         var ok = new Button { Text = "開始", AutoSize = true, MinimumSize = new Size(120, 36), DialogResult = DialogResult.OK };
-        ok.Click += (_, _) =>
-        {
-            SelectedMode = _learning.Checked || _learningVirtual.Checked ? As100201StartupMode.Learning : As100201StartupMode.Normal;
-            SelectedVirtualPanel = _learningVirtual.Checked;
-        };
+        ok.Click += (_, _) => SelectedMode = _learning.Checked ? As100201StartupMode.Learning : As100201StartupMode.Normal;
         buttons.Controls.Add(ok);
         layout.Controls.Add(buttons);
         AcceptButton = ok;
@@ -78,10 +70,10 @@ internal sealed class StartupModeDialog : Form
         Controls.Add(layout);
     }
 
-    // 窓を出して選ばれたモードと、開発用の代わりを使うかを返す。× で閉じたら通常モード。
-    public static (As100201StartupMode Mode, bool VirtualPanel) Ask()
+    // 窓を出して選ばれたモードを返す。× で閉じたら通常モード。
+    public static As100201StartupMode Ask()
     {
         using var dialog = new StartupModeDialog();
-        return dialog.ShowDialog() == DialogResult.OK ? (dialog.SelectedMode, dialog.SelectedVirtualPanel) : (As100201StartupMode.Normal, false);
+        return dialog.ShowDialog() == DialogResult.OK ? dialog.SelectedMode : As100201StartupMode.Normal;
     }
 }
