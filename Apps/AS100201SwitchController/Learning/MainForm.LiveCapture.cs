@@ -137,7 +137,7 @@ internal sealed partial class MainForm : Form
         {
             AppendLog("取り込み異常のあとの停止に失敗：" + ex.Message);
         }
-        RefreshReadyLed();
+        RefreshReadiness();
         UpdateControls();
         if (IsHandleCreated && !_closing && !IsDisposed)
         {

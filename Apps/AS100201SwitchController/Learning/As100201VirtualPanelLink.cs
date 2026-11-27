@@ -4,7 +4,7 @@ namespace PSCAutomation.Apps.AS100201SwitchController;
 
 // タッチパネル(M5Stack Tab5)の代わり(開発用、2026-11-10)。Tab5 が届く前に、学習モードの PC 側
 // (操作ボタン → 台帳の行、操作ボタンでの LOGGER の停止と xdt の保存、途切れたときの受け付け)を実機の LOGGER で確かめるためのもの。
-// COM ポートは開かない。パネルのスケッチと同じ行(確認応答・250ms の定期応答・ACT / DONE / UNDO)をアプリの中で作り、
+// COM ポートは開かない。パネルのスケッチと同じ行(確認応答・250ms の定期応答・PHASE / VALVE / ACT / DONE / UNDO など)をアプリの中で作り、
 // 本物と同じ As100201PanelProtocol に流す。見張り・受け付けの決まり・記録の処理は本物と同じ道を通る。
 // 起動は `AS100201SwitchController.exe --virtual-panel` のときだけ(作業者が誤って選ばないよう、起動の窓には出さない)。
 internal sealed class As100201VirtualPanelLink : IAs100201SerialLink
@@ -99,15 +99,18 @@ internal sealed class As100201VirtualPanelLink : IAs100201SerialLink
         }
     }
 
-    // 代わりのボタンに並べる行(パネルの 1 画面目 + 2 画面目で確定する全部)。表示名は台帳と同じ言葉。
+    // 代わりのボタンに並べる行(パネルの全部の画面で確定する全部)。表示名は台帳と同じ言葉。
     public static IReadOnlyList<As100201PanelCommand> AllCommands { get; } = BuildAllCommands();
 
     private static List<As100201PanelCommand> BuildAllCommands()
     {
-        var lines = new List<string> { "ACT:MAG", "ACT:DEMAG:FULL", "ACT:DEMAG:TAP" };
+        // 版 6: 1 画面目の発振器・バルブを動かす、ノズルの画面の 合わせ始め・合わせた・測り直す・戻る、通常モードの測定停止。
+        var lines = As100201PanelCommand.PhaseButtons.Select(b => "PHASE:" + b).ToList();
+        lines.AddRange(["VALVE", "ACT:MAG", "ACT:DEMAG:FULL", "ACT:DEMAG:TAP"]);
         foreach (string side in new[] { "P", "R" })
-            foreach (string direction in new[] { "IN", "OUT" })
-                lines.Add($"ACT:NOZZLE:{side}:{direction}");
+            foreach (string step in new[] { "START", "DONE", "CANCEL" })
+                lines.Add($"ACT:NOZZLE:{side}:{step}");
+        lines.Add("REMEASURE");
         // スペーサーは厚さと差の組み合わせが多いので、ここでは既定の厚さ・差「測っていない」で並べ、
         // 画面の「厚さ」「差」の選択で WithSpacer に差し替えて送る。
         foreach (string side in new[] { "P", "R" })
@@ -115,7 +118,7 @@ internal sealed class As100201VirtualPanelLink : IAs100201SerialLink
                 lines.Add($"ACT:SPACER:{side}:{direction}:{As100201SpacerCatalog.DefaultThickness}:{As100201PanelCommand.NotMeasured}");
         lines.Add("DONE");
         lines.Add("UNDO");
-        lines.Add("HOLD");
+        lines.Add("STOP");
         return lines.Select(As100201PanelCommand.Parse).ToList();
     }
 

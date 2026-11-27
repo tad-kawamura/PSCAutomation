@@ -2,31 +2,12 @@ using System.Runtime.InteropServices;
 
 namespace PSCAutomation.Apps.AS100201SwitchController;
 
-// Switches: 画面・接続・操作を役割ごとに分割する。
+// Switches: 測定の開始・停止と、WF1973 の位相の出し直し。
+// 版 6(2026-11-27、人の決定)で Arduino のスイッチ箱をなくした。押すのはタッチパネル(Tab5、MainForm.Panel.cs)と
+// PC の画面の「測定開始（確認用）」「測定停止」。中で使う名前は今までのスイッチ名(PC_go / CR_go / F8 / sw4)のまま
+// (位相の設定・台帳の「側」・受け付けの決まり As100201LearningGate をそのまま使うため)。
 internal sealed partial class MainForm : Form
 {
-    private void ArduinoDisconnected()
-    {
-        PostToUi(() =>
-        {
-            _readyLedOn = false;
-            _pendingWaveformSwitch = null;
-            ++_waveformRequestVersion;
-            AppendLog("Arduinoの通信が途切れました。自動で再接続を確認します。");
-            UpdateControls();
-        });
-    }
-
-    private void ArduinoStatusChanged(string message)
-    {
-        PostToUi(() =>
-        {
-            if (_lastArduinoStatus == message) return;
-            _lastArduinoStatus = message;
-            AppendLog(message);
-        });
-    }
-
     private void PostToUi(Action action)
     {
         if (_closing || IsDisposed || !IsHandleCreated) return;
@@ -38,74 +19,59 @@ internal sealed partial class MainForm : Form
         catch (InvalidOperationException) when (_closing || IsDisposed || !IsHandleCreated) { }
     }
 
-    private void ArduinoSwitchPressed(As100201Switch pressed)
+    // PC の画面の「測定停止」(版 6)。Tab5 が切れていても、パネルの処理中でも押せる。処理中なら止める。
+    private void StopClicked(object? sender, EventArgs e)
     {
-        long receivedAt = System.Diagnostics.Stopwatch.GetTimestamp();
-        long version = _arduino.RequestVersion;
-        PostToUi(() =>
-        {
-            if (version != _arduino.RequestVersion || !_arduino.InputReady ||
-                System.Diagnostics.Stopwatch.GetElapsedTime(receivedAt).TotalSeconds >= 1)
-            {
-                ArduinoDiagnosticLog.Write("SWITCH_DROPPED", "遅延または復旧前の要求を破棄 / " + pressed.Line);
-                return;
-            }
-            double waitMs = System.Diagnostics.Stopwatch.GetElapsedTime(receivedAt).TotalMilliseconds;
-            ArduinoDiagnosticLog.Write("SWITCH_TIMING", $"{pressed.Line} / 受信からUI処理開始={waitMs:F1}ms / version={version}");
-            ExecuteSwitch(pressed);
-        });
+        _panelSequenceCancel?.Cancel();
+        StopMeasurement(As100201LearningSession.StopByPcButton, "PC の測定停止");
     }
 
-    private void ExecuteSwitch(As100201Switch pressed)
+    // LOGGER を止める(状態が読めなくても送る)。測定中だったら測定の行を書いてから状態を読む(停止に戻っていれば xdt も保存する)。
+    private void StopMeasurement(string trigger, string name)
     {
-        string name = pressed.Button;
-        using var observation = PcDelayObservation.Begin("UI.Switch:" + pressed.Line);
-        if (pressed.Kind == As100201PressKind.Extra)
+        if (!_logger.IsInitialized)
         {
-            // 2 回押しの後に続けて押された分は何もしない(2026-11-09 人と決めた仕様)。
-            AppendLog($"{name} の続けての押下を捨てました。");
+            AppendLog($"{name}：WAVE LOGGER が初期化されていないため止めるものがありません。");
             return;
         }
-        AppendLog($"スイッチ {pressed.DisplayName} を受信");
+        try
+        {
+            bool wasMeasuring = _measurementStarted;
+            _logger.Stop();
+            _measurementState.ReadAfter = 0;
+            if (wasMeasuring) LearningMeasurementStopped(trigger);
+            RefreshLoggerState();
+            AppendLog($"{name}：WAVE LOGGER へ停止を要求しました。");
+        }
+        catch (Exception ex)
+        {
+            AppendLog($"{name} の実行に失敗：{ex.Message}");
+            ErrorNotification.Show(this, ex.Message, $"{name} 実行エラー", MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
+        finally
+        {
+            SendPanelState();
+            UpdateControls();
+        }
+    }
+
+    // PC の画面の「測定開始（確認用）」(F8 と同じ。WF1973 は変えずに LOGGER だけ始める)。
+    private void ExecuteSwitch(As100201Switch pressed)
+    {
+        using var observation = PcDelayObservation.Begin("UI.Switch:" + pressed.Line);
+        AppendLog($"{pressed.DisplayName} を実行");
         if (!CanExecuteSwitch(pressed, out string refusal))
         {
             AppendLog(refusal);
             return;
         }
-
-        ////////////////////////////////////////////////////////////////////////////////
-        /// スイッチ操作の具体的な内容はここに記載してある。
-        /// WF1973 の位相を切り替える場合は、PC_go / CR_go のみを使用する。
-        /// WAVE LOGGER の測定開始／停止は F8 / sw4 のみを使用する。
-        ////////////////////////////////////////////////////////////////////////////////
         try
         {
             RefreshTemplateState();
             if (!_templateLoaded) return;
-            if (pressed.IsWaveform)
-            {
-                // 再押下も受け付け、処理中なら最後の押下で上書きする。
-                // 1 回押し・2 回押しの区別はスケッチが行い、位相は画面の設定(As100201SwitchSettings)から選ぶ。
-                RequestWaveformRestart(pressed);
-            }
-            else if (name == "F8")
-            {
-                // F8 は WF1973 を変更せず WAVE LOGGER だけを開始する。
-                RefreshLoggerState();
-                if (_measurementState.ReadyToStart) StartMeasurement();
-                else AppendLog($"WAVE LOGGER は{_measurementState.GetDisplayText(describeHardwareStop: false)}です。");
-            }
-            else if (name == "sw4")
-            {
-                // 停止は状態取得失敗時にも送信できるようにする。
-                bool wasMeasuring = _measurementStarted;
-                _logger.Stop();
-                _measurementState.ReadAfter = 0;
-                // 学習モード: 測定中だったら、測定の行を書いてから状態を読む(停止に戻っていれば xdt も保存する)。
-                if (wasMeasuring) LearningMeasurementStopped(As100201LearningSession.StopBySwitch);
-                RefreshLoggerState();
-                AppendLog("WAVE LOGGERへ停止を要求しました。");
-            }
+            RefreshLoggerState();
+            if (_measurementState.ReadyToStart) StartMeasurement();
+            else AppendLog($"WAVE LOGGER は{_measurementState.GetDisplayText(describeHardwareStop: false)}です。");
         }
         catch (Exception ex)
         {
@@ -113,60 +79,32 @@ internal sealed partial class MainForm : Form
             ErrorNotification.Show(this, ex.Message, $"{pressed.DisplayName} 実行エラー",
                 MessageBoxButtons.OK, MessageBoxIcon.Error);
         }
+        finally { SendPanelState(); }
     }
 
-    private void RequestWaveformRestart(As100201Switch pressed)
+    // WF1973 を選んだ位相で出し直す(出力中は OFF にせず、選んだ位相へ同期し直す)。終わったら true。
+    // VISA は STA の UI スレッドで扱う。cancel が止まれと言ったら残りを送らずに false。
+    private async Task<bool> RestartWaveformAsync(As100201Switch pressed, CancellationToken cancel)
     {
-        _pendingWaveformSwitch = pressed;
-        ++_waveformRequestVersion;
-        if (_waveformRestartInProgress)
-        {
-            AppendLog($"WF1973 再開始を予約：{pressed.DisplayName}（処理中の操作を中断）");
-            return;
-        }
-
-        _ = ProcessWaveformRequestsAsync();
-    }
-
-    private async Task ProcessWaveformRequestsAsync()
-    {
+        if (_wf1973 is null) throw new InvalidOperationException("発振器（WF1973）が接続されていません。");
+        int version = ++_waveformRequestVersion;
+        int phase = _switchSettings.GetPhase(pressed);
+        string name = PanelButtonName(pressed);
         _waveformRestartInProgress = true;
         UpdateControls();
         try
         {
-            while (_pendingWaveformSwitch is As100201Switch pressed && !_closing && !IsDisposed && !Disposing && ConnectionsReady)
-            {
-                _pendingWaveformSwitch = null;
-                int version = _waveformRequestVersion;
-                string name = pressed.DisplayName;
-                // 位相はこの時点の画面の設定。処理中に変えた値は次の押下から効く。
-                int phase = _switchSettings.GetPhase(pressed);
-
-                // VISAはSTAのUIスレッドで扱う。新しい要求が来たら残りを中断する。
-                // 出力中はOFFにせず、選択した位相へ同期し直す。
-                var restartTimer = System.Diagnostics.Stopwatch.StartNew();
-                using var restartObservation = PcDelayObservation.Begin("WF1973.StartWithPhase:" + name);
-                bool completed = await _wf1973!.StartWithPhaseAsync(
-                    As100201WaveformSettings.Continuous, phase, () => version != _waveformRequestVersion || !ConnectionsReady || _closing || IsDisposed || Disposing);
-                if (completed && !IsDisposed)
-                {
-                    _lastWaveform = (pressed, phase);
-                    AppendLog($"WF1973 出力開始：{name}（位相 {phase}°）");
-                    AppendLog($"処理時間：WF1973位相再開始 = {restartTimer.Elapsed.TotalMilliseconds:F1} ms");
-                    // 学習モード: 押した瞬間を台帳に残す(2026-11-12。通常モードでは何もしない)。
-                    LearningWaveformRestarted();
-                }
-            }
-        }
-        catch (Exception ex)
-        {
-            _pendingWaveformSwitch = null;
-            if (!IsDisposed && !Disposing)
-            {
-                AppendLog($"WF1973 の再開始に失敗：{ex.Message}");
-                ErrorNotification.Show(this, ex.Message, "WF1973 実行エラー",
-                    MessageBoxButtons.OK, MessageBoxIcon.Error);
-            }
+            var restartTimer = System.Diagnostics.Stopwatch.StartNew();
+            using var restartObservation = PcDelayObservation.Begin("WF1973.StartWithPhase:" + pressed.Line);
+            bool completed = await _wf1973.StartWithPhaseAsync(As100201WaveformSettings.Continuous, phase,
+                () => cancel.IsCancellationRequested || version != _waveformRequestVersion || _closing || IsDisposed || Disposing);
+            if (!completed || IsDisposed) return false;
+            _lastWaveform = (pressed, phase);
+            AppendLog($"WF1973 出力開始：{name}（位相 {phase}°）");
+            AppendLog($"処理時間：WF1973位相再開始 = {restartTimer.Elapsed.TotalMilliseconds:F1} ms");
+            // 学習モード: 押した瞬間を台帳に残す(2026-11-12。通常モードでは何もしない)。
+            LearningWaveformRestarted();
+            return true;
         }
         finally
         {

@@ -23,23 +23,56 @@ internal sealed class As100201PanelProtocol : IDisposable
     // 版 3(2026-11-13): ノズルは方向だけ、スペーサーは厚さと表示との差を付ける、パネルに触れたら HOLD を送る。
     // 版 4(2026-11-13): 2 画面目以降に入ったら SELECT、1 画面目に戻ったら HOME を送る(選び終わるまで測定を始めない)。
     // 版 5(2026-11-26): 操作の行の後ろに :MOVED(測定中に動かした)が付く。PC は直前の記録(取消の対象)を LAST: で知らせる。
-    public const int PanelVersion = 5;
+    // 版 6(2026-11-27): Arduino のスイッチを Tab5 にまとめた。PHASE: / VALVE / REMEASURE / STOP、ノズルは START / DONE / CANCEL、
+    //   HOLD はなくした。画面の位置に NOZZLE:P / NOZZLE:R を足した。PC は STATE: で測っている位相などを、GOTO: で戻る画面を、
+    //   MSG: で後から分かった知らせを送る。
+    public const int PanelVersion = 6;
     // 直前の記録(取消の対象)の知らせ。LAST:M:<測定の説明> / LAST:O:<操作の説明> / LAST:(取り消せるものなし)。返事は求めない。
     public const string LastPrefix = "LAST:";
     public static string Last(As100201UndoTarget? target) => target is null
         ? LastPrefix
         : LastPrefix + (target.IsMeasurement ? "M:" : "O:") + target.Description;
-    // パネルが操作を選んでいる途中(2 画面目以降)・1 画面目にいる。ページを移ったときと、PC の確認に答えた直後に送られる。
+    // パネルが操作を選んでいる途中(2 画面目以降)・1 画面目・ノズルの立ち上がりを合わせる画面(版 6)にいる。
+    // ページを移ったとき・1 秒ごと・PC の確認に答えた直後に送られる。
     public const string SelectingLine = "SELECT";
     public const string HomeLine = "HOME";
+    public const string NozzlePLine = "NOZZLE:P";
+    public const string NozzleRLine = "NOZZLE:R";
+
+    public static bool TryParseScreen(string line, out As100201PanelScreen screen)
+    {
+        switch (line)
+        {
+            case SelectingLine: screen = As100201PanelScreen.Selecting; return true;
+            case HomeLine: screen = As100201PanelScreen.Home; return true;
+            case NozzlePLine: screen = As100201PanelScreen.NozzleP; return true;
+            case NozzleRLine: screen = As100201PanelScreen.NozzleR; return true;
+            default: screen = As100201PanelScreen.Home; return false;
+        }
+    }
+
+    // 今の状態の知らせ(版 6)。STATE:<モード L / N>:<測っている位相 PC1 など、止まっていれば ->:<処理中 0 / 1>:<位相 4 つ>
+    // 例 STATE:L:PC2:0:0:75:140:250。パネルは測っている位相のボタンに枠を付け、処理中はボタンを押せなくし、位相をボタンの名前に出す。
+    // 画面の位置(HOME / SELECT / NOZZLE:)を受けるたびと、変わったときに送る。返事は求めない。
+    public const string StatePrefix = "STATE:";
+    public static string State(bool learning, string? measuringButton, bool busy, As100201SwitchSettings phases) =>
+        string.Create(System.Globalization.CultureInfo.InvariantCulture,
+            $"{StatePrefix}{(learning ? 'L' : 'N')}:{(string.IsNullOrEmpty(measuringButton) ? "-" : measuringButton)}:{(busy ? 1 : 0)}:" +
+            $"{phases.PcSinglePhaseDegrees}:{phases.PcDoublePhaseDegrees}:{phases.CrSinglePhaseDegrees}:{phases.CrDoublePhaseDegrees}");
+
+    // ノズルの画面へ戻す(版 6。「合わせた」を取り消したとき)。GOTO:NOZZLE:P / GOTO:NOZZLE:R。
+    public static string GotoNozzle(char side) => "GOTO:NOZZLE:" + side;
+
+    // 後から分かった知らせ(版 6。測り始められなかった、など)。MSG:E:<文>(異常)/ MSG:W:<文>(注意)/ MSG:I:<文>。
+    public static string Message(char kind, string text) => $"MSG:{kind}:{text}";
     private string? _helloReply;
 
     public event Action<As100201PanelCommand>? CommandReceived;
     public event Action? Disconnected;
     public event Action<string>? StatusChanged;
     public event Action<As100201PanelBattery>? BatteryReported;
-    // true: 操作を選んでいる途中(SELECT)、false: 1 画面目(HOME)。
-    public event Action<bool>? SelectionChanged;
+    // パネルの画面の位置(HOME / SELECT / NOZZLE:P / NOZZLE:R)。
+    public event Action<As100201PanelScreen>? ScreenChanged;
 
     public As100201PanelProtocol(IAs100201SerialLink link)
     {
@@ -60,7 +93,7 @@ internal sealed class As100201PanelProtocol : IDisposable
         }
     }
 
-    // 初期化時の確認。Arduino の確認と同時には走らせない(両方が同じ COM ポートを開こうとしないよう、呼ぶ側で順に行う)。
+    // 初期化時の確認(版 6 からは Arduino を探さないので、ほかの確認と重ならない)。
     public async Task VerifyAsync(Action<string>? timingLog = null)
     {
         await _maintenanceGate.WaitAsync().ConfigureAwait(false);
@@ -266,10 +299,10 @@ internal sealed class As100201PanelProtocol : IDisposable
             if (As100201PanelBattery.TryParse(line, out var battery)) BatteryReported?.Invoke(battery);
             else ArduinoDiagnosticLog.Write("PANEL_UNKNOWN_LINE", line);
         }
-        else if (line is SelectingLine or HomeLine)
+        else if (TryParseScreen(line, out var screen))
         {
-            // パネルの画面の位置(版 4)。受け付けの決まり(定期応答の安定)と関係なく知らせる。つなぎ直した直後にも届くため。
-            SelectionChanged?.Invoke(line == SelectingLine);
+            // パネルの画面の位置(版 4・6)。受け付けの決まり(定期応答の安定)と関係なく知らせる。つなぎ直した直後にも届くため。
+            ScreenChanged?.Invoke(screen);
         }
         else if (As100201PanelCommand.TryParse(line, out var command))
         {
@@ -277,9 +310,7 @@ internal sealed class As100201PanelProtocol : IDisposable
             else
             {
                 ArduinoDiagnosticLog.Write("PANEL_COMMAND_DROPPED", "復旧確認中の操作を破棄 / " + line);
-                // HOLD は人が待つ返事ではないので、断りを返さない(パネルの表示を乱さない)。
-                if (command.Kind != As100201PanelCommandKind.Hold)
-                    TrySend(Nak("接続の確認中です。少し待ってから押し直してください"));
+                TrySend(Nak("接続の確認中です。少し待ってから押し直してください"));
             }
         }
         else if (!line.StartsWith(HelloPrefix, StringComparison.Ordinal))
@@ -315,6 +346,16 @@ internal sealed class As100201PanelProtocol : IDisposable
         _link.Disconnected -= HandleDisconnected;
         _link.Dispose();
     }
+}
+
+// パネルの画面の位置(版 6)。Selecting は操作を選んでいる途中(操作の画面・減磁・スペーサー・取消の確認)で、測定を始めない。
+// NozzleP / NozzleR はノズルの立ち上がりを合わせる画面で、測定できる(測っている間は PC / CR を押しても区切らない)。
+internal enum As100201PanelScreen
+{
+    Home,
+    Selecting,
+    NozzleP,
+    NozzleR
 }
 
 // タッチパネルのスケッチの版がアプリと合わない(書き込み直しが要る)。

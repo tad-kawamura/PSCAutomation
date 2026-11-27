@@ -22,11 +22,22 @@ internal sealed class As100201LearningSession
     private string? _armedXdtPath;
     private As100201UndoTarget? _undoable;
     private bool _lastEventIsMeasurement;
+    // ノズルの立ち上がりを合わせている途中(版 6)。合わせ始めの行と、その後に測ったか。
+    private As100201UndoTarget? _nozzleStart;
+    private bool _measuredSinceNozzleStart;
 
     private sealed record PendingWrite(string Description, Action Write);
 
     public const string StopBySwitch = "sw4";
     public const string StopByPanel = "操作ボタン";
+    // 版 6(2026-11-27): Arduino のスイッチをなくし、止めるきっかけを Tab5 と PC の画面のボタンにした。
+    public const string StopByPcButton = "PC の測定停止";
+    public const string StopByPhase = "PC / CR";
+    public const string StopByValve = "バルブを動かす";
+    public const string StopByRemeasure = "測り直す";
+    public const string StopByAligned = "合わせた";
+    public const string StopByNozzleBack = "戻る";
+    public const string StopByPanelStop = "パネルの測定停止";
     public const string StopByLogger = "LOGGER の停止";
     // 測定中の取り込みに失敗して、アプリが LOGGER を止めた(SPEC_測定中の取り込み.md、2026-11-11)。
     public const string StopByCapture = "取り込み異常";
@@ -62,6 +73,13 @@ internal sealed class As100201LearningSession
     public int PendingCount => _pending.Count;
     // 今の個体のシリアル番号(SN145 の形)。起動直後と完了のあとは null(入れるまで測定・操作を受け付けない)。
     public string? SerialNumber { get; private set; }
+    // ノズルの立ち上がりを合わせている側('P' / 'R')。合わせていなければ null(版 6)。
+    public char? AligningNozzleSide => _nozzleStart?.Row.Operation switch
+    {
+        "ノズル P" => 'P',
+        "ノズル R" => 'R',
+        _ => null
+    };
 
     public string StateText => Blocked
         ? $"保存できず停止中：{BlockReason}"
@@ -200,6 +218,7 @@ internal sealed class As100201LearningSession
         Completed = history?.Completed ?? false;
         _lastEventIsMeasurement = history?.LastIsMeasurement ?? false;
         _undoable = null;
+        _nozzleStart = null;
         if (previousUnfinished) Log?.Invoke($"{previous} は完了せずに次の番号へ切り替えました。");
         Log?.Invoke(history is null
             ? $"シリアル番号 {serial} を記録します（新規）。"
@@ -287,6 +306,7 @@ internal sealed class As100201LearningSession
         MeasurementCount++;
         bool measurementBefore = _lastEventIsMeasurement;
         _lastEventIsMeasurement = true;
+        if (_nozzleStart is not null) _measuredSinceNozzleStart = true;
         var row = new As100201LedgerRow(now, As100201LedgerEventKind.Measurement)
         {
             SerialNumber = SerialNumber ?? "",
@@ -311,10 +331,11 @@ internal sealed class As100201LearningSession
     }
 
     // パネルの行を 1 つ処理し、パネルへ返す行(ACK / NAK)を返す。
+    // 発振器・バルブを動かす・測り直す・測定停止(版 6)は台帳に書かない(測定の行と押した行は呼び出し側の MainForm が書く)。
     public string HandleCommand(As100201PanelCommand command)
     {
-        // パネルに触れた合図(HOLD)は台帳に書かない。LOGGER を止めるのは呼び出し側(MainForm)。
-        if (command.Kind == As100201PanelCommandKind.Hold) return As100201PanelProtocol.Ack(command);
+        if (command.Kind is As100201PanelCommandKind.Phase or As100201PanelCommandKind.Valve or
+            As100201PanelCommandKind.Remeasure or As100201PanelCommandKind.Stop) return As100201PanelProtocol.Ack(command);
         if (Blocked)
         {
             Log?.Invoke($"{command.DisplayName} を受信しましたが、保存できるまで記録を止めています（{BlockReason}）。");
@@ -329,13 +350,54 @@ internal sealed class As100201LearningSession
         {
             As100201PanelCommandKind.Operation => RecordOperation(command),
             As100201PanelCommandKind.Done => RecordDone(command),
+            As100201PanelCommandKind.NozzleCancel => RecordNozzleCancel(command),
             _ => RecordUndo(command)
         };
+    }
+
+    // 合わせている途中に、その「合わせた」「戻る」でない記録が来た(Tab5 の電源が切れた・アプリを起動し直したなど)。
+    // 備考に「ノズル P の合わせた なし」を足し、合わせている状態を終える(AI の仮決め。SPEC_調整操作の記録.md「版 6 の変更」)。
+    private void EndNozzleWithoutAligned(List<string> notes)
+    {
+        if (_nozzleStart is not As100201UndoTarget start) return;
+        notes.Add(start.Row.Operation + " の合わせた なし");
+        _nozzleStart = null;
+    }
+
+    // ノズルの画面の「戻る」(押し間違い、版 6)。合わせ始めの行を取り消す行を足す(測ったものは測定のまま残る)。
+    private string RecordNozzleCancel(As100201PanelCommand command)
+    {
+        if (_nozzleStart is not As100201UndoTarget start || start.Row.Operation != command.OperationText)
+        {
+            Log?.Invoke($"{command.DisplayName}：取り消す合わせ始めの記録がありません（何も記録しません）。");
+            return As100201PanelProtocol.Ack(command);
+        }
+        var row = new As100201LedgerRow(_clock(), As100201LedgerEventKind.Undo)
+        {
+            SerialNumber = SerialNumber ?? "",
+            Operation = start.Row.Operation,
+            Note = "取消の対象: " + start.Description + "（戻る）"
+        };
+        if (!TryWrite("取消の行", row, out string nak)) return nak;
+        OperationCount--;
+        // 合わせ始めのあとに測っていなければ、合わせ始めの前の状態に戻す。測っていれば直前は測定のまま。
+        if (!_measuredSinceNozzleStart) _lastEventIsMeasurement = start.MeasurementBefore;
+        _nozzleStart = null;
+        _undoable = null;
+        Log?.Invoke($"取消を記録：{start.Description} を無効にしました（ノズルの画面の「戻る」）");
+        return As100201PanelProtocol.Ack(command);
     }
 
     private string RecordOperation(As100201PanelCommand command)
     {
         var notes = new List<string>();
+        // 版 6: ノズルの段階(合わせ始め / 合わせた)を備考の先頭に書く。かかった時間は 2 行の日時の差で、画面には出さない。
+        if (command.NozzleStepText.Length > 0) notes.Add(command.NozzleStepText);
+        bool alignedOwnNozzle = command.NozzleStep == As100201NozzleStep.Aligned &&
+            _nozzleStart is { } open && open.Row.Operation == command.OperationText;
+        if (command.NozzleStep == As100201NozzleStep.Aligned && _nozzleStart is null) notes.Add("合わせ始め なし");
+        var endedNozzle = _nozzleStart;
+        if (!alignedOwnNozzle) EndNozzleWithoutAligned(notes);
         bool cancelsDone = Completed;
         if (cancelsDone) notes.Add("完了の取消");
         bool measurementBefore = _lastEventIsMeasurement;
@@ -351,11 +413,26 @@ internal sealed class As100201LearningSession
             Thickness = command.Thickness,
             Note = string.Join("、", notes)
         };
-        if (!TryWrite("操作の行", row, out string nak)) return nak;
+        if (!TryWrite("操作の行", row, out string nak))
+        {
+            _nozzleStart = endedNozzle;   // 書けなければ合わせている状態も元のまま
+            return nak;
+        }
         if (cancelsDone) Completed = false;
         OperationCount++;
         _lastEventIsMeasurement = false;
-        _undoable = new As100201UndoTarget(row, measurementBefore, IsMeasurement: false);
+        _undoable = new As100201UndoTarget(row, measurementBefore, IsMeasurement: false) { Label = command.NozzleStepText };
+        if (command.NozzleStep == As100201NozzleStep.Start)
+        {
+            _nozzleStart = _undoable;
+            _measuredSinceNozzleStart = false;
+        }
+        else if (alignedOwnNozzle)
+        {
+            // 「合わせた」を取り消したら、合わせている状態に戻す(合わせ始めを覚えておく)。
+            _undoable = _undoable with { ReopensNozzle = endedNozzle };
+            _nozzleStart = null;
+        }
         Log?.Invoke($"操作 {command.DisplayName} を記録" + (notes.Count == 0 ? "" : $"（{row.Note}）"));
         return As100201PanelProtocol.Ack(command);
     }
@@ -367,12 +444,19 @@ internal sealed class As100201LearningSession
             Log?.Invoke("完了は記録済みです（続けて押された完了は何もしません）。");
             return As100201PanelProtocol.Nak("完了は記録済みです");
         }
+        var notes = new List<string> { $"この個体の測定 {MeasurementCount} 回・操作 {OperationCount} 回" };
+        var endedNozzle = _nozzleStart;
+        EndNozzleWithoutAligned(notes);
         var row = new As100201LedgerRow(_clock(), As100201LedgerEventKind.Done)
         {
             SerialNumber = SerialNumber ?? "",
-            Note = $"この個体の測定 {MeasurementCount} 回・操作 {OperationCount} 回"
+            Note = string.Join("、", notes)
         };
-        if (!TryWrite("完了の行", row, out string nak)) return nak;
+        if (!TryWrite("完了の行", row, out string nak))
+        {
+            _nozzleStart = endedNozzle;
+            return nak;
+        }
         Completed = true;
         _lastEventIsMeasurement = false;
         _undoable = null;
@@ -412,6 +496,13 @@ internal sealed class As100201LearningSession
         else OperationCount--;
         _undoable = null;
         _lastEventIsMeasurement = target.MeasurementBefore;
+        // 「合わせた」を取り消したら、合わせている状態に戻す(版 6)。合わせ始めを取り消したら、合わせている状態を終える。
+        if (target.ReopensNozzle is not null)
+        {
+            _nozzleStart = target.ReopensNozzle;
+            _measuredSinceNozzleStart = true;
+        }
+        else if (ReferenceEquals(target, _nozzleStart)) _nozzleStart = null;
         Log?.Invoke(target.IsMeasurement
             ? $"取消を記録：測定 {target.Description}（{target.Row.File}）を使わないにしました"
             : $"取消を記録：{target.Description} を無効にしました");
@@ -500,7 +591,7 @@ internal sealed class As100201LearningSession
     {
         Blocked = true;
         BlockReason = reason;
-        Log?.Invoke(reason + " / 保存できるまで PC_go・CR_go・F8 と操作ボタンを受け付けません。保存先を直して「再試行」を押してください。");
+        Log?.Invoke(reason + " / 保存できるまでタッチパネルの PC / CR と操作ボタンを受け付けません。保存先を直して「再試行」を押してください。");
     }
 
     // 台帳(ファイル)と xdt(LOGGER の COM 呼び出し)の失敗。プログラムの誤り(引数など)は止めずに上へ出す。
@@ -512,6 +603,11 @@ internal sealed class As100201LearningSession
 // MeasurementBefore: その記録の前の出来事が測定だったか(取り消したあとの「直前の測定なし」の判断を元に戻すため)。
 internal sealed record As100201UndoTarget(As100201LedgerRow Row, bool MeasurementBefore, bool IsMeasurement)
 {
+    // 説明に足す言葉(ノズルの「合わせ始め」「合わせた」。版 6)。
+    public string Label { get; init; } = "";
+    // 取り消すと、ノズルの合わせている状態に戻る(「合わせた」の行のとき、その合わせ始め。版 6)。
+    public As100201UndoTarget? ReopensNozzle { get; init; }
+
     // パネルの確認とログに出す説明。測定は「10:15:03 PC（2回押し）」、操作は「10:15:03 ノズル P（近づける）」。
     public string Description
     {
@@ -519,7 +615,7 @@ internal sealed record As100201UndoTarget(As100201LedgerRow Row, bool Measuremen
         {
             string time = Row.Time.ToString("HH:mm:ss", System.Globalization.CultureInfo.InvariantCulture);
             if (IsMeasurement) return $"{time} {(Row.Side.Length == 0 ? "側なし" : Row.Side)}";
-            string details = string.Join("・", new[] { Row.Direction, Row.Thickness, Row.Degree }.Where(s => s.Length > 0));
+            string details = string.Join("・", new[] { Label, Row.Direction, Row.Thickness, Row.Degree }.Where(s => s.Length > 0));
             return $"{time} {Row.Operation}" + (details.Length == 0 ? "" : $"（{details}）");
         }
     }

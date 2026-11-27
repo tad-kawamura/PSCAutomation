@@ -1,10 +1,10 @@
 namespace PSCAutomation.Apps.AS100201SwitchController;
 
-// 位相と 2 回押しの待ち時間を画面で変え、設定ファイルに残す(2026-11-09)。
-// 位相の入力は標準の機能(人の指示で試用版だけにしない)。2 回押し(待ち時間を含む)は試用中。
+// 位相を画面で変え、設定ファイルに残す(2026-11-09)。位相の入力は標準の機能(人の指示で試用版だけにしない)。
+// 版 6(2026-11-27): 2 回押しをやめ、Tab5 の発振器のボタン 4 つ(PC 位相1・2、CR 位相1・2)の位相にした。
+// 設定ファイルの項目名は今までのまま(1 回押し = 位相1、2 回押し = 位相2)。2 回押しの待ち時間は使わない。
 internal sealed partial class MainForm : Form
 {
-    private readonly NumericUpDown _doubleWaitInput = new();
     private readonly NumericUpDown _pcSinglePhaseInput = new();
     private readonly NumericUpDown _pcDoublePhaseInput = new();
     private readonly NumericUpDown _crSinglePhaseInput = new();
@@ -16,7 +16,7 @@ internal sealed partial class MainForm : Form
     {
         var group = new GroupBox
         {
-            Text = "出し直しの位相（PC_go / CR_go）　2回押しは試用中：1回目を離してから待ち時間以内にもう一度押す",
+            Text = "出し直しの位相（タッチパネルの PC / CR のボタン。ボタンの名前にも出ます）",
             AutoSize = true,
             AutoSizeMode = AutoSizeMode.GrowAndShrink,
             Dock = DockStyle.Fill,
@@ -29,29 +29,27 @@ internal sealed partial class MainForm : Form
             AutoSizeMode = AutoSizeMode.GrowAndShrink,
             Dock = DockStyle.Fill,
             ColumnCount = 6,
-            RowCount = 3
+            RowCount = 2
         };
         for (int i = 0; i < panel.ColumnCount; i++) panel.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
 
-        ConfigureNumber(_doubleWaitInput, 2, 0.01m,
-            As100201SwitchSettings.MinDoubleWaitMilliseconds / 1000m, As100201SwitchSettings.MaxDoubleWaitMilliseconds / 1000m);
         foreach (var input in new[] { _pcSinglePhaseInput, _pcDoublePhaseInput, _crSinglePhaseInput, _crDoublePhaseInput })
             ConfigureNumber(input, 0, 1, As100201SwitchSettings.MinPhaseDegrees, As100201SwitchSettings.MaxPhaseDegrees);
 
-        AddSetting(panel, 0, 0, "待ち時間（離してから）", _doubleWaitInput, "秒");
-        AddSetting(panel, 1, 0, "PC_go　1回押し", _pcSinglePhaseInput, "°");
-        AddSetting(panel, 1, 3, "2回押し", _pcDoublePhaseInput, "°");
-        AddSetting(panel, 2, 0, "CR_go　1回押し", _crSinglePhaseInput, "°");
-        AddSetting(panel, 2, 3, "2回押し", _crDoublePhaseInput, "°");
+        AddSetting(panel, 0, 0, "PC 位相1", _pcSinglePhaseInput, "°");
+        AddSetting(panel, 0, 3, "PC 位相2", _pcDoublePhaseInput, "°");
+        AddSetting(panel, 1, 0, "CR 位相1", _crSinglePhaseInput, "°");
+        AddSetting(panel, 1, 3, "CR 位相2", _crDoublePhaseInput, "°");
 
         _resetSwitchSettingsButton.AutoSize = true;
         _resetSwitchSettingsButton.Text = "初期値に戻す";
         _resetSwitchSettingsButton.Margin = new Padding(16, 2, 0, 2);
         _resetSwitchSettingsButton.Click += (_, _) => ApplySwitchSettings(As100201SwitchSettings.Defaults, "初期値に戻しました");
-        panel.Controls.Add(_resetSwitchSettingsButton, 3, 0);
-        panel.SetColumnSpan(_resetSwitchSettingsButton, 3);
+        var outer = new FlowLayoutPanel { AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, Dock = DockStyle.Fill, WrapContents = false };
+        outer.Controls.Add(panel);
+        outer.Controls.Add(_resetSwitchSettingsButton);
 
-        group.Controls.Add(panel);
+        group.Controls.Add(outer);
         return group;
     }
 
@@ -86,7 +84,6 @@ internal sealed partial class MainForm : Form
         _showingSwitchSettings = true;
         try
         {
-            _doubleWaitInput.Value = _switchSettings.DoubleWaitMilliseconds / 1000m;
             _pcSinglePhaseInput.Value = _switchSettings.PcSinglePhaseDegrees;
             _pcDoublePhaseInput.Value = _switchSettings.PcDoublePhaseDegrees;
             _crSinglePhaseInput.Value = _switchSettings.CrSinglePhaseDegrees;
@@ -98,9 +95,8 @@ internal sealed partial class MainForm : Form
     private void SwitchSettingInputChanged(object? sender, EventArgs e)
     {
         if (_showingSwitchSettings) return;
-        ApplySwitchSettings(new As100201SwitchSettings
+        ApplySwitchSettings(_switchSettings with
         {
-            DoubleWaitMilliseconds = (int)Math.Round(_doubleWaitInput.Value * 1000m),
             PcSinglePhaseDegrees = (int)_pcSinglePhaseInput.Value,
             PcDoublePhaseDegrees = (int)_pcDoublePhaseInput.Value,
             CrSinglePhaseDegrees = (int)_crSinglePhaseInput.Value,
@@ -115,18 +111,11 @@ internal sealed partial class MainForm : Form
         ShowSwitchSettings();
         if (settings == previous && reason is null) return;
 
-        string Phases(As100201SwitchSettings s) =>
-            $"PC_go {s.PcSinglePhaseDegrees}°/{s.PcDoublePhaseDegrees}°、CR_go {s.CrSinglePhaseDegrees}°/{s.CrDoublePhaseDegrees}°";
-        if (settings.DoubleWaitMilliseconds != previous.DoubleWaitMilliseconds || reason is not null)
-        {
-            try { _arduino.SetDoubleWait(settings.DoubleWaitMilliseconds); }
-            catch (Exception ex) when (ex is InvalidOperationException or IOException or TimeoutException or UnauthorizedAccessException)
-            {
-                // 送れなかったときは、次の接続確認の後に送り直される。
-                AppendLog($"2回押しの待ち時間を Arduino へ送れませんでした（再接続後に送ります）：{ex.Message}");
-            }
-        }
-        AppendLog($"2回押しの設定{(reason is null ? "を変更" : "：" + reason)}：待ち時間 {settings.DoubleWaitMilliseconds / 1000.0:F2} 秒、{Phases(settings)}（1回押し/2回押し）");
+        AppendLog($"位相の設定{(reason is null ? "を変更" : "：" + reason)}：" +
+            $"PC 位相1 {settings.PcSinglePhaseDegrees}°・位相2 {settings.PcDoublePhaseDegrees}°、" +
+            $"CR 位相1 {settings.CrSinglePhaseDegrees}°・位相2 {settings.CrDoublePhaseDegrees}°（次に押したときから効きます）");
+        // Tab5 のボタンの名前を変える。
+        SendPanelState();
 
         try
         {
@@ -136,17 +125,7 @@ internal sealed partial class MainForm : Form
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
-            AppendLog($"2回押しの設定を保存できません（アプリを閉じると元に戻ります）：{ex.Message}");
+            AppendLog($"位相の設定を保存できません（アプリを閉じると元に戻ります）：{ex.Message}");
         }
-    }
-
-    private void ArduinoDoubleWaitApplied(int milliseconds)
-    {
-        PostToUi(() =>
-        {
-            AppendLog($"2回押しの待ち時間 {milliseconds / 1000.0:F2} 秒を Arduino に反映");
-            if (milliseconds != _switchSettings.DoubleWaitMilliseconds)
-                AppendLog($"Arduino の待ち時間が画面の値（{_switchSettings.DoubleWaitMilliseconds / 1000.0:F2} 秒）と違います。");
-        });
     }
 }

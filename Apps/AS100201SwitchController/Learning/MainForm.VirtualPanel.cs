@@ -89,8 +89,8 @@ internal sealed partial class MainForm : Form
             if (_virtualCommandComboBox.SelectedItem is As100201PanelCommand selected)
                 PressVirtualPanel(As100201VirtualPanelLink.WithSpacer(selected, (string)thickness.SelectedItem!, (string)difference.SelectedItem!));
         }));
-        // よく使うものはボタンにも出す。HOLD はパネルに触れた(1 画面目のボタン・暗い画面)ときに送る行。
-        foreach (string line in new[] { "ACT:MAG", "DONE", "UNDO", "HOLD" })
+        // よく使うものはボタンにも出す(版 6: 1 画面目の PC 位相1・CR 位相1・バルブを動かす、ノズルの画面の測り直す)。
+        foreach (string line in new[] { "PHASE:PC1", "PHASE:CR1", "VALVE", "REMEASURE", "ACT:MAG", "DONE", "UNDO" })
         {
             var command = As100201PanelCommand.Parse(line);
             commands.Controls.Add(VirtualButton(command.DisplayName, () => PressVirtualPanel(command)));
@@ -111,15 +111,24 @@ internal sealed partial class MainForm : Form
             AppendLog(unplugged.Checked ? "代わりのパネル：USB を抜いた状態にしました。" : "代わりのパネル：USB を差し直しました（自動の再接続を待ちます）。");
             _virtualPanel.Unplugged = unplugged.Checked;
         };
-        // パネルが 2 画面目以降にいる状態(版 4)。入れると SELECT、外すと HOME を送る。
-        var selecting = new CheckBox { AutoSize = true, Text = "選んでいる途中（SELECT）", Margin = new Padding(0, 4, 16, 0), ForeColor = SystemColors.ControlText };
-        selecting.CheckedChanged += (_, _) =>
+        // パネルの画面の位置(版 4・6)。選ぶと HOME / SELECT / NOZZLE:P / NOZZLE:R を送る。
+        faults.Controls.Add(new Label { AutoSize = true, Text = "パネルの画面", Margin = new Padding(0, 8, 4, 0), ForeColor = SystemColors.ControlText });
+        var screen = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Width = 210, Margin = new Padding(0, 4, 16, 0) };
+        (string Line, string Text)[] screens =
+        [
+            (As100201PanelProtocol.HomeLine, "1 画面目（HOME）"),
+            (As100201PanelProtocol.SelectingLine, "選んでいる途中（SELECT）"),
+            (As100201PanelProtocol.NozzlePLine, "ノズル P 側を合わせている"),
+            (As100201PanelProtocol.NozzleRLine, "ノズル R 側を合わせている")
+        ];
+        foreach (var s in screens) screen.Items.Add(s.Text);
+        screen.SelectedIndex = 0;
+        screen.SelectedIndexChanged += (_, _) =>
         {
-            if (_virtualPanel is null) return;
-            string line = selecting.Checked ? As100201PanelProtocol.SelectingLine : As100201PanelProtocol.HomeLine;
-            if (!_virtualPanel.Press(line)) AppendLog("代わりのパネルは接続されていないため送れません。");
+            if (_virtualPanel is null || screen.SelectedIndex < 0) return;
+            if (!_virtualPanel.Press(screens[screen.SelectedIndex].Line)) AppendLog("代わりのパネルは接続されていないため送れません。");
         };
-        faults.Controls.Add(selecting);
+        faults.Controls.Add(screen);
         // Tab5 の 1 画面目の「測定中に動かした」の代わり。入れると次に送る操作 1 件に :MOVED を付け、送ったら外す。
         _virtualMovedCheckBox.AutoSize = true;
         _virtualMovedCheckBox.Text = "測定中に動かした（次の操作 1 件）";
@@ -177,6 +186,8 @@ internal sealed partial class MainForm : Form
     {
         PostToUi(() =>
         {
+            // 今の状態(版 6)は 1 秒ごとに届くので、ログにも返事の欄にも出さない。
+            if (line.StartsWith(As100201PanelProtocol.StatePrefix, StringComparison.Ordinal)) return;
             if (line.StartsWith(As100201PanelProtocol.LastPrefix, StringComparison.Ordinal))
             {
                 // 直前の記録は 1 秒ごとに届くので、ログには出さず、変わったときだけ表示を書き換える。

@@ -107,6 +107,7 @@ internal sealed partial class MainForm : Form
 
         ConfigureButton(_initializeButton, "確認", InitializeClicked);
         ConfigureButton(_startButton, "測定開始（確認用）", StartClicked);
+        ConfigureButton(_stopButton, "測定停止", StopClicked);
         ConfigureButton(_deleteTemplateButton, "雛形を削除", DeleteTemplateClicked);
         ConfigureButton(_getStateButton, "状態確認", GetStateClicked);
 
@@ -116,6 +117,7 @@ internal sealed partial class MainForm : Form
         [
             _initializeButton,
             _startButton,
+            _stopButton,
             _deleteTemplateButton,
             _getStateButton,
             _exitButton
@@ -133,7 +135,8 @@ internal sealed partial class MainForm : Form
         statusPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         AddConnectionStatusRow(statusPanel, 0, "Automation Server：", _statusValueLabel);
         AddConnectionStatusRow(statusPanel, 1, "接続本体：", _hardwareValueLabel);
-        AddConnectionStatusRow(statusPanel, 2, "マイコン：", _arduinoValueLabel);
+        // 版 6: 「マイコン」(Arduino)の行をタッチパネル(Tab5)の行にした。通常モードでも Tab5 を使う。
+        AddConnectionStatusRow(statusPanel, 2, "タッチパネル：", _panelValueLabel);
         AddConnectionStatusRow(statusPanel, 3, "発振器：", _wfValueLabel);
 
 

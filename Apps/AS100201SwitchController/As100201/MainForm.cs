@@ -17,22 +17,23 @@ internal sealed partial class MainForm : Form
         set => _measurementState.MeasurementStarted = value;
     }
     private bool _closing, _heartbeatBusy;
-    private string? _lastArduinoStatus;
-    private readonly As100201ArduinoProtocol _arduino = new();
+    // 版 6(2026-11-27、人の決定): Arduino のスイッチ箱は使わない。スイッチはタッチパネル(Tab5)にまとめ、アプリは Arduino を探さない。
     private Wf1973ContinuousSession? _wf1973;
     private readonly System.Windows.Forms.Timer _readyHeartbeat = new() { Interval = 500 };
     private readonly Button _deleteTemplateButton = new();
-    private readonly Label _arduinoValueLabel = new();
     private readonly Label _wfValueLabel = new();
     private readonly Label _templateValueLabel = new();
     private readonly Label _readyValueLabel = new();
     private readonly Panel _dropPanel = new();
     private bool _templateLoaded;
-    private bool _readyLedOn;
+    // 測定を始められる(前の READY LED が点く条件)。版 6 で LED はなくなり、PC の画面と Tab5 に出す。
+    private bool _readyToMeasure;
     private int _heartbeatCount;
     private string? _templatePath;
     private readonly Button _initializeButton = new();
     private readonly Button _startButton = new();
+    // 版 6: Tab5 が切れたとき(電池切れ・Wi-Fi 切れなど)にも止められるよう、いつも押せる「測定停止」。
+    private readonly Button _stopButton = new();
     private readonly Button _getStateButton = new();
     private readonly ComboBox _loggerComboBox = new();
     private readonly Label _loggerSelectionValueLabel = new();
@@ -44,10 +45,9 @@ internal sealed partial class MainForm : Form
     private bool _hardwareDetected;
     private bool _operationInProgress;
     private bool _waveformRestartInProgress;
-    private As100201Switch? _pendingWaveformSwitch;
     private int _waveformRequestVersion;
     private string _detectedHardwareName = string.Empty;
-    // 位相(標準)と 2 回押しの待ち時間(試用中)。画面で変えて設定ファイルに残す。
+    // 位相 4 つ(Tab5 の PC 位相1・2、CR 位相1・2)。画面で変えて設定ファイルに残す。
     private readonly As100201SwitchSettingsStore _switchSettingsStore = As100201SwitchSettingsStore.CreateDefault();
     private As100201SwitchSettings _switchSettings;
 
@@ -59,11 +59,6 @@ internal sealed partial class MainForm : Form
         _useVirtualPanel = virtualPanel && mode == As100201StartupMode.Learning;
         _nr500Connection = new Nr500Connection(_logger);
         _switchSettings = _switchSettingsStore.Load(out string? settingsMessage);
-        _arduino.SetDoubleWait(_switchSettings.DoubleWaitMilliseconds);
-        _arduino.Disconnected += ArduinoDisconnected;
-        _arduino.SwitchPressed += ArduinoSwitchPressed;
-        _arduino.StatusChanged += ArduinoStatusChanged;
-        _arduino.DoubleWaitApplied += ArduinoDoubleWaitApplied;
         _readyHeartbeat.Tick += StatusHeartbeatTick;
         StartPcDelayObservation();
         _readyHeartbeat.Start();
@@ -78,6 +73,7 @@ internal sealed partial class MainForm : Form
         ShowSwitchSettings();
         ConfigureLoggerSelection();
         if (settingsMessage is not null) AppendLog(settingsMessage);
+        InitializePanel();
         InitializeLearningMode();
         UpdateControls();
     }
@@ -88,19 +84,20 @@ internal sealed partial class MainForm : Form
         await CheckConnectionsAsync();
     }
 
-    private bool ConnectionsReady => _arduino.InputReady && _wf1973 is not null &&
-        _logger.IsInitialized && _hardwareDetected;
+    // 発振器と LOGGER(NR 本体)。タッチパネルは別(PanelReady)。止めるのはパネルが切れていてもできるようにするため。
+    private bool ConnectionsReady => _wf1973 is not null && _logger.IsInitialized && _hardwareDetected;
+
+    // タッチパネル(Tab5)の定期応答が安定している(版 6 からは通常モードでも要る)。
+    private bool PanelReady => _panel is { InputReady: true };
 
     protected override void OnFormClosed(FormClosedEventArgs e)
     {
         _closing = true;
         ++_waveformRequestVersion;
-        _pendingWaveformSwitch = null;
+        _panelSequenceCancel?.Cancel();
         StopPcDelayObservation();
         _readyHeartbeat.Stop();
         _readyHeartbeat.Dispose();
-        try { if (_arduino.IsConnected) _arduino.SetReadyLed(false); } catch { }
-        _arduino.Dispose();
         DisposeLearningMode();
         _wf1973?.Dispose();
         _logger.Release();

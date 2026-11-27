@@ -1,8 +1,9 @@
 namespace PSCAutomation.Apps.AS100201SwitchController;
 
 // 画面上部に大きく出す「次にすること」(2026-11-26、人の要望。AS110AllCheck の「次にすること」と同じ考え)。
-// 準備完了 LED が消えている理由のうち、いちばん先に片付けるもの 1 つと、その直し方を出す。
-// 判定は READY LED(RefreshReadyLed)と学習モードの受け付け(As100201LearningGate)と同じ条件を、手で片付ける順に並べたもの。
+// 測定を始められない理由のうち、いちばん先に片付けるもの 1 つと、その直し方を出す。
+// 判定は測定の準備(RefreshReadiness)と学習モードの受け付け(As100201LearningGate)と同じ条件を、手で片付ける順に並べたもの。
+// 版 6(2026-11-27): Arduino をなくし、タッチパネル(Tab5)は通常モードでも要る。
 // 画面から切り離して模擬で確かめる。案内だけで、押せる・押せないは変えない。
 internal enum As100201NextStepKind
 {
@@ -21,11 +22,11 @@ internal sealed record As100201NextStepState
     public bool LoggerAppMissing { get; init; }
     // WAVE LOGGER を初期化し、NR 本体を見つけた
     public bool LoggerReady { get; init; }
-    public bool ArduinoReady { get; init; }
     public bool Wf1973Ready { get; init; }
     public bool TemplateLoaded { get; init; }
-    // 学習モードだけ
+    // タッチパネル(版 6 から通常モードでも要る)
     public bool PanelReady { get; init; }
+    // 学習モードだけ
     public bool SaveBlocked { get; init; }
     // 参照波形を読み込めた(2026-11-26)。読み込めなかった理由は ReferenceProblem。
     public bool ReferenceLoaded { get; init; }
@@ -36,7 +37,8 @@ internal sealed record As100201NextStepState
     // 接続確認以外の処理中・位相の出し直し中
     public bool Busy { get; init; }
     public bool Measuring { get; init; }
-    public bool ReadyLedOn { get; init; }
+    // 測定の準備ができている(版 5 までの READY LED が点く条件)
+    public bool ReadyToMeasure { get; init; }
 }
 
 internal static class As100201NextStep
@@ -45,11 +47,11 @@ internal static class As100201NextStep
 
     public static (string Text, As100201NextStepKind Kind) Describe(As100201NextStepState s)
     {
-        // 測定中は止め方だけ出す(sw4 は保存の停止中・パネルが途切れていても受け付ける)。
+        // 測定中は止め方だけ出す(PC の画面の「測定停止」は保存の停止中・パネルが途切れていても受け付ける)。
         if (s.Measuring)
             return (s.Learning
-                ? "測定中です。止めるときは sw4 か、タッチパネルのボタン（触れると止まります）"
-                : "測定中です。止めるときは sw4", As100201NextStepKind.Ready);
+                ? "測定中です。手を動かす前にタッチパネルの「バルブを動かす」を押してください（止まります）"
+                : "測定中です。止めるときはタッチパネルか PC の画面の「測定停止」", As100201NextStepKind.Ready);
         if (s.CheckingConnections)
             return ("接続を確認しています。終わるまでお待ちください", As100201NextStepKind.Wait);
         if (s.LoggerAppMissing)
@@ -58,9 +60,7 @@ internal static class As100201NextStep
             return ("NR-500 / NR-X の USB と電源を確かめて、「確認」を押してください", As100201NextStepKind.Action);
         if (!s.Wf1973Ready)
             return ("発振器（WF1973）の USB と電源を確かめて、「確認」を押してください", As100201NextStepKind.Action);
-        if (!s.ArduinoReady)
-            return ("マイコン（Arduino）の USB を確かめてください（挿せば自動でつながります）", As100201NextStepKind.Action);
-        if (s.Learning && !s.PanelReady)
+        if (!s.PanelReady)
             return ("タッチパネル（Tab5）の電源と、USB か Wi-Fi を確かめてください（自動でつながり直します）", As100201NextStepKind.Action);
         if (s.Learning && s.SaveBlocked)
             return ("台帳か xdt を保存できません。保存先を直して「再試行」を押してください", As100201NextStepKind.Action);
@@ -82,11 +82,11 @@ internal static class As100201NextStep
             return ("タッチパネルで操作を選び終えるか、「戻る」で 1 画面目に戻してください", As100201NextStepKind.Action);
         if (s.Busy)
             return ("処理中です。終わるまでお待ちください", As100201NextStepKind.Wait);
-        if (!s.ReadyLedOn)
-            // 条件はそろっているのに点かない(LED の通信に失敗した直後など)。見張りが次の周期で点け直す。
-            return ("準備完了 LED を点けています。点かないときはマイコン（Arduino）の USB を確かめてください", As100201NextStepKind.Wait);
+        if (!s.ReadyToMeasure)
+            // 条件はそろっているのに、まだ準備に入っていない(見張りが次の周期で確かめ直す)。
+            return ("測定の準備をしています。終わるまでお待ちください", As100201NextStepKind.Wait);
         return (s.Learning
-            ? "準備完了です。PC_go / CR_go で位相を出し直し、F8 で測定を始めてください（手を動かす前にタッチパネルの操作ボタン）"
-            : "準備完了です。PC_go / CR_go で位相を出し直し、F8 で測定を始めてください", As100201NextStepKind.Ready);
+            ? "準備完了です。タッチパネルの PC / CR を押すと、位相を出し直して測り始めます（手を動かす前に「バルブを動かす」）"
+            : "準備完了です。タッチパネルの PC / CR を押すと、位相を出し直して測り始めます", As100201NextStepKind.Ready);
     }
 }

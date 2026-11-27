@@ -2,8 +2,9 @@ using System.Diagnostics;
 
 namespace PSCAutomation.Apps.AS100201SwitchController;
 
-// 学習モード(SPEC_調整操作の記録.md)の画面への組み込み。通常モードでは _panel / _learning が null で、ここは何もしない。
-// タッチパネルの接続・見張り、操作ボタンの処理、測定の行と xdt の保存、書けないときの停止と「再試行」。
+// 学習モード(SPEC_調整操作の記録.md)の画面への組み込み。通常モードでは _learning が null で、ここは何もしない。
+// 操作ボタンの処理、測定の行と xdt の保存、書けないときの停止と「再試行」。
+// タッチパネルの接続・見張りと発振器・測定のボタンは、版 6 から通常モードでも使うので MainForm.Panel.cs。
 internal sealed partial class MainForm : Form
 {
     private readonly As100201StartupMode _mode;
@@ -32,24 +33,15 @@ internal sealed partial class MainForm : Form
 
     public bool IsLearningMode => _mode == As100201StartupMode.Learning;
 
-    // パネルが 2 画面目以降(操作を選んでいる途中)にいる(版 4、2026-11-13 人の指示)。パネルの SELECT / HOME で変わる。
-    private bool _panelSelecting;
-
     // 学習モードで測定を始めてよいか。パネルが途切れている間、台帳・xdt に書けない間、パネルで操作を選んでいる途中、
     // シリアル番号が入っていない間・番号の確認の窓を出している間、参照波形を読み込めていない間(2026-11-26)は始めない。
     private bool LearningReady => !IsLearningMode ||
-        (_panel is { InputReady: true } && _learning is { Blocked: false, SerialNumber: not null } && !_panelSelecting && !_serialDialogOpen &&
+        (PanelReady && _learning is { Blocked: false, SerialNumber: not null } && !_panelSelecting && !_serialDialogOpen &&
          _referenceLoaded);
 
     private void InitializeLearningMode()
     {
         if (!IsLearningMode) return;
-        _panel = new As100201PanelProtocol(CreatePanelLink());
-        _panel.CommandReceived += PanelCommandReceived;
-        _panel.Disconnected += PanelDisconnected;
-        _panel.StatusChanged += PanelStatusChanged;
-        _panel.BatteryReported += PanelBatteryReported;
-        _panel.SelectionChanged += PanelSelectionChanged;
         // 保存先は雛形に依存しない(2026-11-10 人の決定)ので、起動時に決まる。フォルダーは最初に書くときに作る。
         string directory = LearningDataDirectory(AppContext.BaseDirectory);
         _learning = new As100201LearningSession(new As100201CsvLedger(Path.Combine(directory, LedgerFileName)), _logger.SaveXdt)
@@ -171,27 +163,15 @@ internal sealed partial class MainForm : Form
         Controls.Add(group);
         Controls.Add(BuildNextStepLabel());
         Controls.Add(banner);
-
-        _connectionStatusPanel.RowCount = 5;
-        AddConnectionStatusRow(_connectionStatusPanel, 4, "タッチパネル：", _panelValueLabel);
     }
 
     private void UpdateLearningControls()
     {
         if (!IsLearningMode || _panel is null) return;
-        var details = new List<string>();
-        if (_panelPaths?.ActivePath is As100201PanelPath path and not As100201PanelPath.None)
-            details.Add(As100201PanelPathLink.PathName(path));
-        if (_panelBattery is not null) details.Add(_panelBattery.DisplayText);
-        string suffix = details.Count == 0 ? "" : "（" + string.Join("・", details) + "）";
-        if (_panelSelecting && _panel.InputReady) suffix += "　選択中（測定できません）";
-        _panelValueLabel.Text = _panel.InputReady ? "タッチパネル　接続済み" + suffix
-            : _panel.IsConnected ? "定期応答の確認中" + suffix : "接続待ち（USB / Wi-Fi を自動再確認）";
-        _panelValueLabel.ForeColor = _panel.InputReady ? Color.DarkGreen : Color.DarkRed;
         _saveDirectoryLabel.Text = _learning is null ? "未設定" : _learning.SaveDirectory + "　台帳：" + Path.GetFileName(_learning.LedgerLocation) + "　xdt：シリアル番号のフォルダー";
         _learningStateLabel.Text = _learning?.StateText ?? "記録できません";
         _learningStateLabel.ForeColor = _learning is { Blocked: false, SerialNumber: not null } ? Color.DarkGreen : Color.DarkRed;
-        _retryButton.Enabled = _learning is { Blocked: true } && !_operationInProgress && !_serialDialogOpen;
+        _retryButton.Enabled = _learning is { Blocked: true } && !_operationInProgress && !_serialDialogOpen && !PanelBusy;
         string? serial = _learning?.SerialNumber;
         _serialValueLabel.Text = serial is null ? "今の番号：なし（入れるまで測定できません）" : "今の番号：" + serial;
         _serialValueLabel.ForeColor = serial is null ? Color.DarkRed : Color.DarkGreen;
@@ -210,8 +190,8 @@ internal sealed partial class MainForm : Form
     // シリアル番号を変えてよいか。測定中・パネルで選んでいる途中・ほかの処理中・保存の停止中・確認の窓を出している間は変えない
     // (番号を記録の途中で変えないため。AI の仮決め)。
     private bool SerialInputAllowed =>
-        _learning is { Blocked: false } && !_measurementStarted && !_panelSelecting &&
-        !_operationInProgress && !_waveformRestartInProgress && !_serialDialogOpen && !_closing;
+        _learning is { Blocked: false } && !_measurementStarted && !_panelSelecting && _panelScreen is As100201PanelScreen.Home &&
+        !_operationInProgress && !_waveformRestartInProgress && !PanelBusy && !_serialDialogOpen && !_closing;
 
     // 「決定」(Enter)。数字をシリアル番号にし、台帳にもうある番号なら続きにするか確かめてから決める(2026-11-26 人の決定)。
     private void DecideSerial()
@@ -232,7 +212,7 @@ internal sealed partial class MainForm : Form
             return;
         }
         _serialDialogOpen = true;
-        RefreshReadyLed();
+        RefreshReadiness();
         UpdateControls();
         try
         {
@@ -270,170 +250,12 @@ internal sealed partial class MainForm : Form
         }
     }
 
-    // 接続確認。Arduino の確認が終わってから行う(2 台が同時に同じ COM ポートを開かないため)。失敗理由を返す。
-    private async Task<string?> VerifyPanelAsync()
-    {
-        if (_panel is null) return null;
-        var details = new List<string>();
-        var timer = Stopwatch.StartNew();
-        Exception? error = null;
-        try { await Task.Run(() => _panel.VerifyAsync(details.Add)); }
-        catch (Exception ex) { error = ex; }
-        timer.Stop();
-        foreach (string detail in details) AppendLog(detail.Replace("Arduino内訳", "タッチパネル内訳"));
-        AppendLog($"処理時間：タッチパネル接続確認 = {timer.Elapsed.TotalSeconds:F3} 秒" + (error is null ? "（成功）" : "（失敗）"));
-        return error is null ? null : "タッチパネル: " + error.Message + "（学習モードはタッチパネルがないと動きません。" +
-            "Tab5 の電源、USB ケーブル、または PC の Wi-Fi 子機が Tab5 の Wi-Fi につながっているかを確かめてください。通常モードで起動し直せば今までどおり使えます。" +
-            "Tab5 が無いまま試すときは、起動の窓で「学習モード（開発用：タッチパネルの代わり…）」を選んでください）";
-    }
-
-    // 確認が通った道が前回と違う(最初につながったときも)。両方つながっていれば USB、切れたらもう一方へ移る(2026-11-13 承認)。
-    // Wi-Fi の子機をつなぎ直した・つなぎ直せなかった(2026-11-17)。
-    private void PanelWifiNotice(string message) => PostToUi(() => AppendLog(message));
-
-    // 使っていた USB が切れたら、Wi-Fi の失敗を待たずに子機をつなぎ直す(2026-11-17 人の決定 C)。
-    // アプリが USB を開くと Tab5 が再起動し、子機は古いつながりのまま残っていることがほぼ確実なため。
-    private void PanelPathLost(As100201PanelPath path)
-    {
-        if (path == As100201PanelPath.Usb) _panelWifi?.RefreshNow("使っていた USB が切れたため");
-    }
-
-    // Wi-Fi で使っている最中に Tab5 の USB が挿されたら、空いているときに USB へ戻す(2026-11-18 人の決定)。
-    // 決まりは As100201UsbReturnWatch。見張りの周期(0.5 秒)ごとに呼ぶ。
-    private async Task ReturnPanelToUsbIfIdleAsync()
-    {
-        if (_panel is null || _panelPaths is null || _closing) return;
-        As100201PanelPath path = _panelPaths.ActivePath;
-        As100201UsbState usb = path == As100201PanelPath.Wifi
-            ? await Task.Run(As100201SerialLink.PanelUsbState)
-            : As100201UsbState.Unknown;
-        if (_closing || IsDisposed) return;
-        bool idle = _panel.InputReady && !_measurementStarted && !_panelSelecting &&
-            !_operationInProgress && !_waveformRestartInProgress;
-        if (!_usbReturnWatch.Update(path, usb, idle, Environment.TickCount64)) return;
-        // 選び直しは数秒かかるので待たない(見張りの周期を止めると Arduino の見張りも止まるため)。
-        // 見張り(MaintainAsync)とは同じ鍵で順番になる。
-        _ = ReselectPanelForUsbAsync();
-    }
-
-    private async Task ReselectPanelForUsbAsync()
-    {
-        if (_panel is null || _panelPaths is null) return;
-        AppendLog("タッチパネルの USB が挿されたので、USB に戻します（数秒、パネルの操作と測定の開始を受け付けません）。");
-        // 選び直す間はパネルの画面がどこにあるか分からなくなる。つながったらパネルが SELECT / HOME を送り直す。
-        _panelBattery = null;
-        _panelSelecting = false;
-        RefreshReadyLed();
-        UpdateControls();
-        bool connected = await _panel.ReselectAsync();
-        if (_closing || IsDisposed) return;
-        As100201PanelPath now = _panelPaths.ActivePath;
-        if (!connected)
-            AppendLog("タッチパネルを選び直せませんでした。自動で再接続を確認します（USB を先に、なければ Wi-Fi）。");
-        else if (now == As100201PanelPath.Wifi)
-            AppendLog("タッチパネルの USB では確認できず、Wi-Fi のままです。USB に戻すには、USB を挿し直すか「確認」を押してください。");
-        RefreshReadyLed();
-        UpdateControls();
-    }
-
-    private void PanelPathChanged(As100201PanelPath path)
-    {
-        PostToUi(() =>
-        {
-            string name = As100201PanelPathLink.PathName(path);
-            AppendLog(_lastPanelPath == As100201PanelPath.None
-                ? $"タッチパネルは {name} でつながっています。"
-                : $"タッチパネルの道を {As100201PanelPathLink.PathName(_lastPanelPath)} から {name} に切り替えました。");
-            _lastPanelPath = path;
-            UpdateControls();
-        });
-    }
-
-    // 電池残量(30 秒ごと)。少なくなったら 1 回だけログに出す(2026-11-13 承認)。
-    private void PanelBatteryReported(As100201PanelBattery battery)
-    {
-        PostToUi(() =>
-        {
-            _panelBattery = battery;
-            if (_batteryWatch.Update(battery) is string warning) AppendLog(warning);
-            UpdateControls();
-        });
-    }
-
-    // パネルが操作を選び始めた(SELECT)・1 画面目に戻った(HOME)。選んでいる途中は READY LED を消し、測定を始めない。
-    // パネルは SELECT / HOME を 1 秒ごとと確認の直後に送るので、そのたびに直前の記録(LAST:)も送り直す
-    // (つなぎ直し・パネルの再起動のあとも、取消の確認に今の対象が出るように。版 5)。
-    private void PanelSelectionChanged(bool selecting) => PostToUi(() =>
-    {
-        SetPanelSelecting(selecting);
-        SendLastRecord();
-    });
-
-    // 直前の記録(取消の対象)をパネルへ知らせる(版 5、2026-11-26)。返事は求めない。送れなくても次の SELECT / HOME で送り直す。
-    private void SendLastRecord()
-    {
-        if (_panel is null || _learning is null || _closing) return;
-        _panel.TrySend(As100201PanelProtocol.Last(_learning.UndoTarget));
-    }
-
-    private void SetPanelSelecting(bool selecting)
-    {
-        if (_panelSelecting == selecting) return;
-        _panelSelecting = selecting;
-        AppendLog(selecting
-            ? "タッチパネルで操作を選んでいます。選び終わるまで測定を始めません（READY LED を消します）。"
-            : "タッチパネルが 1 画面目に戻りました。測定を始められます。");
-        RefreshReadyLed();
-        UpdateControls();
-    }
-
-    private void PanelDisconnected()
-    {
-        PostToUi(() =>
-        {
-            _panelBattery = null;
-            // パネルの画面がどこにあるか分からなくなる。つなぎ直したらパネルが SELECT / HOME を送り直す。
-            _panelSelecting = false;
-            AppendLog("タッチパネルの通信が途切れました。自動で再接続を確認します（USB を先に、なければ Wi-Fi）。途切れている間は測定を始められません（sw4 の停止だけ受け付けます）。");
-            RefreshReadyLed();
-            UpdateControls();
-        });
-    }
-
-    private void PanelStatusChanged(string message)
-    {
-        PostToUi(() =>
-        {
-            if (_lastPanelStatus == message) return;
-            _lastPanelStatus = message;
-            AppendLog(message);
-        });
-    }
-
-    private void PanelCommandReceived(As100201PanelCommand command)
-    {
-        long receivedAt = Stopwatch.GetTimestamp();
-        long version = _panel!.RequestVersion;
-        PostToUi(() =>
-        {
-            if (_panel is null) return;
-            if (version != _panel.RequestVersion || !_panel.InputReady ||
-                Stopwatch.GetElapsedTime(receivedAt).TotalSeconds >= 1)
-            {
-                ArduinoDiagnosticLog.Write("PANEL_COMMAND_DROPPED", "遅延または復旧前の操作を破棄 / " + command.Line);
-                if (command.Kind != As100201PanelCommandKind.Hold)
-                    _panel.TrySend(As100201PanelProtocol.Nak("接続の確認中です。押し直してください"));
-                return;
-            }
-            ExecutePanelCommand(command);
-        });
-    }
-
-    private void ExecutePanelCommand(As100201PanelCommand command)
+    // 学習モードのパネルの行(操作・完了・取消・ノズルの戻る)を記録する。測定中なら先に止めて、そこまでの波形を測定の行にする
+    // (人が次の行動を決めた所までを学習データとして切り出す。版 6 からは、ふつうは「バルブを動かす」でもう止まっている)。
+    // 「合わせた」なら停止のきっかけは「合わせた」、ノズルの「戻る」なら「戻る」。
+    private void ExecuteLearningCommand(As100201PanelCommand command)
     {
         if (_panel is null) return;
-        using var observation = PcDelayObservation.Begin("UI.Panel:" + command.Line);
-        AppendLog($"タッチパネル {command.DisplayName} を受信");
         if (_learning is null)
         {
             // 学習モードでは起動時に作るので、ここには来ない(念のため記録せずに断る)。
@@ -441,7 +263,7 @@ internal sealed partial class MainForm : Form
             _panel.TrySend(As100201PanelProtocol.Nak("記録できません"));
             return;
         }
-        if (_serialDialogOpen && command.Kind != As100201PanelCommandKind.Hold)
+        if (_serialDialogOpen)
         {
             // 番号の確認の窓を出している間は、どの番号で記録するか決まっていないので受け付けない(2026-11-26)。
             AppendLog($"シリアル番号の確認中のため、{command.DisplayName} は記録しません。");
@@ -450,22 +272,20 @@ internal sealed partial class MainForm : Form
         }
         try
         {
-            if (_measurementStarted && _logger.IsInitialized && _templateLoaded)
+            string trigger = command switch
             {
-                // 測定中にパネルが押されたら止めて、そこまでの波形を測定の行として残す(人の案)。
-                // 版 3(2026-11-13、人の指示)からは、操作ボタンを確定したときだけでなく、パネルに触れた時点(HOLD:
-                // 1 画面目のボタン・暗い画面を明るくしたとき)・完了・取消でも止める。人が次の行動を決めた所までを
-                // 学習データとして切り出すため。保存できず止まっているときも止める(sw4 と同じく測定の行は覚えておく)。
-                _logger.Stop();
-                _measurementState.ReadAfter = 0;
-                AppendLog($"タッチパネル（{command.DisplayName}）のため WAVE LOGGER へ停止を要求しました。");
-                LearningMeasurementStopped(As100201LearningSession.StopByPanel);
-                RefreshLoggerState();
-            }
+                { NozzleStep: As100201NozzleStep.Aligned } => As100201LearningSession.StopByAligned,
+                { Kind: As100201PanelCommandKind.NozzleCancel } => As100201LearningSession.StopByNozzleBack,
+                _ => As100201LearningSession.StopByPanel
+            };
+            StopForPanel(command, trigger);
+            char? aligningBefore = _learning.AligningNozzleSide;
             string reply = _learning.HandleCommand(command);
             _panel.TrySend(reply);
-            // 確定した行(操作・完了・取消)が届いたら、パネルは 1 画面目に戻っている(HOME も届くが、念のため)。
-            if (command.Kind != As100201PanelCommandKind.Hold) SetPanelSelecting(false);
+            // 「合わせた」を取り消したら、パネルを合わせている画面へ戻す(版 6)。
+            if (command.Kind == As100201PanelCommandKind.Undo && aligningBefore is null &&
+                _learning.AligningNozzleSide is char side)
+                _panel.TrySend(As100201PanelProtocol.GotoNozzle(side));
         }
         catch (Exception ex)
         {
@@ -477,12 +297,13 @@ internal sealed partial class MainForm : Form
     }
 
     // 直前に WF1973 へ送った側と位相(測定の行に書く)。出力は次の押下まで続くので、最後の押下をそのまま使う。
+    // 版 6 で 2 回押しをやめ、位相ごとのボタンにした。台帳の「側」は PC / PC（位相2）/ CR / CR（位相2）、xdt の名前は PC / PC2 / CR / CR2。
     private (string Side, string SideCode, string Phase) DescribeCurrentWaveform()
     {
         if (_lastWaveform is not (As100201Switch press, int phase)) return ("", "", "");
         string side = press.Button == "PC_go" ? "PC" : "CR";
-        bool isDouble = press.Kind == As100201PressKind.Double;
-        return (isDouble ? side + "（2回押し）" : side, isDouble ? side + "2" : side, phase.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        bool second = press.Kind == As100201PressKind.Double;
+        return (second ? side + "（位相2）" : side, second ? side + "2" : side, phase.ToString(System.Globalization.CultureInfo.InvariantCulture));
     }
 
     // WF1973 の出し直しが終わった(PC_go / CR_go)。学習モードなら「押した」行を書く(2026-11-12)。
@@ -513,7 +334,7 @@ internal sealed partial class MainForm : Form
         AfterLearningChange();
     }
 
-    // LOGGER を止めた(sw4 / 操作ボタン)。学習モードなら測定の行を書く。
+    // LOGGER を止めた(PC / CR・バルブを動かす・操作ボタン・PC の測定停止など)。学習モードなら測定の行を書く。
     private void LearningMeasurementStopped(string trigger)
     {
         if (_learning is null) return;
@@ -538,7 +359,8 @@ internal sealed partial class MainForm : Form
         if (_closing || IsDisposed) return;
         // 台帳に書いたら(測定・操作・完了・取消・番号)、取消の対象が変わるのでパネルへ知らせる(版 5)。
         SendLastRecord();
-        RefreshReadyLed();
+        SendPanelState();
+        RefreshReadiness();
         UpdateControls();
         if (_learning is { Blocked: true } && !_retryDialogOpen && IsHandleCreated)
             BeginInvoke(new Action(ShowRetryDialog));
@@ -556,7 +378,7 @@ internal sealed partial class MainForm : Form
             {
                 var result = ErrorNotification.Show(this,
                     _learning.BlockReason + "\r\n\r\n保存先：" + _learning.SaveDirectory + "\r\n台帳：" + _learning.LedgerLocation +
-                    "\r\n\r\n保存できるまで READY LED を消し、PC_go / CR_go / F8 と操作ボタンを受け付けません（sw4 の停止だけ受け付けます）。" +
+                    "\r\n\r\n保存できるまで、タッチパネルの PC / CR と操作ボタンを受け付けません（測定停止だけ受け付けます）。" +
                     "\r\n保存先を直してから「再試行」を押してください。「キャンセル」で閉じても、画面の「再試行」ボタンでやり直せます。" +
                     "\r\n保存先を直せないときはアプリを終了し、通常モードで起動し直してください（記録なしで作業を続けます）。",
                     "学習モード：保存できません", MessageBoxButtons.RetryCancel, MessageBoxIcon.Error);
@@ -572,7 +394,7 @@ internal sealed partial class MainForm : Form
         if (_learning is null) return;
         bool ok = _learning.Retry();
         AppendLog(ok ? "再試行：保存できました。記録を再開します。" : "再試行：まだ保存できません。");
-        RefreshReadyLed();
+        RefreshReadiness();
         UpdateControls();
     }
 
@@ -584,7 +406,7 @@ internal sealed partial class MainForm : Form
         _panel.Disconnected -= PanelDisconnected;
         _panel.StatusChanged -= PanelStatusChanged;
         _panel.BatteryReported -= PanelBatteryReported;
-        _panel.SelectionChanged -= PanelSelectionChanged;
+        _panel.ScreenChanged -= PanelScreenChanged;
         if (_panelPaths is not null)
         {
             _panelPaths.PathChanged -= PanelPathChanged;
@@ -594,20 +416,21 @@ internal sealed partial class MainForm : Form
         _panel.Dispose();
     }
 
-    // スイッチを実行してよいか。通常モードは今までと同じ条件・同じ文言。学習モードの決まりは As100201LearningGate。
+    // 測定を始めてよいか(PC_go / CR_go / F8 の名前で聞く)。学習モードの決まりは As100201LearningGate。
+    // 版 6 からは通常モードでもタッチパネルが要る(Tab5 が使えないときは測定できない。2026-11-27 人の決定)。
     private bool CanExecuteSwitch(As100201Switch pressed, out string refusal)
     {
         if (!IsLearningMode)
         {
-            refusal = As100201LearningGate.NotReady;
-            return _readyLedOn && ConnectionsReady && !_operationInProgress;
+            refusal = PanelReady ? As100201LearningGate.NotReady : As100201LearningGate.PanelLost;
+            return _readyToMeasure && ConnectionsReady && PanelReady && !_operationInProgress;
         }
         return As100201LearningGate.Allows(pressed.Button,
             baseReady: _templateLoaded && ConnectionsReady && !_operationInProgress,
-            panelReady: _panel is { InputReady: true },
+            panelReady: PanelReady,
             hasSession: _learning is not null,
             saveBlocked: _learning is { Blocked: true },
-            readyLedOn: _readyLedOn, out refusal,
+            readyLedOn: _readyToMeasure, out refusal,
             panelSelecting: _panelSelecting,
             serialMissing: _learning is { SerialNumber: null });
     }

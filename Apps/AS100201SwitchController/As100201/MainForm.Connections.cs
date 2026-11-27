@@ -90,7 +90,7 @@ internal sealed partial class MainForm : Form
             await RunOperationAsync("接続確認", async () =>
             {
                 var totalTimer = Stopwatch.StartNew();
-                AppendLog("接続確認開始：Arduino確認と発振器／LOGGER起動を並行して進めます。");
+                AppendLog("接続確認開始：発振器／LOGGER を起動し、続けてタッチパネルを確認します。");
                 LogProcessStartupTime("接続確認開始まで");
                 var preparationTimer = Stopwatch.StartNew();
                 if (_measurementState.MeasurementStarted && _logger.IsInitialized)
@@ -119,19 +119,7 @@ internal sealed partial class MainForm : Form
                 AppendLog($"処理時間：接続前の準備・旧接続解除 = {preparationTimer.Elapsed.TotalSeconds:F3} 秒");
 
                 var failures = new List<string>();
-                // Arduinoの起動待ちを、発振器確認・LOGGER起動と重ねる。
-                // VISA／LOGGERのCOM操作は、従来どおりUIスレッドで実行する。
-                // Arduino計測は別スレッドで完結させ、UIの待ち時間を含めない。
-                var arduinoTask = Task.Run(async () =>
-                {
-                    var timer = Stopwatch.StartNew();
-                    Exception? error = null;
-                    var details = new List<string>();
-                    try { await _arduino.VerifyAsync(details.Add).ConfigureAwait(false); }
-                    catch (Exception ex) { error = ex; }
-                    timer.Stop();
-                    return (Elapsed: timer.Elapsed, Error: error, Details: details);
-                });
+                // 版 6(2026-11-27)で Arduino の確認をなくした。VISA／LOGGERのCOM操作は、従来どおりUIスレッドで実行する。
                 var wfTimer = Stopwatch.StartNew();
                 if (_wf1973 is null)
                 {
@@ -182,15 +170,8 @@ internal sealed partial class MainForm : Form
                 loggerTimer.Stop();
                 AppendLog($"処理時間：LOGGER／NR接続処理全体 = {loggerTimer.Elapsed.TotalSeconds:F3} 秒");
 
-                // Arduino確認の完了まで待ってから、全機器の結果をまとめる。
-                var arduinoResult = await arduinoTask;
                 if (_closing) return "終了中";
-                foreach (string detail in arduinoResult.Details) AppendLog(detail);
-                AppendLog($"処理時間：Arduino接続確認 = {arduinoResult.Elapsed.TotalSeconds:F3} 秒" +
-                    (arduinoResult.Error is null ? "（成功）" : "（失敗）"));
-                if (arduinoResult.Error is not null)
-                    failures.Insert(0, "Arduino: " + arduinoResult.Error.Message);
-                // 学習モードはタッチパネルも確認する(Arduino の後に順に。見つからなければ学習モードは動かない)。
+                // タッチパネルを確認する(版 6 から通常モードでも。見つからなければ測定できない)。
                 if (await VerifyPanelAsync() is string panelFailure) failures.Add(panelFailure);
                 if (_closing) return "終了中";
                 totalTimer.Stop();

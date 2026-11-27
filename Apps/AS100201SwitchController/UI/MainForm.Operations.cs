@@ -42,7 +42,7 @@ internal sealed partial class MainForm : Form
         {
             if (!_closing) UseWaitCursor = false;
             _operationInProgress = false;
-            if (!_closing) RefreshReadyLed();
+            if (!_closing) RefreshReadiness();
             UpdateControls();
         }
     }
@@ -86,7 +86,7 @@ internal sealed partial class MainForm : Form
         {
             if (!_closing) UseWaitCursor = false;
             _operationInProgress = false;
-            if (!_closing) RefreshReadyLed();
+            if (!_closing) RefreshReadiness();
             UpdateControls();
         }
     }

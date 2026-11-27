@@ -38,7 +38,7 @@ internal sealed partial class MainForm : Form
         _templateLoaded = true;
         _measurementState.ReadAfter = 0;
         RefreshLoggerState();
-        RefreshReadyLed();
+        RefreshReadiness();
         CompletePreparationDisplay();
         return $"成功 / {Path.GetFileName(path)}";
     }
@@ -69,24 +69,17 @@ internal sealed partial class MainForm : Form
         _measurementState.State = null;
         _measurementState.MeasurementStarted = false;
         _measurementState.ReadAfter = 0;
-        RefreshReadyLed();
+        RefreshReadiness();
         UpdateControls();
     }
 
-    private void RefreshReadyLed()
+    // 測定を始められるか(版 5 までの READY LED が点く条件)。版 6 で LED はなくなり、タッチパネルも要る(通常モードも)。
+    // 変わったら Tab5 へ今の状態(STATE:)を送り直す。
+    private void RefreshReadiness()
     {
-        bool ready = !_closing && _templateLoaded && ConnectionsReady && !_operationInProgress && LearningReady;
-        if (ready == _readyLedOn) return;
-        try
-        {
-            _arduino.SetReadyLed(ready);
-            _readyLedOn = ready;
-        }
-        catch (Exception ex)
-        {
-            _readyLedOn = false;
-            AppendLog("準備完了 LED の通信に失敗: " + ex.Message);
-            ArduinoDisconnected();
-        }
+        bool ready = !_closing && _templateLoaded && ConnectionsReady && PanelReady && !_operationInProgress && LearningReady;
+        if (ready == _readyToMeasure) return;
+        _readyToMeasure = ready;
+        SendPanelState();
     }
 }

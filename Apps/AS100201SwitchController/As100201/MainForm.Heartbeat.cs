@@ -1,6 +1,6 @@
 namespace PSCAutomation.Apps.AS100201SwitchController;
 
-// UI上の状態更新と、Arduinoの自動再接続を進める。
+// UI上の状態更新と、タッチパネルの自動再接続を進める(版 6 で Arduino の見張りはなくした)。
 // 接続が戻ってもWF1973やLOGGERの開始操作は行わない。
 internal sealed partial class MainForm : Form
 {
@@ -10,14 +10,8 @@ internal sealed partial class MainForm : Form
         _heartbeatBusy = true;
         try
         {
-            if (!_arduino.InputReady)
-            {
-                _pendingWaveformSwitch = null;
-                ++_waveformRequestVersion;
-            }
-            RefreshReadyLed();
+            RefreshReadiness();
             UpdateControls();
-            await _arduino.MaintainAsync();
             if (_panel is not null) await _panel.MaintainAsync();
             if (_closing || IsDisposed || _operationInProgress) return;
             await ReturnPanelToUsbIfIdleAsync();
@@ -49,7 +43,6 @@ internal sealed partial class MainForm : Form
                 {
                     _wf1973.Dispose();
                     _wf1973 = null;
-                    _pendingWaveformSwitch = null;
                     ++_waveformRequestVersion;
                     throw;
                 }
@@ -67,8 +60,7 @@ internal sealed partial class MainForm : Form
                     }
                 }
             }
-            RefreshReadyLed();
-            if (_readyLedOn) _arduino.SetReadyLed(true); // スケッチの3秒タイムアウトを更新
+            RefreshReadiness();
         }
         catch (Exception ex)
         {
@@ -79,7 +71,7 @@ internal sealed partial class MainForm : Form
             _heartbeatBusy = false;
             if (!_closing && !IsDisposed)
             {
-                RefreshReadyLed();
+                RefreshReadiness();
                 UpdateControls();
             }
         }
